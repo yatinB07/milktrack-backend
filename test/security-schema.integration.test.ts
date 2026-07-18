@@ -10,18 +10,23 @@ const ownerPool = new pg.Pool({
 });
 test.after(() => Promise.all([pool.end(), ownerPool.end()]));
 
-void test('migrations 003 through 006 safely upgrade legacy data without resetting it', async () => {
+void test('migrations 003 through 007 safely upgrade legacy data without resetting it', async () => {
   const schema = `migration_${randomUUID().replaceAll('-', '')}`;
+  const migrationDirectories = [
+    '202607180001_phase_1_security_foundation',
+    '202607180002_preserve_vendor_audit_history',
+    '202607180003_bind_session_authentication_method',
+    '202607180004_allow_anonymous_auth_audits',
+    '202607180005_constrain_anonymous_auth_audits',
+    '202607180006_align_vendor_cursor_precision',
+    '202607180007_align_audit_cursor_precision',
+  ] as const;
   const migrations = await Promise.all(
-    [
-      '202607180001_phase_1_security_foundation',
-      '202607180002_preserve_vendor_audit_history',
-      '202607180003_bind_session_authentication_method',
-      '202607180004_allow_anonymous_auth_audits',
-      '202607180005_constrain_anonymous_auth_audits',
-      '202607180006_align_vendor_cursor_precision',
-    ].map((directory) =>
-      readFile(new URL(`../prisma/migrations/${directory}/migration.sql`, import.meta.url), 'utf8'),
+    migrationDirectories.map((directory) =>
+      readFile(
+        new URL(`../prisma/migrations/${directory}/migration.sql`, import.meta.url),
+        'utf8',
+      ),
     ),
   );
   const client = await ownerPool.connect();
@@ -62,6 +67,16 @@ void test('migrations 003 through 006 safely upgrade legacy data without resetti
       [legacyVendorId, `legacy-${legacyVendorId}`],
     );
     await client.query(migrations[5]);
+    const legacyAuditId = randomUUID();
+    await client.query(
+      `INSERT INTO audit_events
+         (id, vendor_id, actor_user_id, action, entity_type, entity_id,
+          correlation_id, created_at)
+       VALUES ($1, $2, $3, 'legacy.precision', 'vendor', $2, $4,
+               '2026-07-18T12:00:00.123900Z'::timestamptz)`,
+      [legacyAuditId, legacyVendorId, userId, randomUUID()],
+    );
+    await client.query(migrations[6]);
 
     const session = await client.query<{
       authentication_method: string;
@@ -115,6 +130,19 @@ void test('migrations 003 through 006 safely upgrade legacy data without resetti
       [legacyVendorId],
     );
     assert.deepEqual(migratedVendor.rows, [{ created_at: '2026-07-18T12:00:00.124' }]);
+    const auditCreatedAt = await client.query<{ datetime_precision: number }>(
+      `SELECT datetime_precision FROM information_schema.columns
+       WHERE table_schema = $1 AND table_name = 'audit_events'
+         AND column_name = 'created_at'`,
+      [schema],
+    );
+    assert.deepEqual(auditCreatedAt.rows, [{ datetime_precision: 3 }]);
+    const migratedAudit = await client.query<{ created_at: string }>(
+      `SELECT to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS') AS created_at
+       FROM audit_events WHERE id = $1`,
+      [legacyAuditId],
+    );
+    assert.deepEqual(migratedAudit.rows, [{ created_at: '2026-07-18T12:00:00.124' }]);
 
     const anonymousChallengeId = randomUUID();
     await client.query(

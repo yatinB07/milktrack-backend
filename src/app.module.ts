@@ -1,6 +1,6 @@
 import { Module } from '@nestjs/common';
 
-import { AuditModule } from './audit/audit.module.js';
+import { AuditReadModule } from './audit/audit-read.module.js';
 import { AuthorizationModule } from './authorization/authorization.module.js';
 import {
   RequestContextStore,
@@ -14,7 +14,7 @@ import { VendorsModule } from './vendors/vendors.module.js';
 
 @Module({
   imports: [
-    AuditModule,
+    AuditReadModule,
     AuthorizationModule,
     DatabaseModule,
     HealthModule,

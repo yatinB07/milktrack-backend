@@ -271,7 +271,7 @@ model AuditEvent {
   correlationId String   @map("correlation_id") @db.Uuid
   ipHash        String?  @map("ip_hash")
   deviceId      String?  @map("device_id")
-  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   vendor        Vendor?  @relation(fields: [vendorId], references: [id], onDelete: Restrict, onUpdate: Restrict)
 
   @@index([vendorId, createdAt(sort: Desc), id(sort: Desc)])
