@@ -10,7 +10,7 @@ const ownerPool = new pg.Pool({
 });
 test.after(() => Promise.all([pool.end(), ownerPool.end()]));
 
-void test('migrations 003 through 007 safely upgrade legacy data without resetting it', async () => {
+void test('migrations 003 through 008 safely upgrade legacy data without resetting it', async () => {
   const schema = `migration_${randomUUID().replaceAll('-', '')}`;
   const migrationDirectories = [
     '202607180001_phase_1_security_foundation',
@@ -20,6 +20,7 @@ void test('migrations 003 through 007 safely upgrade legacy data without resetti
     '202607180005_constrain_anonymous_auth_audits',
     '202607180006_align_vendor_cursor_precision',
     '202607180007_align_audit_cursor_precision',
+    '202607180008_authentication_hardening',
   ] as const;
   const migrations = await Promise.all(
     migrationDirectories.map((directory) =>
@@ -39,10 +40,18 @@ void test('migrations 003 through 007 safely upgrade legacy data without resetti
 
     const userId = randomUUID();
     const sessionId = randomUUID();
+    const factorId = randomUUID();
     await client.query(
       `INSERT INTO users (id, display_name, updated_at)
        VALUES ($1, 'Legacy Session User', now())`,
       [userId],
+    );
+    await client.query(
+      `INSERT INTO mfa_factors
+         (id, user_id, type, encrypted_secret, enabled_at, last_used_at)
+       VALUES ($1, $2, 'totp', 'legacy-encrypted', now() - interval '1 day',
+               '2026-07-18T12:00:30Z'::timestamptz)`,
+      [factorId, userId],
     );
     await client.query(
       `INSERT INTO sessions
@@ -77,6 +86,7 @@ void test('migrations 003 through 007 safely upgrade legacy data without resetti
       [legacyAuditId, legacyVendorId, userId, randomUUID()],
     );
     await client.query(migrations[6]);
+    await client.query(migrations[7]);
 
     const session = await client.query<{
       authentication_method: string;
@@ -143,6 +153,11 @@ void test('migrations 003 through 007 safely upgrade legacy data without resetti
       [legacyAuditId],
     );
     assert.deepEqual(migratedAudit.rows, [{ created_at: '2026-07-18T12:00:00.124' }]);
+    const migratedFactor = await client.query<{ last_used_counter: string | null }>(
+      'SELECT last_used_counter::text FROM mfa_factors WHERE id = $1',
+      [factorId],
+    );
+    assert.deepEqual(migratedFactor.rows, [{ last_used_counter: '59479201' }]);
 
     const anonymousChallengeId = randomUUID();
     await client.query(

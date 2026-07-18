@@ -51,7 +51,12 @@ export class Totp {
 
   /** Verifies a six-digit SHA-1 TOTP in the current 30-second step or either neighbor. */
   verify(secretBase32: string, code: string, timeMs = Date.now()): boolean {
-    if (!/^\d{6}$/.test(code) || !Number.isFinite(timeMs) || timeMs < 0) return false;
+    return this.matchingCounter(secretBase32, code, timeMs) !== undefined;
+  }
+
+  /** Returns the accepted counter so callers can enforce one-time use across challenges. */
+  matchingCounter(secretBase32: string, code: string, timeMs = Date.now()): number | undefined {
+    if (!/^\d{6}$/.test(code) || !Number.isFinite(timeMs) || timeMs < 0) return undefined;
     const secret = decodeBase32(secretBase32);
     const counter = Math.floor(timeMs / 30_000);
     const supplied = Buffer.from(code, 'ascii');
@@ -60,9 +65,9 @@ export class Totp {
         counter + offset >= 0 &&
         timingSafeEqual(supplied, Buffer.from(codeAt(secret, counter + offset), 'ascii'))
       ) {
-        return true;
+        return counter + offset;
       }
     }
-    return false;
+    return undefined;
   }
 }

@@ -193,6 +193,10 @@ async function insertAdministrator(
   secret: string,
   options: Readonly<{ platformRole?: boolean }> = {},
 ): Promise<Readonly<{ userId: string; identityId: string; factorId: string; roleId: string }>> {
+  await ownerPool.query(
+    'DELETE FROM administrator_authentication_attempts WHERE account_key = $1',
+    [tokenHash(email)],
+  );
   const userId = randomUUID();
   const identityId = randomUUID();
   const roleId = randomUUID();
@@ -478,6 +482,28 @@ void test('audit failure rolls back OTP, MFA, refresh, replay, logout, and logou
   ]);
   const { prisma, delivery, service } = createService();
   try {
+    await expectForcedAuditFailure(randomUUID(), () =>
+      service.startAdministratorSignIn({
+        email: 'audit-rollback@example.test',
+        password: 'wrong password',
+        deviceId: 'password-failure-rollback-device',
+      }),
+    );
+    assert.deepEqual(
+      (await ownerPool.query<{ failed_attempts: number; locked_until: Date | null }>(
+        `SELECT failed_attempts, locked_until FROM password_credentials WHERE user_id = $1`,
+        [administrator.userId],
+      )).rows,
+      [{ failed_attempts: 0, locked_until: null }],
+    );
+    assert.equal(
+      (await ownerPool.query(
+        `SELECT id FROM administrator_authentication_attempts WHERE account_key = $1`,
+        [tokenHash('audit-rollback@example.test')],
+      )).rowCount,
+      0,
+    );
+
     const otpLockChallenge = await service.requestPhoneOtp({
       phone: fixtures[3].phone,
       purpose: 'sign_in',
@@ -517,6 +543,13 @@ void test('audit failure rolls back OTP, MFA, refresh, replay, logout, and logou
       )).rowCount,
       0,
     );
+    assert.equal(
+      (await ownerPool.query(
+        `SELECT id FROM administrator_authentication_attempts WHERE account_key = $1`,
+        [tokenHash('audit-rollback@example.test')],
+      )).rowCount,
+      0,
+    );
     await assert.rejects(
       service.verifyPhoneOtp({
         challengeToken: otpLockChallenge.challengeToken,
@@ -533,6 +566,11 @@ void test('audit failure rolls back OTP, MFA, refresh, replay, logout, and logou
       5,
     );
 
+    await ownerPool.query(
+      `UPDATE password_credentials SET failed_attempts = 3, locked_until = NULL
+       WHERE user_id = $1`,
+      [administrator.userId],
+    );
     await expectForcedAuditFailure(randomUUID(), () =>
       service.startAdministratorSignIn({
         email: 'audit-rollback@example.test',
@@ -544,6 +582,21 @@ void test('audit failure rolls back OTP, MFA, refresh, replay, logout, and logou
       (await ownerPool.query(
         'SELECT id FROM pending_mfa_authentications WHERE user_id = $1',
         [administrator.userId],
+      )).rowCount,
+      0,
+    );
+    assert.deepEqual(
+      (await ownerPool.query<{ failed_attempts: number; locked_until: Date | null }>(
+        `SELECT failed_attempts, locked_until FROM password_credentials WHERE user_id = $1`,
+        [administrator.userId],
+      )).rows,
+      [{ failed_attempts: 3, locked_until: null }],
+    );
+    assert.equal(
+      (await ownerPool.query(
+        `SELECT id FROM administrator_authentication_attempts
+         WHERE account_key = $1 AND stage = 'pending_mfa'`,
+        [tokenHash('audit-rollback@example.test')],
       )).rowCount,
       0,
     );
@@ -578,6 +631,13 @@ void test('audit failure rolls back OTP, MFA, refresh, replay, logout, and logou
       )).rows[0]?.attempt_count,
       4,
     );
+    assert.deepEqual(
+      (await ownerPool.query<{ failed_attempts: number; locked_until: Date | null }>(
+        `SELECT failed_attempts, locked_until FROM password_credentials WHERE user_id = $1`,
+        [administrator.userId],
+      )).rows,
+      [{ failed_attempts: 0, locked_until: null }],
+    );
     await assert.rejects(
       service.verifyAdministratorMfa({
         pendingMfaToken: lockedPending.pendingMfaToken,
@@ -585,6 +645,19 @@ void test('audit failure rolls back OTP, MFA, refresh, replay, logout, and logou
         deviceId: 'lock-rollback-device',
       }),
       expectAuthenticationFailure,
+    );
+
+    // This test now moves beyond the security window before exercising an unrelated audit rollback.
+    await ownerPool.query(
+      `UPDATE password_credentials SET failed_attempts = 0, locked_until = NULL
+       WHERE user_id = $1`,
+      [administrator.userId],
+    );
+    await ownerPool.query(
+      `UPDATE pending_mfa_authentications
+       SET created_at = now() - interval '16 minutes'
+       WHERE user_id = $1`,
+      [administrator.userId],
     );
 
     const successfulPending = await service.startAdministratorSignIn({
@@ -602,9 +675,11 @@ void test('audit failure rolls back OTP, MFA, refresh, replay, logout, and logou
     const mfaRollback = await ownerPool.query<{
       consumed_at: Date | null;
       last_used_at: Date | null;
+      last_used_counter: string | null;
       session_count: string;
     }>(
       `SELECT pending.consumed_at, factor.last_used_at,
+              factor.last_used_counter::text,
               (SELECT count(*) FROM sessions WHERE user_id = pending.user_id) AS session_count
        FROM pending_mfa_authentications pending
        JOIN mfa_factors factor ON factor.user_id = pending.user_id
@@ -612,7 +687,12 @@ void test('audit failure rolls back OTP, MFA, refresh, replay, logout, and logou
       [tokenHash(successfulPending.pendingMfaToken)],
     );
     assert.deepEqual(mfaRollback.rows, [
-      { consumed_at: null, last_used_at: null, session_count: '0' },
+      {
+        consumed_at: null,
+        last_used_at: null,
+        last_used_counter: null,
+        session_count: '0',
+      },
     ]);
     await service.verifyAdministratorMfa({
       pendingMfaToken: successfulPending.pendingMfaToken,
@@ -1140,6 +1220,10 @@ void test('administrator password authentication is non-disclosing and only issu
   const password = 'correct horse battery staple';
   const secret = 'JBSWY3DPEHPK3PXP';
   const administrator = await insertAdministrator(email, password, secret);
+  await ownerPool.query(
+    'DELETE FROM administrator_authentication_attempts WHERE account_key = $1',
+    [tokenHash('missing@example.test')],
+  );
   const { prisma, service } = createService();
   try {
     const failures = await Promise.allSettled([
@@ -1920,5 +2004,586 @@ void test('authenticate, logout, and logout-all enforce user and membership stat
   } finally {
     await prisma.$disconnect();
     await Promise.all(fixtures.map(cleanupFixture));
+  }
+});
+
+void test('administrator password failures lock the account transactionally and audit redacted outcomes', async () => {
+  const suffix = randomUUID();
+  const email = `password-lock-${suffix}@example.test`;
+  const password = 'administrator password';
+  const administrator = await insertAdministrator(email, password, 'JBSWY3DPEHPK3PXP');
+  const { prisma, service } = createService();
+  try {
+    const attempts = await Promise.allSettled(
+      Array.from({ length: 6 }, () =>
+        service.startAdministratorSignIn({
+          email,
+          password: 'wrong password',
+          deviceId: 'password-lock-device',
+          ipHash: `password-lock-ip-${suffix}`,
+        }),
+      ),
+    );
+    assert.ok(attempts.every((result) => result.status === 'rejected'));
+    await assert.rejects(
+      service.startAdministratorSignIn({
+        email,
+        password,
+        deviceId: 'password-lock-device',
+        ipHash: `password-lock-retry-ip-${suffix}`,
+      }),
+      (error: unknown) =>
+        error instanceof ApplicationError &&
+        error.code === 'RATE_LIMITED' &&
+        error.status === 429 &&
+        error.retryable === true &&
+        error.retryAfterSeconds !== undefined &&
+        error.retryAfterSeconds > 0,
+    );
+
+    const credential = await ownerPool.query<{
+      failed_attempts: number;
+      locked_until: Date | null;
+    }>(
+      'SELECT failed_attempts, locked_until FROM password_credentials WHERE user_id = $1',
+      [administrator.userId],
+    );
+    assert.equal(credential.rows[0]?.failed_attempts, 5);
+    assert.ok(credential.rows[0]?.locked_until instanceof Date);
+    const audits = await ownerPool.query<{
+      action: string;
+      old_value: unknown;
+      new_value: unknown;
+      reason: string | null;
+      ip_hash: string | null;
+    }>(
+      `SELECT action, old_value, new_value, reason, ip_hash FROM audit_events
+       WHERE actor_user_id = $1 AND action LIKE 'auth.password_%'
+       ORDER BY created_at, id`,
+      [administrator.userId],
+    );
+    assert.equal(audits.rows.filter(({ action }) => action === 'auth.password_failed').length, 5);
+    assert.equal(audits.rows.filter(({ action }) => action === 'auth.password_locked').length, 1);
+    assert.ok(
+      audits.rows.every(
+        ({ old_value, new_value, reason, ip_hash }) =>
+          old_value === null &&
+          new_value === null &&
+          reason === null &&
+          ip_hash === `password-lock-ip-${suffix}`,
+      ),
+    );
+  } finally {
+    await prisma.$disconnect();
+    await cleanupUsers([administrator.userId]);
+  }
+});
+
+void test('administrator password and pending-MFA issuance share bounded account and IP windows', async () => {
+  const suffix = randomUUID();
+  const password = 'administrator password';
+  const secret = 'JBSWY3DPEHPK3PXP';
+  const users = await Promise.all(
+    Array.from({ length: 6 }, (_, index) =>
+      insertAdministrator(`ip-limit-${index}-${suffix}@example.test`, password, secret),
+    ),
+  );
+  const { prisma, service } = createService();
+  try {
+    for (let index = 0; index < 5; index += 1) {
+      await assert.rejects(
+        service.startAdministratorSignIn({
+          email: `ip-limit-${index}-${suffix}@example.test`,
+          password: 'wrong password',
+          deviceId: `ip-limit-${index}`,
+          ipHash: `shared-password-ip-${suffix}`,
+        }),
+        expectAuthenticationFailure,
+      );
+    }
+    await assert.rejects(
+      service.startAdministratorSignIn({
+        email: `ip-limit-5-${suffix}@example.test`,
+        password: 'wrong password',
+        deviceId: 'ip-limit-5',
+        ipHash: `shared-password-ip-${suffix}`,
+      }),
+      (error: unknown) =>
+        error instanceof ApplicationError &&
+        error.code === 'RATE_LIMITED' &&
+        error.status === 429 &&
+        error.retryable &&
+        Number.isInteger(error.retryAfterSeconds) &&
+        error.retryAfterSeconds! > 0,
+    );
+
+    for (let index = 0; index < 5; index += 1) {
+      await assert.rejects(
+        service.startAdministratorSignIn({
+          email: `missing-${suffix}@example.test`,
+          password: 'wrong password',
+          deviceId: `missing-${index}`,
+          ipHash: `missing-ip-${index}-${suffix}`,
+        }),
+        expectAuthenticationFailure,
+      );
+    }
+    await assert.rejects(
+      service.startAdministratorSignIn({
+        email: `missing-${suffix}@example.test`,
+        password: 'wrong password',
+        deviceId: 'missing-5',
+        ipHash: `missing-ip-5-${suffix}`,
+      }),
+      (error: unknown) =>
+        error instanceof ApplicationError &&
+        error.code === 'RATE_LIMITED' &&
+        error.status === 429,
+    );
+
+    for (let index = 0; index < 5; index += 1) {
+      await service.startAdministratorSignIn({
+        email: `ip-limit-${index}-${suffix}@example.test`,
+        password,
+        deviceId: `shared-pending-${index}`,
+        ipHash: `shared-pending-ip-${suffix}`,
+      });
+    }
+    await assert.rejects(
+      service.startAdministratorSignIn({
+        email: `ip-limit-5-${suffix}@example.test`,
+        password,
+        deviceId: 'shared-pending-5',
+        ipHash: `shared-pending-ip-${suffix}`,
+      }),
+      (error: unknown) =>
+        error instanceof ApplicationError &&
+        error.code === 'RATE_LIMITED' &&
+        error.status === 429,
+    );
+
+    const accountEmail = `pending-limit-${suffix}@example.test`;
+    const account = await insertAdministrator(accountEmail, password, secret);
+    users.push(account);
+    for (let index = 0; index < 5; index += 1) {
+      await service.startAdministratorSignIn({
+        email: accountEmail,
+        password,
+        deviceId: `pending-limit-${index}`,
+        ipHash: `pending-ip-${index}-${suffix}`,
+      });
+    }
+    await assert.rejects(
+      service.startAdministratorSignIn({
+        email: accountEmail,
+        password,
+        deviceId: 'pending-limit-5',
+        ipHash: `pending-ip-5-${suffix}`,
+      }),
+      (error: unknown) =>
+        error instanceof ApplicationError &&
+        error.code === 'RATE_LIMITED' &&
+        error.retryable === true &&
+        error.retryAfterSeconds !== undefined &&
+        error.retryAfterSeconds > 0,
+    );
+  } finally {
+    await prisma.$disconnect();
+    await cleanupUsers(users.map(({ userId }) => userId));
+  }
+});
+
+void test('fresh pending MFA tokens cannot reset the five-failure account budget', async () => {
+  const suffix = randomUUID();
+  const email = `aggregate-mfa-${suffix}@example.test`;
+  const password = 'administrator password';
+  const secret = 'JBSWY3DPEHPK3PXP';
+  const administrator = await insertAdministrator(email, password, secret);
+  const { prisma, service } = createService();
+  try {
+    const pending = await Promise.all(
+      Array.from({ length: 5 }, (_, index) =>
+        service.startAdministratorSignIn({
+          email,
+          password,
+          deviceId: `aggregate-mfa-${index}`,
+          ipHash: `aggregate-mfa-ip-${suffix}`,
+        }),
+      ),
+    );
+    const wrong = guaranteedWrongTotp(secret);
+    for (let index = 0; index < 5; index += 1) {
+      await assert.rejects(
+        service.verifyAdministratorMfa({
+          pendingMfaToken: pending[index].pendingMfaToken,
+          code: wrong,
+          deviceId: `aggregate-mfa-${index}`,
+          ipHash: `aggregate-mfa-ip-${suffix}`,
+        }),
+        expectAuthenticationFailure,
+      );
+    }
+    await assert.rejects(
+      service.verifyAdministratorMfa({
+        pendingMfaToken: pending[0].pendingMfaToken,
+        code: totpCode(secret),
+        deviceId: 'aggregate-mfa-0',
+        ipHash: `aggregate-mfa-ip-${suffix}`,
+      }),
+      expectAuthenticationFailure,
+    );
+    const audits = await ownerPool.query<{ action: string }>(
+      `SELECT action FROM audit_events WHERE actor_user_id = $1
+       AND action IN ('auth.mfa_failed', 'auth.mfa_locked', 'auth.mfa_succeeded')`,
+      [administrator.userId],
+    );
+    assert.equal(audits.rows.filter(({ action }) => action === 'auth.mfa_failed').length, 6);
+    assert.equal(audits.rows.filter(({ action }) => action === 'auth.mfa_locked').length, 1);
+    assert.equal(audits.rows.filter(({ action }) => action === 'auth.mfa_succeeded').length, 0);
+  } finally {
+    await prisma.$disconnect();
+    await cleanupUsers([administrator.userId]);
+  }
+});
+
+void test('one TOTP counter succeeds once across sequential and concurrent pending tokens', async () => {
+  const users: string[] = [];
+  const { prisma, service } = createService();
+  try {
+    for (const mode of ['sequential', 'concurrent'] as const) {
+      const suffix = randomUUID();
+      const email = `totp-replay-${mode}-${suffix}@example.test`;
+      const password = 'administrator password';
+      const secret = 'JBSWY3DPEHPK3PXP';
+      const administrator = await insertAdministrator(email, password, secret);
+      users.push(administrator.userId);
+      const first = await service.startAdministratorSignIn({
+        email,
+        password,
+        deviceId: `${mode}-first`,
+      });
+      const second = await service.startAdministratorSignIn({
+        email,
+        password,
+        deviceId: `${mode}-second`,
+      });
+      const code = totpCode(secret);
+      const commands = [first, second].map((pending, index) => ({
+        pendingMfaToken: pending.pendingMfaToken,
+        code,
+        deviceId: `${mode}-${index === 0 ? 'first' : 'second'}`,
+      }));
+      const results = mode === 'sequential'
+        ? [
+            await service.verifyAdministratorMfa(commands[0]).then(
+              () => 'fulfilled',
+              () => 'rejected',
+            ),
+            await service.verifyAdministratorMfa(commands[1]).then(
+              () => 'fulfilled',
+              () => 'rejected',
+            ),
+          ]
+        : (await Promise.allSettled(commands.map((command) =>
+            service.verifyAdministratorMfa(command),
+          ))).map(({ status }) => status);
+      assert.deepEqual(results.sort(), ['fulfilled', 'rejected'].sort());
+      const factor = await ownerPool.query<{ last_used_counter: string | null }>(
+        'SELECT last_used_counter::text FROM mfa_factors WHERE id = $1',
+        [administrator.factorId],
+      );
+      assert.equal(factor.rows[0]?.last_used_counter, String(Math.floor(Date.now() / 30_000)));
+    }
+  } finally {
+    await prisma.$disconnect();
+    await cleanupUsers(users);
+  }
+});
+
+void test('revoking the active MFA factor atomically revokes and defensively rejects administrator sessions', async () => {
+  const suffix = randomUUID();
+  const email = `factor-revoke-${suffix}@example.test`;
+  const password = 'administrator password';
+  const secret = 'JBSWY3DPEHPK3PXP';
+  const administrator = await insertAdministrator(email, password, secret);
+  const { prisma, service } = createService();
+  try {
+    const pending = await service.startAdministratorSignIn({
+      email,
+      password,
+      deviceId: 'factor-revoke-device',
+    });
+    const session = await service.verifyAdministratorMfa({
+      pendingMfaToken: pending.pendingMfaToken,
+      code: totpCode(secret),
+      deviceId: 'factor-revoke-device',
+    });
+    await ownerPool.query('UPDATE mfa_factors SET revoked_at = now() WHERE id = $1', [
+      administrator.factorId,
+    ]);
+    const persisted = await ownerPool.query<{ revoked_at: Date | null }>(
+      'SELECT revoked_at FROM sessions WHERE user_id = $1',
+      [administrator.userId],
+    );
+    assert.ok(persisted.rows[0]?.revoked_at instanceof Date);
+    await assert.rejects(service.authenticate(session.accessToken), expectAuthenticationFailure);
+    await assert.rejects(
+      service.refresh(session.refreshToken, 'factor-revoke-device'),
+      expectAuthenticationFailure,
+    );
+  } finally {
+    await prisma.$disconnect();
+    await cleanupUsers([administrator.userId]);
+  }
+});
+
+void test('administrator throttling returns the latest saturated account or IP release time', async () => {
+  const suffix = randomUUID();
+  const email = `staggered-limit-${suffix}@example.test`;
+  const ipHash = `staggered-limit-ip-${suffix}`;
+  const administrator = await insertAdministrator(
+    email,
+    'administrator password',
+    'JBSWY3DPEHPK3PXP',
+  );
+  const { prisma, service } = createService();
+  try {
+    await ownerPool.query(
+      `INSERT INTO administrator_authentication_attempts
+         (id, account_key, ip_hash, stage, succeeded, created_at)
+       SELECT gen_random_uuid(), $1, 'other-ip', 'password', false,
+              now() - interval '14 minutes'
+       FROM generate_series(1, 5)`,
+      [tokenHash(email)],
+    );
+    await ownerPool.query(
+      `INSERT INTO administrator_authentication_attempts
+         (id, account_key, ip_hash, stage, succeeded, created_at)
+       SELECT gen_random_uuid(), $1, $2, 'password', false,
+              now() - interval '2 minutes'
+       FROM generate_series(1, 5)`,
+      [tokenHash(`other-${email}`), ipHash],
+    );
+    await assert.rejects(
+      service.startAdministratorSignIn({
+        email,
+        password: 'administrator password',
+        deviceId: 'staggered-limit-device',
+        ipHash,
+      }),
+      (error: unknown) =>
+        error instanceof ApplicationError &&
+        error.code === 'RATE_LIMITED' &&
+        error.retryAfterSeconds !== undefined &&
+        error.retryAfterSeconds > 700,
+    );
+  } finally {
+    await prisma.$disconnect();
+    await cleanupUsers([administrator.userId]);
+  }
+});
+
+void test('replayed valid TOTP counters consume the aggregate failure budget and lock the account', async () => {
+  const suffix = randomUUID();
+  const email = `totp-budget-${suffix}@example.test`;
+  const password = 'administrator password';
+  const secret = 'JBSWY3DPEHPK3PXP';
+  const administrator = await insertAdministrator(email, password, secret);
+  const { prisma, service } = createService();
+  try {
+    const pending = await Promise.all(
+      Array.from({ length: 5 }, (_, index) =>
+        service.startAdministratorSignIn({
+          email,
+          password,
+          deviceId: `totp-budget-${index}`,
+        }),
+      ),
+    );
+    await ownerPool.query(
+      `UPDATE administrator_authentication_attempts
+       SET created_at = now() - interval '16 minutes'
+       WHERE account_key = $1`,
+      [tokenHash(email)],
+    );
+    pending.push(await service.startAdministratorSignIn({
+      email,
+      password,
+      deviceId: 'totp-budget-5',
+    }));
+    const code = totpCode(secret);
+    await service.verifyAdministratorMfa({
+      pendingMfaToken: pending[0].pendingMfaToken,
+      code,
+      deviceId: 'totp-budget-0',
+    });
+    for (let index = 1; index < pending.length; index += 1) {
+      await assert.rejects(
+        service.verifyAdministratorMfa({
+          pendingMfaToken: pending[index].pendingMfaToken,
+          code,
+          deviceId: `totp-budget-${index}`,
+        }),
+        expectAuthenticationFailure,
+      );
+    }
+    const attempts = await ownerPool.query<{ total: string }>(
+      `SELECT sum(attempt_count)::text AS total
+       FROM pending_mfa_authentications WHERE user_id = $1`,
+      [administrator.userId],
+    );
+    assert.deepEqual(attempts.rows, [{ total: '5' }]);
+    const credential = await ownerPool.query<{ locked_until: Date | null }>(
+      'SELECT locked_until FROM password_credentials WHERE user_id = $1',
+      [administrator.userId],
+    );
+    assert.ok(credential.rows[0]?.locked_until instanceof Date);
+    assert.equal(
+      (await ownerPool.query(
+        `SELECT id FROM audit_events WHERE actor_user_id = $1
+         AND action = 'auth.mfa_locked'`,
+        [administrator.userId],
+      )).rowCount,
+      1,
+    );
+  } finally {
+    await prisma.$disconnect();
+    await cleanupUsers([administrator.userId]);
+  }
+});
+
+void test('administrator authenticate and refresh reject a revoked factor under session data drift', async () => {
+  const suffix = randomUUID();
+  const email = `factor-drift-${suffix}@example.test`;
+  const password = 'administrator password';
+  const secret = 'JBSWY3DPEHPK3PXP';
+  const administrator = await insertAdministrator(email, password, secret);
+  const { prisma, service } = createService();
+  try {
+    const pending = await service.startAdministratorSignIn({
+      email,
+      password,
+      deviceId: 'factor-drift-device',
+    });
+    const session = await service.verifyAdministratorMfa({
+      pendingMfaToken: pending.pendingMfaToken,
+      code: totpCode(secret),
+      deviceId: 'factor-drift-device',
+    });
+    await ownerPool.query('UPDATE mfa_factors SET revoked_at = now() WHERE id = $1', [
+      administrator.factorId,
+    ]);
+    // Simulate a privileged/manual repair that accidentally reactivates a session after revocation.
+    await ownerPool.query('UPDATE sessions SET revoked_at = NULL WHERE user_id = $1', [
+      administrator.userId,
+    ]);
+    await assert.rejects(service.authenticate(session.accessToken), expectAuthenticationFailure);
+    await assert.rejects(
+      service.refresh(session.refreshToken, 'factor-drift-device'),
+      expectAuthenticationFailure,
+    );
+  } finally {
+    await prisma.$disconnect();
+    await cleanupUsers([administrator.userId]);
+  }
+});
+
+void test('factor revocation and refresh serialize without leaving an active administrator session', async () => {
+  const suffix = randomUUID();
+  const email = `factor-refresh-race-${suffix}@example.test`;
+  const password = 'administrator password';
+  const secret = 'JBSWY3DPEHPK3PXP';
+  const administrator = await insertAdministrator(email, password, secret);
+  const { prisma, service } = createService();
+  const blocker = await ownerPool.connect();
+  try {
+    const pending = await service.startAdministratorSignIn({
+      email,
+      password,
+      deviceId: 'factor-refresh-race-device',
+    });
+    const session = await service.verifyAdministratorMfa({
+      pendingMfaToken: pending.pendingMfaToken,
+      code: totpCode(secret),
+      deviceId: 'factor-refresh-race-device',
+    });
+    await blocker.query('BEGIN');
+    await blocker.query(
+      `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`,
+      [`session-user:${administrator.userId}`],
+    );
+    const refresh = service.refresh(session.refreshToken, 'factor-refresh-race-device');
+    const revoke = ownerPool.query('UPDATE mfa_factors SET revoked_at = now() WHERE id = $1', [
+      administrator.factorId,
+    ]);
+    await waitForLockWaiters(2);
+    await blocker.query('COMMIT');
+    const [refreshResult, revokeResult] = await Promise.allSettled([refresh, revoke]);
+    assert.equal(revokeResult.status, 'fulfilled');
+    if (refreshResult.status === 'fulfilled') {
+      await assert.rejects(
+        service.authenticate(refreshResult.value.accessToken),
+        expectAuthenticationFailure,
+      );
+    }
+    assert.equal(
+      (await ownerPool.query(
+        'SELECT id FROM sessions WHERE user_id = $1 AND revoked_at IS NULL',
+        [administrator.userId],
+      )).rowCount,
+      0,
+    );
+  } finally {
+    await blocker.query('ROLLBACK');
+    blocker.release();
+    await prisma.$disconnect();
+    await cleanupUsers([administrator.userId]);
+  }
+});
+
+void test('factor revocation wins against in-flight MFA verification without deadlock', async () => {
+  const suffix = randomUUID();
+  const email = `factor-verify-race-${suffix}@example.test`;
+  const password = 'administrator password';
+  const secret = 'JBSWY3DPEHPK3PXP';
+  const administrator = await insertAdministrator(email, password, secret);
+  const { prisma, service } = createService();
+  const blocker = await ownerPool.connect();
+  let verification: Promise<SessionTokens> | undefined;
+  try {
+    const pending = await service.startAdministratorSignIn({
+      email,
+      password,
+      deviceId: 'factor-verify-race-device',
+    });
+    await blocker.query('BEGIN');
+    await blocker.query('SELECT id FROM mfa_factors WHERE id = $1 FOR UPDATE', [
+      administrator.factorId,
+    ]);
+    verification = service.verifyAdministratorMfa({
+      pendingMfaToken: pending.pendingMfaToken,
+      code: totpCode(secret),
+      deviceId: 'factor-verify-race-device',
+    });
+    void verification.catch(() => undefined);
+    await waitForLockWaiters(1);
+    await blocker.query('UPDATE mfa_factors SET revoked_at = now() WHERE id = $1', [
+      administrator.factorId,
+    ]);
+    await blocker.query('COMMIT');
+    await assert.rejects(verification, expectAuthenticationFailure);
+    assert.equal(
+      (await ownerPool.query(
+        'SELECT id FROM sessions WHERE user_id = $1 AND revoked_at IS NULL',
+        [administrator.userId],
+      )).rowCount,
+      0,
+    );
+  } finally {
+    await blocker.query('ROLLBACK');
+    blocker.release();
+    await verification?.catch(() => undefined);
+    await prisma.$disconnect();
+    await cleanupUsers([administrator.userId]);
   }
 });

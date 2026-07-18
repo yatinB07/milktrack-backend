@@ -165,24 +165,35 @@ export class PrismaAuthenticationService extends AuthenticationService {
     command: StartAdministratorSignInCommand,
   ): Promise<PendingMfaCredential> {
     const email = normalizeEmail(command.email);
-    const credential = await this.store.findAdministratorCredential(email);
-    const encoded = credential?.password ?? (await this.dummyPassword);
-    const valid = await this.passwords.verify(command.password, encoded);
-    if (!credential || !valid) throw authenticationFailed();
-
     const pendingMfaToken = this.tokens.issue();
     const now = new Date();
     const expiresAt = new Date(now.getTime() + FIVE_MINUTES);
-    await this.store.createPendingMfa({
+    const outcome = await this.store.startAdministratorSignIn({
       id: randomUUID(),
-      userId: credential.userId,
+      accountKey: this.tokens.hash(email),
+      normalizedEmail: email,
       tokenHash: this.tokens.hash(pendingMfaToken),
       deviceId: command.deviceId,
-      passwordChangedAt: credential.passwordChangedAt,
+      verifyPassword: async (credential) =>
+        this.passwords.verify(
+          command.password,
+          credential ?? (await this.dummyPassword),
+        ),
+      now,
       expiresAt,
       ipHash: command.ipHash,
       correlationId: this.correlationId(),
     });
+    if (outcome.kind === 'rate_limited') {
+      throw new ApplicationError(
+        'RATE_LIMITED',
+        'Try again later',
+        429,
+        true,
+        outcome.retryAfterSeconds,
+      );
+    }
+    if (outcome.kind === 'failed') throw authenticationFailed();
     return { pendingMfaToken, expiresAt };
   }
 
@@ -196,11 +207,15 @@ export class PrismaAuthenticationService extends AuthenticationService {
       now: new Date(),
       verifyCode: (encryptedSecret) => {
         try {
-          return this.totp.verify(this.secrets.decrypt(encryptedSecret), command.code);
+          return this.totp.matchingCounter(
+            this.secrets.decrypt(encryptedSecret),
+            command.code,
+          );
         } catch {
-          return false;
+          return undefined;
         }
       },
+      ipHash: command.ipHash,
       session: issued.persisted,
       authenticationMethod: 'administrator_mfa',
       correlationId: this.correlationId(),

@@ -76,6 +76,11 @@ async function insertMembership(input: Readonly<{
 async function issueSession(userId: string): Promise<string> {
   const token = randomUUID();
   await ownerPool.query(
+    `INSERT INTO mfa_factors (id, user_id, type, encrypted_secret, enabled_at)
+     VALUES ($1, $2, 'totp', 'membership-http-fixture', now())`,
+    [randomUUID(), userId],
+  );
+  await ownerPool.query(
     `INSERT INTO sessions
        (id, user_id, access_token_hash, refresh_token_hash,
         authentication_method, device_id, access_expires_at, expires_at,
@@ -93,6 +98,13 @@ async function insertSession(
   authenticationMethod: 'phone_otp' | 'administrator_mfa' = 'administrator_mfa',
 ): Promise<string> {
   const token = randomUUID();
+  if (authenticationMethod === 'administrator_mfa') {
+    await client.query(
+      `INSERT INTO mfa_factors (id, user_id, type, encrypted_secret, enabled_at)
+       VALUES ($1, $2, 'totp', 'membership-concurrency-fixture', now())`,
+      [randomUUID(), userId],
+    );
+  }
   await client.query(
     `INSERT INTO sessions
        (id, user_id, access_token_hash, refresh_token_hash,
@@ -146,6 +158,9 @@ async function cleanup(seed: Seed): Promise<void> {
     [seed.userIds],
   );
   await ownerPool.query('DELETE FROM sessions WHERE user_id = ANY($1::uuid[])', [
+    seed.userIds,
+  ]);
+  await ownerPool.query('DELETE FROM mfa_factors WHERE user_id = ANY($1::uuid[])', [
     seed.userIds,
   ]);
   await ownerPool.query('DELETE FROM users WHERE id = ANY($1::uuid[])', [

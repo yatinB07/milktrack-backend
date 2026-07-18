@@ -119,6 +119,7 @@ model MfaFactor {
   encryptedSecret String        @map("encrypted_secret")
   enabledAt       DateTime      @map("enabled_at") @db.Timestamptz(6)
   lastUsedAt      DateTime?     @map("last_used_at") @db.Timestamptz(6)
+  lastUsedCounter BigInt?       @map("last_used_counter") @db.BigInt
   revokedAt       DateTime?     @map("revoked_at") @db.Timestamptz(6)
   user            User          @relation(fields: [userId], references: [id])
 
@@ -135,11 +136,26 @@ model PendingMfaAuthentication {
   expiresAt                   DateTime  @map("expires_at") @db.Timestamptz(6)
   attemptCount                Int       @default(0) @map("attempt_count")
   consumedAt                  DateTime? @map("consumed_at") @db.Timestamptz(6)
+  requestIpHash               String?   @map("request_ip_hash")
   createdAt                   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
   user                        User      @relation(fields: [userId], references: [id])
 
   @@index([userId, expiresAt])
+  @@index([requestIpHash, createdAt(sort: Desc)])
   @@map("pending_mfa_authentications")
+}
+
+model AdministratorAuthenticationAttempt {
+  id         String   @id @db.Uuid
+  accountKey String   @map("account_key")
+  ipHash     String?  @map("ip_hash")
+  stage      String
+  succeeded  Boolean
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([accountKey, stage, createdAt(sort: Desc)])
+  @@index([ipHash, stage, createdAt(sort: Desc)])
+  @@map("administrator_authentication_attempts")
 }
 
 model OtpChallenge {

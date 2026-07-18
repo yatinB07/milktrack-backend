@@ -59,6 +59,11 @@ async function seedPlatformActor(
     [randomUUID(), userId, role],
   );
   await ownerPool.query(
+    `INSERT INTO mfa_factors (id, user_id, type, encrypted_secret, enabled_at)
+     VALUES ($1, $2, 'totp', 'vendor-http-fixture', now())`,
+    [randomUUID(), userId],
+  );
+  await ownerPool.query(
     `INSERT INTO sessions
        (id, user_id, access_token_hash, refresh_token_hash, authentication_method,
         device_id, access_expires_at, expires_at, last_seen_at)
@@ -128,6 +133,7 @@ after(async () => {
   if (actorIds.length > 0) {
     await ownerPool.query('DELETE FROM audit_events WHERE actor_user_id = ANY($1::uuid[])', [actorIds]);
     await ownerPool.query('DELETE FROM sessions WHERE user_id = ANY($1::uuid[])', [actorIds]);
+    await ownerPool.query('DELETE FROM mfa_factors WHERE user_id = ANY($1::uuid[])', [actorIds]);
     await ownerPool.query(
       'DELETE FROM platform_role_assignments WHERE user_id = ANY($1::uuid[])',
       [actorIds],

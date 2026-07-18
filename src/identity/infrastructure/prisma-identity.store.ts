@@ -227,19 +227,61 @@ export class PrismaIdentityStore {
     });
   }
 
-  async findAdministratorCredential(normalizedEmail: string): Promise<
-    | Readonly<{
-        userId: string;
-        passwordChangedAt: Date;
-        password: PasswordHash;
-      }>
-    | undefined
+  async startAdministratorSignIn(input: Readonly<{
+    id: string;
+    accountKey: string;
+    normalizedEmail: string;
+    tokenHash: string;
+    deviceId: string;
+    verifyPassword: (credential: PasswordHash | undefined) => Promise<boolean>;
+    now: Date;
+    expiresAt: Date;
+    ipHash?: string;
+    correlationId: string;
+  }>): Promise<
+    | Readonly<{ kind: 'success' }>
+    | Readonly<{ kind: 'failed' }>
+    | Readonly<{ kind: 'rate_limited'; retryAfterSeconds: number }>
   > {
     return this.prisma.$transaction(async (tx) => {
+      await this.authenticationAttemptLock(tx, input.accountKey, input.ipHash);
+      const cutoff = new Date(
+        input.now.getTime() - OtpCodes.policy.requestWindowSeconds * 1_000,
+      );
+      const recentPasswordAttempts = await tx.administratorAuthenticationAttempt.findMany({
+        where: {
+          stage: 'password',
+          succeeded: false,
+          createdAt: { gt: cutoff },
+          OR: [
+            { accountKey: input.accountKey },
+            ...(input.ipHash === undefined ? [] : [{ ipHash: input.ipHash }]),
+          ],
+        },
+        select: { accountKey: true, ipHash: true, createdAt: true },
+        orderBy: { createdAt: 'desc' },
+      });
+      const ipFailures = input.ipHash === undefined
+        ? []
+        : recentPasswordAttempts.filter(({ ipHash }) => ipHash === input.ipHash);
+      const accountFailures = recentPasswordAttempts.filter(
+        ({ accountKey }) => accountKey === input.accountKey,
+      );
+      if (
+        accountFailures.length >= OtpCodes.policy.maximumRequestsPerWindow ||
+        ipFailures.length >= OtpCodes.policy.maximumRequestsPerWindow
+      ) {
+        return this.rateLimited(
+          input.now,
+          accountFailures,
+          ipFailures,
+        );
+      }
+
       const identity = await tx.userIdentity.findFirst({
         where: {
           type: 'email',
-          normalizedValue: normalizedEmail,
+          normalizedValue: input.normalizedEmail,
           verifiedAt: { not: null },
           user: {
             status: 'active',
@@ -251,6 +293,11 @@ export class PrismaIdentityStore {
         select: { userId: true },
       });
       const userId = identity?.userId ?? NIL_USER_ID;
+      if (identity) {
+        await tx.$queryRaw`
+          SELECT user_id FROM password_credentials WHERE user_id = ${userId}::uuid FOR UPDATE
+        `;
+      }
       const password = await tx.passwordCredential.findUnique({
         where: { userId },
         select: {
@@ -258,6 +305,8 @@ export class PrismaIdentityStore {
           salt: true,
           parameters: true,
           changedAt: true,
+          failedAttempts: true,
+          lockedUntil: true,
         },
       });
       const platformRole = await tx.platformRoleAssignment.findFirst({
@@ -270,48 +319,147 @@ export class PrismaIdentityStore {
         memberships.some(({ role }) =>
           role === 'vendor_owner' || role === 'vendor_administrator',
         );
-      if (!identity || !password || !isAdministrator) return undefined;
-      return {
-        userId,
-        passwordChangedAt: password.changedAt,
-        password: {
+      const credential = password
+        ? {
           hash: password.passwordHash,
           salt: password.salt,
           parameters: password.parameters as unknown as PasswordHash['parameters'],
-        },
-      };
-    });
-  }
+        }
+        : undefined;
+      const eligible = identity !== null && password !== null && isAdministrator;
+      const passwordValid = await input.verifyPassword(eligible ? credential : undefined);
+      const accountLocked = password?.lockedUntil && password.lockedUntil > input.now;
+      if (!eligible || !passwordValid || accountLocked) {
+        await tx.administratorAuthenticationAttempt.create({
+          data: {
+            id: randomUUID(),
+            accountKey: input.accountKey,
+            ipHash: input.ipHash,
+            stage: 'password',
+            succeeded: false,
+            createdAt: input.now,
+          },
+        });
+        if (eligible && !accountLocked) {
+          const previousFailures =
+            password.lockedUntil !== null && password.lockedUntil <= input.now
+              ? 0
+              : password.failedAttempts;
+          const failedAttempts = Math.min(
+            previousFailures + 1,
+            OtpCodes.policy.maximumAttempts,
+          );
+          const lockedUntil = failedAttempts === OtpCodes.policy.maximumAttempts
+            ? new Date(input.now.getTime() + OtpCodes.policy.requestWindowSeconds * 1_000)
+            : null;
+          await tx.passwordCredential.update({
+            where: { userId },
+            data: { failedAttempts, lockedUntil },
+          });
+          await this.audit(tx, {
+            userId,
+            action: 'auth.password_failed',
+            entityId: userId,
+            correlationId: input.correlationId,
+            ipHash: input.ipHash,
+            deviceId: input.deviceId,
+          });
+          if (lockedUntil) {
+            await this.audit(tx, {
+              userId,
+              action: 'auth.password_locked',
+              entityId: userId,
+              correlationId: input.correlationId,
+              ipHash: input.ipHash,
+              deviceId: input.deviceId,
+            });
+          }
+        } else {
+          await this.audit(tx, {
+            userId: eligible ? userId : undefined,
+            action: 'auth.password_failed',
+            entityId: eligible ? userId : NIL_USER_ID,
+            correlationId: input.correlationId,
+            ipHash: input.ipHash,
+            deviceId: input.deviceId,
+          });
+        }
+        return { kind: 'failed' as const };
+      }
 
-  async createPendingMfa(input: Readonly<{
-    id: string;
-    userId: string;
-    tokenHash: string;
-    deviceId: string;
-    passwordChangedAt: Date;
-    expiresAt: Date;
-    ipHash?: string;
-    correlationId: string;
-  }>): Promise<void> {
-    await this.prisma.$transaction(async (tx) => {
+      const recentPending = await tx.administratorAuthenticationAttempt.findMany({
+        where: {
+          stage: 'pending_mfa',
+          succeeded: true,
+          createdAt: { gt: cutoff },
+          OR: [
+            { accountKey: input.accountKey },
+            ...(input.ipHash === undefined ? [] : [{ ipHash: input.ipHash }]),
+          ],
+        },
+        select: { accountKey: true, ipHash: true, createdAt: true },
+        orderBy: { createdAt: 'desc' },
+      });
+      const accountPending = recentPending.filter(
+        ({ accountKey }) => accountKey === input.accountKey,
+      );
+      const ipPending = input.ipHash === undefined
+        ? []
+        : recentPending.filter(({ ipHash }) => ipHash === input.ipHash);
+      if (
+        accountPending.length >= OtpCodes.policy.maximumRequestsPerWindow ||
+        ipPending.length >= OtpCodes.policy.maximumRequestsPerWindow
+      ) {
+        return this.rateLimited(
+          input.now,
+          accountPending,
+          ipPending,
+        );
+      }
+
+      await tx.passwordCredential.update({
+        where: { userId },
+        data: { failedAttempts: 0, lockedUntil: null },
+      });
       await tx.pendingMfaAuthentication.create({
         data: {
           id: input.id,
-          userId: input.userId,
+          userId,
           tokenHash: input.tokenHash,
           deviceId: input.deviceId,
-          passwordCredentialChangedAt: input.passwordChangedAt,
+          passwordCredentialChangedAt: password.changedAt,
           expiresAt: input.expiresAt,
+          requestIpHash: input.ipHash,
+          createdAt: input.now,
+        },
+      });
+      await tx.administratorAuthenticationAttempt.create({
+        data: {
+          id: randomUUID(),
+          accountKey: input.accountKey,
+          ipHash: input.ipHash,
+          stage: 'pending_mfa',
+          succeeded: true,
+          createdAt: input.now,
         },
       });
       await this.audit(tx, {
-        userId: input.userId,
+        userId,
+        action: 'auth.password_succeeded',
+        entityId: userId,
+        correlationId: input.correlationId,
+        ipHash: input.ipHash,
+        deviceId: input.deviceId,
+      });
+      await this.audit(tx, {
+        userId,
         action: 'auth.mfa_pending_created',
         entityId: input.id,
         correlationId: input.correlationId,
         ipHash: input.ipHash,
         deviceId: input.deviceId,
       });
+      return { kind: 'success' as const };
     });
   }
 
@@ -319,16 +467,26 @@ export class PrismaIdentityStore {
     tokenHash: string;
     deviceId: string;
     now: Date;
-    verifyCode: (encryptedSecret: string) => boolean;
+    verifyCode: (encryptedSecret: string) => number | undefined;
     session: PersistedSession;
     authenticationMethod: 'administrator_mfa';
     correlationId: string;
+    ipHash?: string;
   }>): Promise<'success' | 'failed'> {
     return this.prisma.$transaction(async (tx) => {
       const locked = await tx.$queryRaw<{ id: string }[]>`
         SELECT id FROM pending_mfa_authentications
         WHERE token_hash = ${input.tokenHash} FOR UPDATE`;
-      if (!locked[0]) return 'failed';
+      if (!locked[0]) {
+        await this.audit(tx, {
+          action: 'auth.mfa_failed',
+          entityId: NIL_USER_ID,
+          correlationId: input.correlationId,
+          ipHash: input.ipHash,
+          deviceId: input.deviceId,
+        });
+        return 'failed';
+      }
       const pending = await tx.pendingMfaAuthentication.findUnique({
         where: { id: locked[0].id },
         select: {
@@ -342,22 +500,27 @@ export class PrismaIdentityStore {
         },
       });
       if (!pending) return 'failed';
-      await this.sessionUserLock(tx, pending.userId);
       const user = await tx.user.findUnique({
         where: { id: pending.userId },
         select: { status: true, deletedAt: true },
       });
       const password = await tx.passwordCredential.findUnique({
         where: { userId: pending.userId },
-        select: { changedAt: true },
+        select: { changedAt: true, lockedUntil: true },
       });
       const platformRole = await tx.platformRoleAssignment.findFirst({
         where: { userId: pending.userId, revokedAt: null },
         select: { id: true },
       });
-      const factor = await tx.mfaFactor.findFirst({
-        where: { userId: pending.userId, type: 'totp', revokedAt: null },
-        select: { id: true, encryptedSecret: true },
+      const lockedFactor = await tx.$queryRaw<{ id: string }[]>`
+        SELECT id FROM mfa_factors
+        WHERE user_id = ${pending.userId}::uuid AND type = 'totp' AND revoked_at IS NULL
+        ORDER BY enabled_at, id LIMIT 1 FOR UPDATE
+      `;
+      await this.sessionUserLock(tx, pending.userId);
+      const factor = await tx.mfaFactor.findUnique({
+        where: { id: lockedFactor[0]?.id ?? NIL_USER_ID },
+        select: { id: true, encryptedSecret: true, lastUsedCounter: true },
       });
       const memberships = await this.authenticationMemberships(tx, pending.userId);
       const hasAdministratorAuthority =
@@ -374,28 +537,55 @@ export class PrismaIdentityStore {
         user.status !== 'active' ||
         user.deletedAt ||
         !password ||
+        (password.lockedUntil !== null && password.lockedUntil > input.now) ||
         password.changedAt.getTime() !==
           pending.passwordCredentialChangedAt.getTime() ||
         !hasAdministratorAuthority ||
         !factor
       ) {
+        await this.audit(tx, {
+          userId: pending.userId,
+          action: 'auth.mfa_failed',
+          entityId: pending.id,
+          correlationId: input.correlationId,
+          ipHash: input.ipHash,
+          deviceId: input.deviceId,
+        });
         return 'failed';
       }
-      if (!input.verifyCode(factor.encryptedSecret)) {
-        const attempts = pending.attemptCount + 1;
-        await tx.pendingMfaAuthentication.update({
-          where: { id: pending.id },
-          data: { attemptCount: attempts },
+      const recentFailures = await tx.pendingMfaAuthentication.aggregate({
+        where: {
+          userId: pending.userId,
+          createdAt: {
+            gt: new Date(
+              input.now.getTime() - OtpCodes.policy.requestWindowSeconds * 1_000,
+            ),
+          },
+        },
+        _sum: { attemptCount: true },
+      });
+      const aggregateAttempts = recentFailures._sum.attemptCount ?? 0;
+      if (aggregateAttempts >= OtpCodes.policy.maximumAttempts) {
+        await this.audit(tx, {
+          userId: pending.userId,
+          action: 'auth.mfa_failed',
+          entityId: pending.id,
+          correlationId: input.correlationId,
+          ipHash: input.ipHash,
+          deviceId: input.deviceId,
         });
-        if (attempts === OtpCodes.policy.maximumAttempts) {
-          await this.audit(tx, {
-            userId: pending.userId,
-            action: 'auth.mfa_locked',
-            entityId: pending.id,
-            correlationId: input.correlationId,
-            deviceId: input.deviceId,
-          });
-        }
+        return 'failed';
+      }
+      const counter = input.verifyCode(factor.encryptedSecret);
+      if (counter === undefined) {
+        await this.recordAdministratorMfaFailure(tx, pending, aggregateAttempts, input);
+        return 'failed';
+      }
+      if (
+        factor.lastUsedCounter !== null &&
+        BigInt(counter) <= factor.lastUsedCounter
+      ) {
+        await this.recordAdministratorMfaFailure(tx, pending, aggregateAttempts, input);
         return 'failed';
       }
       await tx.pendingMfaAuthentication.update({
@@ -404,7 +594,7 @@ export class PrismaIdentityStore {
       });
       await tx.mfaFactor.update({
         where: { id: factor.id },
-        data: { lastUsedAt: input.now },
+        data: { lastUsedAt: input.now, lastUsedCounter: BigInt(counter) },
       });
       await this.createSession(
         tx,
@@ -412,6 +602,14 @@ export class PrismaIdentityStore {
         input.session,
         input.authenticationMethod,
       );
+      await this.audit(tx, {
+        userId: pending.userId,
+        action: 'auth.mfa_succeeded',
+        entityId: pending.id,
+        correlationId: input.correlationId,
+        ipHash: input.ipHash,
+        deviceId: input.deviceId,
+      });
       await this.audit(tx, {
         userId: pending.userId,
         action: 'auth.session_created',
@@ -526,6 +724,11 @@ export class PrismaIdentityStore {
                 where: { revokedAt: null },
                 select: { role: true },
               },
+              mfaFactors: {
+                where: { type: 'totp', revokedAt: null },
+                select: { id: true },
+                take: 1,
+              },
             },
           },
         },
@@ -552,11 +755,16 @@ export class PrismaIdentityStore {
         ? activeMemberships.length > 0 &&
           session.user.platformRoles.length === 0 &&
           !hasPrivilegedMembership
-        : session.user.platformRoles.length > 0 || hasPrivilegedMembership;
+        : session.user.mfaFactors.length > 0 &&
+          (session.user.platformRoles.length > 0 || hasPrivilegedMembership);
       if (!methodIsEligible) {
         return undefined;
       }
-      await tx.session.update({ where: { id: session.id }, data: { lastSeenAt: now } });
+      const touched = await tx.session.updateMany({
+        where: { id: session.id, revokedAt: null },
+        data: { lastSeenAt: now },
+      });
+      if (touched.count !== 1) return undefined;
       return {
         userId: session.userId,
         sessionId: session.id,
@@ -634,6 +842,49 @@ export class PrismaIdentityStore {
     });
   }
 
+  private async recordAdministratorMfaFailure(
+    tx: Prisma.TransactionClient,
+    pending: Readonly<{ id: string; userId: string; attemptCount: number }>,
+    aggregateAttempts: number,
+    input: Readonly<{
+      now: Date;
+      correlationId: string;
+      deviceId: string;
+      ipHash?: string;
+    }>,
+  ): Promise<void> {
+    await tx.pendingMfaAuthentication.update({
+      where: { id: pending.id },
+      data: { attemptCount: pending.attemptCount + 1 },
+    });
+    await this.audit(tx, {
+      userId: pending.userId,
+      action: 'auth.mfa_failed',
+      entityId: pending.id,
+      correlationId: input.correlationId,
+      ipHash: input.ipHash,
+      deviceId: input.deviceId,
+    });
+    if (aggregateAttempts + 1 !== OtpCodes.policy.maximumAttempts) return;
+    await tx.passwordCredential.update({
+      where: { userId: pending.userId },
+      data: {
+        failedAttempts: OtpCodes.policy.maximumAttempts,
+        lockedUntil: new Date(
+          input.now.getTime() + OtpCodes.policy.requestWindowSeconds * 1_000,
+        ),
+      },
+    });
+    await this.audit(tx, {
+      userId: pending.userId,
+      action: 'auth.mfa_locked',
+      entityId: pending.id,
+      correlationId: input.correlationId,
+      ipHash: input.ipHash,
+      deviceId: input.deviceId,
+    });
+  }
+
   private async rateLimitLock(
     tx: Prisma.TransactionClient,
     destinationHash: string,
@@ -643,6 +894,38 @@ export class PrismaIdentityStore {
     for (const key of keys) {
       await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${key}, 0))::text`;
     }
+  }
+
+  private async authenticationAttemptLock(
+    tx: Prisma.TransactionClient,
+    accountKey: string,
+    ipHash?: string,
+  ): Promise<void> {
+    const keys = [
+      `admin-account:${accountKey}`,
+      ...(ipHash === undefined ? [] : [`admin-ip:${ipHash}`]),
+    ].sort();
+    for (const key of keys) {
+      await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${key}, 0))::text`;
+    }
+  }
+
+  private rateLimited(
+    now: Date,
+    ...attemptBuckets: readonly (readonly Readonly<{ createdAt: Date }>[])[]
+  ): Readonly<{ kind: 'rate_limited'; retryAfterSeconds: number }> {
+    const retryAt = Math.max(
+      ...attemptBuckets
+        .filter(({ length }) => length >= OtpCodes.policy.maximumRequestsPerWindow)
+        .map((attempts) =>
+          attempts[OtpCodes.policy.maximumRequestsPerWindow - 1].createdAt.getTime() +
+            OtpCodes.policy.requestWindowSeconds * 1_000,
+        ),
+    );
+    return {
+      kind: 'rate_limited',
+      retryAfterSeconds: Math.max(1, Math.ceil((retryAt - now.getTime()) / 1_000)),
+    };
   }
 
   private async isEligiblePhoneUser(
@@ -677,6 +960,11 @@ export class PrismaIdentityStore {
       select: {
         id: true,
         platformRoles: { where: { revokedAt: null }, select: { id: true }, take: 1 },
+        mfaFactors: {
+          where: { type: 'totp', revokedAt: null },
+          select: { id: true },
+          take: 1,
+        },
       },
     });
     if (!user) return false;
@@ -689,7 +977,8 @@ export class PrismaIdentityStore {
       ? user.platformRoles.length === 0 &&
           activeMemberships.length > 0 &&
           !hasPrivilegedMembership
-      : user.platformRoles.length > 0 || hasPrivilegedMembership;
+      : user.mfaFactors.length > 0 &&
+        (user.platformRoles.length > 0 || hasPrivilegedMembership);
   }
 
   private async activeMemberships(
