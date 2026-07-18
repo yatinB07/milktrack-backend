@@ -27,8 +27,9 @@ separate production values through the deployment platform. In particular:
 - `SESSION_TTL_SECONDS` controls the expiry of each issued refresh session; a
   successful refresh creates a new session with a new expiry.
 - `OTP_PROVIDER=local` is permitted only when `APP_ENV` is `development` or
-  `test`. A real provider adapter and injected provider credentials are required
-  before a production deployment can start.
+  `test`. It serves both phone OTP and owner-enrollment delivery. A real provider
+  adapter and injected provider credentials are required before a production
+  deployment can start.
 
 Never commit credentials, OTPs, TOTP seeds, access or refresh tokens, customer
 data, or production database URLs.
@@ -111,7 +112,7 @@ The seed creates a platform administrator, a Product Owner, and isolated Vendor
 A and Vendor B owners. It uses production password hashing and TOTP encryption;
 the database stores no plaintext password or TOTP secret.
 
-## Local OTP behavior
+## Local authentication delivery
 
 With `APP_ENV=development` and `OTP_PROVIDER=local`, requested phone OTPs are
 written to backend logs so development does not depend on provider API keys:
@@ -125,6 +126,19 @@ logs as sensitive and never enable this provider in production. PostgreSQL
 stores only HMAC-protected challenge values, attempt/expiry state, and hashed
 request metadata—not the plaintext OTP.
 
+Initial vendor-owner invitations use the same local-only provider setting. A
+platform administrator with MFA creates the invitation; the backend logs the
+30-minute setup token with a masked email destination. The invited owner uses
+that one-time token to choose a password, receives a generated TOTP secret, and
+confirms a current TOTP code before the owner membership becomes active.
+
+Local owner-enrollment delivery is in-process and intentionally has no email
+provider, queue, or worker. A failed send is attempted once more immediately and
+then remains `failed`. The protected retry endpoint rotates the setup token and
+expiry before another delivery attempt, so the previous token stops working.
+Treat these logs as credentials and do not use this adapter outside development
+or test.
+
 ## Verification
 
 Run the repository checks in its own Compose project:
@@ -136,12 +150,19 @@ docker compose --env-file .env run --rm backend npm run db:validate
 docker compose --profile test --env-file .env run --rm integration npm run test:integration
 bash test/security-release.sh
 bash test/compose-contract.sh
+COMPOSE_PROJECT_NAME=milktrack-retained-contract bash test/retained-volume-contract.sh
+COMPOSE_PROJECT_NAME=milktrack-retained-contract docker compose --env-file .env down -v --remove-orphans
 ```
 
 `test/security-release.sh` creates an isolated temporary database volume,
 validates the migration path and retained records, and runs the release-blocking
 RLS, cross-tenant, privilege, session, authentication, and audit checks. It
 removes only its own temporary volume.
+
+`test/retained-volume-contract.sh` requires an explicit, isolated
+`COMPOSE_PROJECT_NAME`. It deploys the current migration set, restarts PostgreSQL,
+takes the Compose project down and back up, and confirms migration history was
+retained. The following `down -v` removes only that named test project's volume.
 
 CI installs from the lockfile, runs lint/type-check/unit/build verification,
 validates Prisma, deploys every migration to an empty database, runs integration
@@ -159,6 +180,10 @@ docker run --rm --entrypoint npm milktrack-backend:production audit --omit=dev -
 COMPOSE_PROJECT_NAME=milktrack-production-contract bash test/runtime-contract.sh milktrack-backend:production
 COMPOSE_PROJECT_NAME=milktrack-production-contract docker compose --env-file .env down
 ```
+
+The committed images are fixed for reproducible builds: PostgreSQL 18.4 and
+Node.js 24.18.0 are both pinned by digest. Update each pin through a reviewed
+dependency change, not an unversioned production pull.
 
 ## OpenAPI contract
 

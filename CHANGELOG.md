@@ -10,10 +10,15 @@ All notable backend changes are recorded here.
   envelope, request correlation context, and versioned health contract.
 - Added phone OTP and administrator password/TOTP MFA sign-in, opaque access and
   rotating refresh sessions, logout, logout-all, and authenticated actor APIs.
+- Added initial vendor-owner invitation and owner-controlled password/TOTP setup,
+  one-time completion, audited failed-delivery token rotation, immediate rejection
+  of expired handles, lazy retirement on the next owner-establishment attempt,
+  and concurrent-completion protection; no retirement scheduler or worker exists.
 - Added separate platform and vendor roles, multi-role vendor memberships,
   scoped support authorization, and fail-closed security-denial auditing.
 - Added platform vendor creation, cursor-paginated reads, optimistic lifecycle
-  transitions, membership lifecycle, user delete/restore, and tenant audit APIs.
+  transitions, membership lifecycle, user delete/restore/deactivate, owner
+  orphan protection, and tenant audit APIs.
 - Added selective soft deletion for Phase 1 master records and append-only audit
   history for privileged and security-sensitive changes.
 - Added the idempotent development/test security seed for a platform
@@ -23,7 +28,13 @@ All notable backend changes are recorded here.
 ### Security
 
 - Added forced PostgreSQL row-level security for vendor memberships, support
-  grants, and audit events using transaction-local tenant context.
+  grants, owner enrollments, and audit events using transaction-local tenant
+  context.
+- Added administrator account/IP throttling, aggregate MFA attempt limits, TOTP
+  counter replay rejection, and automatic administrator-session revocation when
+  an MFA factor is revoked.
+- Added the restricted exact-handle owner-enrollment resolver; anonymous setup
+  establishes tenant context without direct table access or an RLS bypass.
 - Added separate owner and restricted runtime database roles; the runtime role
   cannot bypass RLS, alter the schema, or update/delete audit history.
 - Added release-blocking cross-tenant, privilege-escalation, session-replay,
@@ -35,3 +46,10 @@ All notable backend changes are recorded here.
   persistent named volume, and an unprivileged multi-stage production image.
 - Added Docker-first verification, Compose/runtime contracts, production
   dependency audit, migration validation, and operations/recovery guidance.
+- Pinned PostgreSQL 18.4 and Node.js 24.18.0 images by digest and added an
+  explicitly isolated retained-volume migration gate.
+
+### Known limitations
+
+- Phone OTP and owner-enrollment delivery use the local development/test adapter.
+  No production provider, delivery queue, or asynchronous worker is implemented.

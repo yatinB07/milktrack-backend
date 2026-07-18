@@ -31,9 +31,9 @@ service boundary.
 
 | Module | Responsibility | Owned tables |
 |---|---|---|
-| Identity | Phone OTP, administrator password/TOTP MFA, opaque sessions, actor resolution, and user lifecycle | `users`, `user_identities`, `password_credentials`, `mfa_factors`, `pending_mfa_authentications`, `otp_challenges`, `sessions` |
+| Identity | Phone OTP, throttled administrator password/TOTP MFA, opaque sessions, actor resolution, and user lifecycle | `users`, `user_identities`, `password_credentials`, `mfa_factors`, `pending_mfa_authentications`, `administrator_authentication_attempts`, `otp_challenges`, `sessions` |
 | Vendors | Platform vendor creation, reads, and audited lifecycle transitions | `vendors` |
-| Memberships | Vendor role membership lifecycle and role changes | `vendor_memberships` |
+| Memberships | Vendor role lifecycle, initial-owner invitation, and owner-controlled credential enrollment | `vendor_memberships`, `owner_enrollments` |
 | Authorization | Platform-role and support-grant policy evaluation | `platform_role_assignments`, `support_access_grants` |
 | Audit | Append-only privileged/security events and tenant audit reads | `audit_events` |
 | Database | Prisma connection and tenant-scoped transaction runner | No business tables |
@@ -60,9 +60,34 @@ Refresh rotates the session; detected replay revokes every active session for
 the user. Logout and logout-all record revocation rather than deleting session
 history.
 
-The local OTP adapter exists only for development/test and logs the code with a
-masked destination. Production requires a real provider adapter; no provider
-credentials are committed.
+Administrator password and pending-MFA issuance are throttled by both the
+HMAC-derived account key and HMAC-protected request IP. Password failures lock
+the credential at the authentication policy threshold. MFA failures are
+aggregated across all pending challenges for the user, so requesting a new
+challenge does not reset the attempt budget. A successful TOTP stores its
+30-second counter under a factor lock; the same or an older counter cannot be
+used through another concurrent challenge. Revoking an active TOTP factor
+atomically revokes the user's administrator-MFA sessions through a database
+trigger, and session authentication also rejects a missing active factor.
+
+An MFA-authenticated platform user with `user:manage` establishes the first
+vendor owner as an invited membership plus a 30-minute `owner_enrollments`
+record. The invited owner follows public one-time setup and completion handles,
+chooses a password, receives a newly generated TOTP secret, and proves possession
+before the email identity and membership are activated. Setup material is
+encrypted or hashed at rest, cleared after completion, serialized with user and
+tenant locks, and limited to five TOTP attempts. An expired handle is rejected
+immediately. Its enrollment and invited membership are retired lazily when the
+next owner-establishment attempt checks that vendor; there is no retirement
+scheduler or worker. A protected retry may rotate only a pending or failed,
+not-yet-started delivery. The local adapter logs the setup token for
+development/test. There is no external delivery provider or asynchronous
+delivery worker in Phase 1.
+
+The local phone-OTP and owner-enrollment adapters exist only for development/test
+and log their short-lived credentials with masked destinations. Production
+requires real provider adapters; none are implemented and no provider credentials
+are committed.
 
 ## Tenant and authorization boundary
 
@@ -80,9 +105,10 @@ authenticate opaque session
   -> commit
 ```
 
-`vendor_memberships`, `support_access_grants`, and `audit_events` have row-level
-security enabled and forced. Their policies compare `vendor_id` with the
-transaction-local `app.vendor_id`. The fixed runtime role is `milktrack_app`,
+`vendor_memberships`, `owner_enrollments`, `support_access_grants`, and
+`audit_events` have row-level security enabled and forced. Their policies compare
+`vendor_id` with the transaction-local `app.vendor_id`. The fixed runtime role is
+`milktrack_app`,
 matching the role named by committed migrations. Only its injected password is
 configurable. This role is neither the table owner nor a superuser and has no
 `BYPASSRLS`, schema-create,
@@ -102,6 +128,14 @@ administration. Compose exposes it to integration tests only through
 owner credentials to the API would bypass this threat boundary and is
 release-blocking.
 
+Anonymous owner setup cannot read `owner_enrollments` directly. The runtime role
+may execute the narrowly scoped `SECURITY DEFINER`
+`resolve_owner_enrollment_handle` function, which resolves only an exact,
+unexpired, unlocked setup or completion hash and returns the identifiers needed
+to establish tenant context. All subsequent access runs under forced RLS; PUBLIC
+has neither table nor function access, and the runtime role cannot delete an
+enrollment.
+
 ## Soft deletion and immutable history
 
 Selective soft deletion applies to mutable master records only:
@@ -110,6 +144,10 @@ Selective soft deletion applies to mutable master records only:
   and `deletion_reason`;
 - normal reads explicitly exclude deleted rows;
 - membership and user restore operations are explicit, authorized, and audited;
+- user deletion or deactivation revokes sessions and is rejected for the last
+  active Platform Administrator or the last effective owner of any vendor;
+- owner membership end, deletion, or demotion is serialized and cannot orphan a
+  vendor;
 - closing a vendor is a lifecycle transition and does not erase its history;
 - active-only uniqueness uses partial indexes where identifiers may be reused.
 
@@ -124,9 +162,11 @@ restricted updates/deletes so a vendor identity cannot rewrite its audit trail.
 Privileged state changes and their audit events execute in the same database
 transaction; failure of the required audit write rolls back the state change.
 Authentication and security-denial events use their own appropriate transaction,
-with anonymous audit rows limited by a database constraint to issued OTP
-challenges. Request correlation IDs connect HTTP activity to audit records, and
-IP values are HMAC-protected before storage.
+with anonymous audit rows limited by a database constraint to OTP issuance and
+password/MFA failures. Request correlation IDs connect HTTP activity to audit
+records, and IP values are HMAC-protected before storage. Owner invitation,
+delivery-token rotation, setup, completion, lockout, retirement, deactivation,
+and explicit session revocation retain their corresponding audit history.
 
 Vendor and audit lists use opaque bounded cursors: default 25, maximum 100, with
 a stable ID tie-breaker. Their ordered timestamps use PostgreSQL millisecond
@@ -146,6 +186,22 @@ container lifecycle operations in `postgres_data`. Staging and production must
 use durable private storage, automated encrypted backups, tested restoration,
 monitoring, and separate migration/runtime credentials. Committed migrations are
 append-only operational history; corrections use a new forward migration.
+
+The final Phase 1 hardening migrations are:
+
+- `202607180008_authentication_hardening`: administrator account/IP attempt
+  records, aggregate MFA support, TOTP counter replay protection, and automatic
+  administrator-session revocation when a factor is revoked;
+- `202607180009_align_membership_cursor_precision`: millisecond membership
+  ordering compatible with JavaScript cursor serialization;
+- `202607180010_owner_enrollment`: forced-RLS owner enrollment state, composite
+  identity integrity, and the exact-handle security-definer resolver.
+
+Local Compose pins PostgreSQL 18.4 by digest; every Dockerfile stage derives from
+the Node.js 24.18.0 image pinned by digest. The production stage installs only
+runtime dependencies and runs as the unprivileged `node` user. The database
+runtime principal remains the fixed, migration-owned `milktrack_app` role; image
+or role-name changes therefore require a reviewed migration/operations change.
 
 ## OpenAPI boundary
 
