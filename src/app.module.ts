@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 
 import { AuditModule } from './audit/audit.module.js';
+import { AuthorizationModule } from './authorization/authorization.module.js';
 import {
   RequestContextStore,
   requestContextStore,
@@ -10,7 +11,13 @@ import { HealthModule } from './health/health.module.js';
 import { VendorsModule } from './vendors/vendors.module.js';
 
 @Module({
-  imports: [AuditModule, DatabaseModule, HealthModule, VendorsModule],
+  imports: [
+    AuditModule,
+    AuthorizationModule,
+    DatabaseModule,
+    HealthModule,
+    VendorsModule,
+  ],
   providers: [{ provide: RequestContextStore, useValue: requestContextStore }],
 })
 export class AppModule {}
