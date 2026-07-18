@@ -1,0 +1,53 @@
+name: Backend CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      DATABASE_URL: postgresql://build:build@127.0.0.1:5432/build
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Use Node.js 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Verify application
+        run: npm run verify
+
+      - name: Validate Prisma schema
+        run: npm run db:validate
+
+      - name: Validate Compose contract
+        run: bash test/compose-contract.sh
+
+      - name: Build production image
+        run: docker build --target production -t milktrack-backend:ci .
+
+      - name: Audit production dependencies
+        run: docker run --rm --entrypoint npm milktrack-backend:ci audit --omit=dev --omit=optional
+
+      - name: Start Compose runtime contract
+        run: docker compose up --build --wait --wait-timeout 120
+
+      - name: Check production runtime contract
+        run: bash test/runtime-contract.sh milktrack-backend:ci
+
+      - name: Stop Compose stack
+        if: always()
+        run: docker compose down -v
