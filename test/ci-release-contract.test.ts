@@ -94,7 +94,21 @@ void test('runtime and retained-volume scripts exercise real production and pers
   assert.match(runtime, /fetch\('http:\/\/127\.0\.0\.1:3000\/v1\/health'\)/);
   assert.doesNotMatch(runtime, /TEST_OWNER_DATABASE_URL=/);
   assert.doesNotMatch(runtime, /MIGRATION_DATABASE_URL=/);
+  assert.match(retained, /COMPOSE_PROJECT_NAME:\?/);
   assert.match(retained, /docker compose restart postgres/);
   assert.match(retained, /docker compose down --remove-orphans/);
+  assert.match(retained, /docker compose build migrate/);
+  assert.match(retained, /docker compose run --rm migrate/);
+  assert.match(retained, /find prisma\/migrations/);
+  assert.match(retained, /if \[ "\$before" != "\$expected" \]/);
+  assert.match(
+    retained,
+    /if \[ "\$expected" != "\$after_restart" \] \|\| \[ "\$expected" != "\$after_down" \]/,
+  );
   assert.match(retained, /_prisma_migrations/);
+
+  const build = retained.indexOf('docker compose build migrate');
+  const deploy = retained.indexOf('docker compose run --rm migrate');
+  const count = retained.indexOf('before="$(migration_count)"');
+  assert.ok(build >= 0 && build < deploy && deploy < count);
 });
