@@ -10,7 +10,7 @@ const ownerPool = new pg.Pool({
 });
 test.after(() => Promise.all([pool.end(), ownerPool.end()]));
 
-void test('migrations 003 through 005 safely upgrade legacy data without resetting it', async () => {
+void test('migrations 003 through 006 safely upgrade legacy data without resetting it', async () => {
   const schema = `migration_${randomUUID().replaceAll('-', '')}`;
   const migrations = await Promise.all(
     [
@@ -19,6 +19,7 @@ void test('migrations 003 through 005 safely upgrade legacy data without resetti
       '202607180003_bind_session_authentication_method',
       '202607180004_allow_anonymous_auth_audits',
       '202607180005_constrain_anonymous_auth_audits',
+      '202607180006_align_vendor_cursor_precision',
     ].map((directory) =>
       readFile(new URL(`../prisma/migrations/${directory}/migration.sql`, import.meta.url), 'utf8'),
     ),
@@ -50,6 +51,17 @@ void test('migrations 003 through 005 safely upgrade legacy data without resetti
     await client.query(migrations[2]);
     await client.query(migrations[3]);
     await client.query(migrations[4]);
+    const legacyVendorId = randomUUID();
+    await client.query(
+      `INSERT INTO vendors
+         (id, code, legal_name, display_name, timezone, currency,
+          skip_cutoff_minutes, billing_day, created_at, updated_at)
+       VALUES ($1, $2, 'Legacy Precision', 'Legacy Precision',
+               'Asia/Kolkata', 'INR', 0, 1,
+               '2026-07-18T12:00:00.123900Z'::timestamptz, now())`,
+      [legacyVendorId, `legacy-${legacyVendorId}`],
+    );
+    await client.query(migrations[5]);
 
     const session = await client.query<{
       authentication_method: string;
@@ -90,6 +102,19 @@ void test('migrations 003 through 005 safely upgrade legacy data without resetti
       [schema],
     );
     assert.deepEqual(auditActor.rows, [{ is_nullable: 'YES' }]);
+    const vendorCreatedAt = await client.query<{ datetime_precision: number }>(
+      `SELECT datetime_precision FROM information_schema.columns
+       WHERE table_schema = $1 AND table_name = 'vendors'
+         AND column_name = 'created_at'`,
+      [schema],
+    );
+    assert.deepEqual(vendorCreatedAt.rows, [{ datetime_precision: 3 }]);
+    const migratedVendor = await client.query<{ created_at: string }>(
+      `SELECT to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS') AS created_at
+       FROM vendors WHERE id = $1`,
+      [legacyVendorId],
+    );
+    assert.deepEqual(migratedVendor.rows, [{ created_at: '2026-07-18T12:00:00.124' }]);
 
     const anonymousChallengeId = randomUUID();
     await client.query(

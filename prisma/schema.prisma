@@ -196,7 +196,7 @@ model Vendor {
   deletedAt         DateTime?            @map("deleted_at") @db.Timestamptz(6)
   deletedBy         String?              @map("deleted_by") @db.Uuid
   deletionReason    String?              @map("deletion_reason")
-  createdAt         DateTime             @default(now()) @map("created_at") @db.Timestamptz(6)
+  createdAt         DateTime             @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt         DateTime             @updatedAt @map("updated_at") @db.Timestamptz(6)
   memberships       VendorMembership[]
   supportGrants     SupportAccessGrant[]

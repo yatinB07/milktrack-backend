@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable } from '@nestjs/common';
 
 import type { Prisma } from '../generated/prisma/client.js';
 import { ApplicationError } from '../common/errors/application.error.js';
@@ -16,7 +16,7 @@ export interface TenantTransactionRunner {
 
 @Injectable()
 export class PrismaTenantTransactionRunner implements TenantTransactionRunner {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(@Inject(PrismaService) private readonly prisma: PrismaService) {}
 
   run<T>(
     vendorId: string,

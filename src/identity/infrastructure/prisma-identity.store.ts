@@ -1,13 +1,13 @@
 import { randomUUID } from 'node:crypto';
 
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable } from '@nestjs/common';
 
 import type {
   Actor,
   ActorMembership,
   VendorRole,
 } from '../../common/context/request-context.js';
-import type { PrismaService } from '../../database/prisma.service.js';
+import { PrismaService } from '../../database/prisma.service.js';
 import type { Prisma } from '../../generated/prisma/client.js';
 import { OtpCodes } from '../domain/otp.js';
 import type { PasswordHash } from '../domain/password.js';
@@ -40,7 +40,7 @@ type AuditInput = Readonly<{
 
 @Injectable()
 export class PrismaIdentityStore {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(@Inject(PrismaService) private readonly prisma: PrismaService) {}
 
   async createOtpChallenge(input: Readonly<{
     id: string;

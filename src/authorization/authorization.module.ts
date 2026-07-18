@@ -1,9 +1,11 @@
 import { Module } from '@nestjs/common';
 
 import { AuditModule } from '../audit/audit.module.js';
-import { requestContextStore } from '../common/context/request-context.js';
+import {
+  RequestContextStore,
+  requestContextStore,
+} from '../common/context/request-context.js';
 import { DatabaseModule } from '../database/database.module.js';
-import { AuthenticationService } from '../identity/application/authentication.service.js';
 import { IdentityModule } from '../identity/identity.module.js';
 import { AuthorizationPolicy } from './application/authorization.policy.js';
 import {
@@ -21,17 +23,18 @@ import { ActorGuard } from './http/actor.guard.js';
     { provide: AuthorizationPolicy, useExisting: PrismaAuthorizationPolicy },
     PrismaSecurityDenialRecorder,
     PrismaTenantAuthorizationExecutor,
-    {
-      provide: ActorGuard,
-      inject: [AuthenticationService],
-      useFactory: (authentication: AuthenticationService) =>
-        new ActorGuard(authentication, requestContextStore),
-    },
+    { provide: RequestContextStore, useValue: requestContextStore },
+    ActorGuard,
     {
       provide: TenantAuthorizationExecutor,
       useExisting: PrismaTenantAuthorizationExecutor,
     },
   ],
-  exports: [ActorGuard, AuthorizationPolicy, TenantAuthorizationExecutor],
+  exports: [
+    ActorGuard,
+    AuthorizationPolicy,
+    RequestContextStore,
+    TenantAuthorizationExecutor,
+  ],
 })
 export class AuthorizationModule {}

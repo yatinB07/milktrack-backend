@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable } from '@nestjs/common';
 
 import { AuditWriter } from '../../audit/application/audit-writer.js';
 import {
@@ -20,7 +20,7 @@ import {
 
 @Injectable()
 export class PrismaAuthorizationPolicy extends AuthorizationPolicy {
-  constructor(private readonly audits: AuditWriter) {
+  constructor(@Inject(AuditWriter) private readonly audits: AuditWriter) {
     super();
   }
 

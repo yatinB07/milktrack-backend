@@ -78,7 +78,7 @@ void test('transition increments the version and appends one redacted audit even
   const prisma = new PrismaService();
   const operation = new TransitionVendor(
     new PrismaTenantTransactionRunner(prisma),
-    new PrismaVendorStore(),
+    new PrismaVendorStore(prisma),
     new PrismaAuditWriter(),
   );
   await insertVendor(vendorId);
@@ -128,7 +128,7 @@ void test('audit failure rolls back the vendor status and version', async () => 
   const prisma = new PrismaService();
   const operation = new TransitionVendor(
     new PrismaTenantTransactionRunner(prisma),
-    new PrismaVendorStore(),
+    new PrismaVendorStore(prisma),
     new FailingAuditWriter(),
   );
   await insertVendor(vendorId);
@@ -151,7 +151,7 @@ void test('transition requires platform administrator authority and a valid reas
   const prisma = new PrismaService();
   const operation = new TransitionVendor(
     new PrismaTenantTransactionRunner(prisma),
-    new PrismaVendorStore(),
+    new PrismaVendorStore(prisma),
     new PrismaAuditWriter(),
   );
   await insertVendor(vendorId);
@@ -182,7 +182,7 @@ void test('transition excludes deleted vendors and rejects stale versions', asyn
   const prisma = new PrismaService();
   const operation = new TransitionVendor(
     new PrismaTenantTransactionRunner(prisma),
-    new PrismaVendorStore(),
+    new PrismaVendorStore(prisma),
     new PrismaAuditWriter(),
   );
   await insertVendor(vendorIds[0], 'active', true);

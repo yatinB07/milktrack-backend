@@ -35,7 +35,9 @@ export class TransitionVendor {
   constructor(
     @Inject(PrismaTenantTransactionRunner)
     private readonly transactions: TenantTransactionRunner,
+    @Inject(PrismaVendorStore)
     private readonly vendors: PrismaVendorStore,
+    @Inject(AuditWriter)
     private readonly audits: AuditWriter,
   ) {}
 
