@@ -9,6 +9,7 @@ import {
 import { DatabaseModule } from './database/database.module.js';
 import { HealthModule } from './health/health.module.js';
 import { IdentityModule } from './identity/identity.module.js';
+import { MembershipsModule } from './memberships/memberships.module.js';
 import { VendorsModule } from './vendors/vendors.module.js';
 
 @Module({
@@ -18,6 +19,7 @@ import { VendorsModule } from './vendors/vendors.module.js';
     DatabaseModule,
     HealthModule,
     IdentityModule,
+    MembershipsModule,
     VendorsModule,
   ],
   providers: [{ provide: RequestContextStore, useValue: requestContextStore }],

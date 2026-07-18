@@ -6,7 +6,8 @@ export type PlatformPermission =
   | 'vendor:read'
   | 'vendor:create'
   | 'vendor:transition'
-  | 'platform-role:manage';
+  | 'platform-role:manage'
+  | 'user:manage';
 
 export type VendorPermission =
   | 'membership:read'
@@ -23,6 +24,7 @@ const platformPermissions: Readonly<Record<PlatformRole, ReadonlySet<PlatformPer
     'vendor:create',
     'vendor:transition',
     'platform-role:manage',
+    'user:manage',
   ]),
   support_operations: new Set(),
 };

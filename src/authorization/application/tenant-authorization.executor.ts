@@ -34,7 +34,9 @@ export class PrismaTenantAuthorizationExecutor extends TenantAuthorizationExecut
   constructor(
     @Inject(PrismaTenantTransactionRunner)
     private readonly transactions: TenantTransactionRunner,
+    @Inject(AuthorizationPolicy)
     private readonly policy: AuthorizationPolicy,
+    @Inject(PrismaSecurityDenialRecorder)
     private readonly denials: PrismaSecurityDenialRecorder,
   ) {
     super();

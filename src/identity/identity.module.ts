@@ -12,6 +12,10 @@ import {
   PrismaAuthenticationService,
 } from './application/authentication.service.js';
 import { OtpDelivery } from './application/otp-delivery.js';
+import {
+  PrismaUserLifecycleService,
+  UserLifecycleService,
+} from './application/user-lifecycle.service.js';
 import { LocalOtpDelivery } from './infrastructure/local-otp.delivery.js';
 import { PrismaIdentityStore } from './infrastructure/prisma-identity.store.js';
 import { AuthController } from './http/auth.controller.js';
@@ -22,6 +26,11 @@ import { AuthController } from './http/auth.controller.js';
   providers: [
     { provide: RequestContextStore, useValue: requestContextStore },
     PrismaIdentityStore,
+    PrismaUserLifecycleService,
+    {
+      provide: UserLifecycleService,
+      useExisting: PrismaUserLifecycleService,
+    },
     {
       provide: OtpDelivery,
       useFactory: () =>
@@ -43,6 +52,6 @@ import { AuthController } from './http/auth.controller.js';
     },
     ActorGuard,
   ],
-  exports: [AuthenticationService],
+  exports: [AuthenticationService, UserLifecycleService],
 })
 export class IdentityModule {}

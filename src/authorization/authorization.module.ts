@@ -20,10 +20,10 @@ import { ActorGuard } from './http/actor.guard.js';
   imports: [AuditModule, DatabaseModule, IdentityModule],
   providers: [
     PrismaAuthorizationPolicy,
+    { provide: RequestContextStore, useValue: requestContextStore },
     { provide: AuthorizationPolicy, useExisting: PrismaAuthorizationPolicy },
     PrismaSecurityDenialRecorder,
     PrismaTenantAuthorizationExecutor,
-    { provide: RequestContextStore, useValue: requestContextStore },
     ActorGuard,
     {
       provide: TenantAuthorizationExecutor,

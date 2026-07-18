@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable } from '@nestjs/common';
 
 import { PrismaService } from '../../database/prisma.service.js';
 
@@ -14,7 +14,7 @@ export type SecurityDenial = Readonly<{
 
 @Injectable()
 export class PrismaSecurityDenialRecorder {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(@Inject(PrismaService) private readonly prisma: PrismaService) {}
 
   /** Records outside the rolled-back tenant transaction without tenant context. */
   async record(denial: SecurityDenial): Promise<void> {
