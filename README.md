@@ -162,7 +162,9 @@ The committed contract is `openapi/v1.json`. Regenerate it from the same Nest
 application and Swagger configuration used at runtime, then check for drift:
 
 ```bash
-docker compose --env-file .env run --rm backend npm run openapi:generate
+docker compose --env-file .env run --rm \
+  --volume "$PWD/openapi:/app/openapi" \
+  backend npm run openapi:generate
 docker compose --env-file .env run --rm backend npm run openapi:check
 ```
 
