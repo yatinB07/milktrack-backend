@@ -27,6 +27,8 @@ SELECT format(
   :'app_password'
 ) \gexec
 
+SELECT format('REVOKE ALL PRIVILEGES ON DATABASE %I FROM PUBLIC', :'database_name') \gexec
+REVOKE ALL PRIVILEGES ON SCHEMA public FROM PUBLIC;
 SELECT format('REVOKE ALL PRIVILEGES ON DATABASE %I FROM %I', :'database_name', :'app_role') \gexec
 SELECT format('REVOKE ALL PRIVILEGES ON SCHEMA public FROM %I', :'app_role') \gexec
 SELECT format('GRANT CONNECT ON DATABASE %I TO %I', :'database_name', :'app_role') \gexec
