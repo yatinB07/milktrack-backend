@@ -22,6 +22,7 @@ export class ApiErrorResponseDto {
 
 type HttpResponse = {
   status(status: number): HttpResponse;
+  setHeader(name: string, value: string): void;
   json(body: ApiErrorResponseDto): void;
 };
 
@@ -59,6 +60,10 @@ export class ApplicationErrorFilter implements ExceptionFilter {
         ? {}
         : { fieldErrors: error.fieldErrors }),
     };
+
+    if (error.retryAfterSeconds !== undefined) {
+      response.setHeader('Retry-After', String(error.retryAfterSeconds));
+    }
 
     response.status(error.status).json(body);
   }

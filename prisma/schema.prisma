@@ -55,6 +55,11 @@ enum OtpPurpose {
   sign_in
 }
 
+enum AuthenticationMethod {
+  phone_otp
+  administrator_mfa
+}
+
 model User {
   id             String                      @id @db.Uuid
   displayName    String                      @map("display_name")
@@ -161,6 +166,7 @@ model Session {
   accessTokenHash  String    @unique @map("access_token_hash")
   refreshTokenHash String    @unique @map("refresh_token_hash")
   predecessorId    String?   @unique @map("predecessor_id") @db.Uuid
+  authenticationMethod AuthenticationMethod @map("authentication_method")
   deviceId         String    @map("device_id")
   deviceName       String?   @map("device_name")
   ipHash           String?   @map("ip_hash")
@@ -255,7 +261,7 @@ model SupportAccessGrant {
 model AuditEvent {
   id            String   @id @db.Uuid
   vendorId      String?  @map("vendor_id") @db.Uuid
-  actorUserId   String   @map("actor_user_id") @db.Uuid
+  actorUserId   String?  @map("actor_user_id") @db.Uuid
   action        String
   entityType    String   @map("entity_type")
   entityId      String   @map("entity_id") @db.Uuid

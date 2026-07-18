@@ -29,7 +29,14 @@ const forbidden = (error: unknown) =>
 const actor = (
   userId: string,
   platformRoles: Actor['platformRoles'] = [],
-): Actor => ({ userId, sessionId: randomUUID(), platformRoles });
+): Actor => ({
+  userId,
+  sessionId: randomUUID(),
+  displayName: 'Authorization Test User',
+  authenticationMethod: 'administrator_mfa',
+  platformRoles,
+  memberships: [],
+});
 
 async function insertUser(userId: string): Promise<void> {
   await ownerPool.query(

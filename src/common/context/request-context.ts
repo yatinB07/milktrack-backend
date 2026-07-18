@@ -15,10 +15,21 @@ export type VendorRole =
   | 'delivery_agent'
   | 'customer';
 
+export type ActorMembership = Readonly<{
+  id: string;
+  vendorId: string;
+  vendorName: string;
+  role: VendorRole;
+  status: 'invited' | 'active' | 'ended';
+}>;
+
 export type Actor = Readonly<{
   userId: string;
   sessionId: string;
+  displayName: string;
+  authenticationMethod: 'phone_otp' | 'administrator_mfa';
   platformRoles: readonly PlatformRole[];
+  memberships: readonly ActorMembership[];
 }>;
 
 export type RequestContext = Readonly<{

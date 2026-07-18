@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import pg from 'pg';
 
@@ -8,6 +9,90 @@ const ownerPool = new pg.Pool({
   connectionString: process.env.TEST_OWNER_DATABASE_URL,
 });
 test.after(() => Promise.all([pool.end(), ownerPool.end()]));
+
+void test('migrations 003 and 004 safely upgrade a legacy session without resetting data', async () => {
+  const schema = `migration_${randomUUID().replaceAll('-', '')}`;
+  const migrations = await Promise.all(
+    [
+      '202607180001_phase_1_security_foundation',
+      '202607180002_preserve_vendor_audit_history',
+      '202607180003_bind_session_authentication_method',
+      '202607180004_allow_anonymous_auth_audits',
+    ].map((directory) =>
+      readFile(new URL(`../prisma/migrations/${directory}/migration.sql`, import.meta.url), 'utf8'),
+    ),
+  );
+  const client = await ownerPool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query(`CREATE SCHEMA "${schema}"`);
+    await client.query(`SET LOCAL search_path TO "${schema}"`);
+    await client.query(migrations[0]);
+    await client.query(migrations[1]);
+
+    const userId = randomUUID();
+    const sessionId = randomUUID();
+    await client.query(
+      `INSERT INTO users (id, display_name, updated_at)
+       VALUES ($1, 'Legacy Session User', now())`,
+      [userId],
+    );
+    await client.query(
+      `INSERT INTO sessions
+         (id, user_id, access_token_hash, refresh_token_hash, device_id,
+          access_expires_at, expires_at, last_seen_at)
+       VALUES ($1, $2, 'legacy-access', 'legacy-refresh', 'legacy-device',
+               now() + interval '15 minutes', now() + interval '30 days', now())`,
+      [sessionId, userId],
+    );
+
+    await client.query(migrations[2]);
+    await client.query(migrations[3]);
+
+    const session = await client.query<{
+      authentication_method: string;
+      access_token_hash: string;
+      refresh_token_hash: string;
+      device_id: string;
+      access_expired: boolean;
+      refresh_expired: boolean;
+    }>(
+      `SELECT authentication_method,
+              access_token_hash, refresh_token_hash, device_id,
+              access_expires_at <= now() AS access_expired,
+              expires_at <= now() AS refresh_expired
+       FROM sessions WHERE id = $1`,
+      [sessionId],
+    );
+    assert.deepEqual(session.rows, [
+      {
+        authentication_method: 'phone_otp',
+        access_token_hash: 'legacy-access',
+        refresh_token_hash: 'legacy-refresh',
+        device_id: 'legacy-device',
+        access_expired: true,
+        refresh_expired: true,
+      },
+    ]);
+    const column = await client.query<{ column_default: string | null }>(
+      `SELECT column_default FROM information_schema.columns
+       WHERE table_schema = $1 AND table_name = 'sessions'
+         AND column_name = 'authentication_method'`,
+      [schema],
+    );
+    assert.deepEqual(column.rows, [{ column_default: null }]);
+    const auditActor = await client.query<{ is_nullable: string }>(
+      `SELECT is_nullable FROM information_schema.columns
+       WHERE table_schema = $1 AND table_name = 'audit_events'
+         AND column_name = 'actor_user_id'`,
+      [schema],
+    );
+    assert.deepEqual(auditActor.rows, [{ is_nullable: 'YES' }]);
+  } finally {
+    await client.query('ROLLBACK');
+    client.release();
+  }
+});
 
 void test('Phase 1 tables, soft-delete columns, forced RLS and runtime role exist', async () => {
   const tables = [

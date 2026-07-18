@@ -21,7 +21,10 @@ const ownerPool = new pg.Pool({
 const administrator: Actor = {
   userId: randomUUID(),
   sessionId: randomUUID(),
+  displayName: 'Platform Administrator',
+  authenticationMethod: 'administrator_mfa',
   platformRoles: ['platform_administrator'],
+  memberships: [],
 };
 
 const execute = (
@@ -157,7 +160,10 @@ void test('transition requires platform administrator authority and a valid reas
     const productOwner: Actor = {
       userId: randomUUID(),
       sessionId: randomUUID(),
+      displayName: 'Product Owner',
+      authenticationMethod: 'administrator_mfa',
       platformRoles: ['product_owner'],
+      memberships: [],
     };
     await assert.rejects(execute(operation, vendorId, { actor: productOwner }),
       (error: unknown) => error instanceof ApplicationError && error.code === 'FORBIDDEN');

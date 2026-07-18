@@ -126,7 +126,10 @@ void test('request context requires an authenticated actor', () => {
   const actor: Actor = {
     userId: inboundCorrelationId,
     sessionId: '22222222-2222-4222-8222-222222222222',
+    displayName: 'Platform Administrator',
+    authenticationMethod: 'administrator_mfa',
     platformRoles: ['platform_administrator'],
+    memberships: [],
   };
   assert.equal(
     store.run({ correlationId: inboundCorrelationId, actor }, () => store.requireActor()),
