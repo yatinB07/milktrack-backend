@@ -29,6 +29,7 @@ export class ListAuditEventsQueryDto {
   cursor?: string;
 
   @IsOptional()
+  @ApiPropertyOptional({ type: Number, default: 25, minimum: 1, maximum: 100 })
   @Type(() => Number)
   @IsInt()
   @Min(1)

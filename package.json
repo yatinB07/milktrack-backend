@@ -13,6 +13,8 @@
     "db:seed": "tsx prisma/seed.ts",
     "db:validate": "prisma validate",
     "lint": "eslint .",
+    "openapi:check": "npm run build --silent && tsx scripts/export-openapi.ts --check",
+    "openapi:generate": "npm run build --silent && tsx scripts/export-openapi.ts",
     "start": "node dist/main.js",
     "start:dev": "nest start --watch",
     "test": "node --import tsx --test test/health.e2e.test.ts test/validation.e2e.test.ts $(find test -name '*.test.ts' ! -name '*.integration.test.ts' ! -name '*.e2e.test.ts' -print)",

@@ -1,5 +1,9 @@
 import { ValidationPipe, type INestApplication } from '@nestjs/common';
-import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
+import {
+  DocumentBuilder,
+  type OpenAPIObject,
+  SwaggerModule,
+} from '@nestjs/swagger';
 import cookieParser from 'cookie-parser';
 import helmet from 'helmet';
 
@@ -25,7 +29,14 @@ export function configureApp(app: INestApplication, authHmacKey: Buffer): void {
     }),
   );
 
-  const document = SwaggerModule.createDocument(
+  const document = createOpenApiDocument(app);
+  SwaggerModule.setup('openapi', app, document, {
+    jsonDocumentUrl: 'openapi.json',
+  });
+}
+
+export function createOpenApiDocument(app: INestApplication): OpenAPIObject {
+  return SwaggerModule.createDocument(
     app,
     new DocumentBuilder()
       .setTitle('MilkTrack API')
@@ -41,7 +52,4 @@ export function configureApp(app: INestApplication, authHmacKey: Buffer): void {
       )
       .build(),
   );
-  SwaggerModule.setup('openapi', app, document, {
-    jsonDocumentUrl: 'openapi.json',
-  });
 }
