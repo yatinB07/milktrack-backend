@@ -126,3 +126,64 @@ void test('audit inserts enforce global and exact tenant context', async () => {
     ]);
   }
 });
+
+void test('vendor identity changes cannot rewrite tenant audit history', async () => {
+  const vendorIds = [randomUUID(), randomUUID()];
+  const replacementVendorId = randomUUID();
+  const auditIds = [randomUUID(), randomUUID()];
+
+  await ownerPool.query(
+    `INSERT INTO vendors
+      (id, code, legal_name, display_name, timezone, currency, skip_cutoff_minutes, billing_day, updated_at)
+     VALUES ($1, $2, 'Delete Vendor', 'Delete Vendor', 'Asia/Kolkata', 'INR', 0, 1, now()),
+            ($3, $4, 'Update Vendor', 'Update Vendor', 'Asia/Kolkata', 'INR', 0, 1, now())`,
+    [vendorIds[0], `test-${vendorIds[0]}`, vendorIds[1], `test-${vendorIds[1]}`],
+  );
+  await ownerPool.query(
+    `INSERT INTO audit_events
+      (id, vendor_id, actor_user_id, action, entity_type, entity_id, correlation_id)
+     VALUES ($1, $2, $3, 'test', 'vendor', $2, $4),
+            ($5, $6, $7, 'test', 'vendor', $6, $8)`,
+    [
+      auditIds[0],
+      vendorIds[0],
+      randomUUID(),
+      randomUUID(),
+      auditIds[1],
+      vendorIds[1],
+      randomUUID(),
+      randomUUID(),
+    ],
+  );
+
+  try {
+    const mutations = await Promise.allSettled([
+      pool.query('DELETE FROM vendors WHERE id = $1', [vendorIds[0]]),
+      pool.query('UPDATE vendors SET id = $1 WHERE id = $2', [
+        replacementVendorId,
+        vendorIds[1],
+      ]),
+    ]);
+    const auditRows = await ownerPool.query<{ vendor_id: string }>(
+      `SELECT vendor_id FROM audit_events
+       WHERE id = ANY($1::uuid[]) ORDER BY id`,
+      [auditIds],
+    );
+
+    for (const mutation of mutations) {
+      if (mutation.status !== 'rejected') assert.fail('vendor mutation succeeded');
+      assert.match(String(mutation.reason), /audit_events_vendor_id_fkey/);
+    }
+    assert.deepEqual(
+      auditRows.rows.map((row) => row.vendor_id).sort(),
+      vendorIds.sort(),
+    );
+  } finally {
+    await ownerPool.query('DELETE FROM audit_events WHERE id = ANY($1::uuid[])', [
+      auditIds,
+    ]);
+    await ownerPool.query('DELETE FROM vendors WHERE id = ANY($1::uuid[])', [
+      [...vendorIds, replacementVendorId],
+    ]);
+  }
+});

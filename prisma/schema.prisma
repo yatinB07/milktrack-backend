@@ -266,7 +266,7 @@ model AuditEvent {
   ipHash        String?  @map("ip_hash")
   deviceId      String?  @map("device_id")
   createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
-  vendor        Vendor?  @relation(fields: [vendorId], references: [id])
+  vendor        Vendor?  @relation(fields: [vendorId], references: [id], onDelete: Restrict, onUpdate: Restrict)
 
   @@index([vendorId, createdAt(sort: Desc), id(sort: Desc)])
   @@map("audit_events")
