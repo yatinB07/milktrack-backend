@@ -2,9 +2,16 @@ import { ValidationPipe, type INestApplication } from '@nestjs/common';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import helmet from 'helmet';
 
+import { RequestContextMiddleware } from '../common/context/request-context.middleware.js';
+import { requestContextStore } from '../common/context/request-context.js';
+import { ApplicationErrorFilter } from '../common/errors/application-error.filter.js';
+
 export function configureApp(app: INestApplication): void {
   app.setGlobalPrefix('v1');
   app.use(helmet());
+  const requestContextMiddleware = new RequestContextMiddleware(requestContextStore);
+  app.use(requestContextMiddleware.use.bind(requestContextMiddleware));
+  app.useGlobalFilters(new ApplicationErrorFilter(requestContextStore));
   app.useGlobalPipes(
     new ValidationPipe({
       transform: true,
