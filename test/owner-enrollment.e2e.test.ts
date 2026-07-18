@@ -62,6 +62,12 @@ async function platformAdministrator(seed: Seed): Promise<{
      VALUES ($1, $2, 'platform_administrator', $2)`,
     [randomUUID(), id],
   );
+  // Administrator sessions must retain an active MFA factor after auth hardening.
+  await ownerPool.query(
+    `INSERT INTO mfa_factors (id, user_id, type, encrypted_secret, enabled_at)
+     VALUES ($1, $2, 'totp', 'owner-enrollment-admin-fixture', now())`,
+    [randomUUID(), id],
+  );
   const token = randomUUID();
   await ownerPool.query(
     `INSERT INTO sessions
