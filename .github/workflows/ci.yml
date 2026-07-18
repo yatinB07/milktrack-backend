@@ -3,6 +3,7 @@ name: Backend CI
 on:
   push:
     branches: [main]
+    tags: ['v*']
   pull_request:
 
 permissions:
@@ -11,9 +12,16 @@ permissions:
 jobs:
   verify:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
     env:
-      DATABASE_URL: postgresql://build:build@127.0.0.1:5432/build
+      COMPOSE_PROJECT_NAME: milktrack-ci-${{ github.run_id }}-${{ github.run_attempt }}
+      DATABASE_URL: postgresql://milktrack_app:milktrack_app_local@postgres:5432/milktrack
+      MIGRATION_DATABASE_URL: postgresql://milktrack_owner:milktrack_owner_local@postgres:5432/milktrack
+      AUTH_HMAC_KEY: MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=
+      MFA_ENCRYPTION_KEY: ZmVkY2JhOTg3NjU0MzIxMGZlZGNiYTk4NzY1NDMyMTA=
+      SESSION_TTL_SECONDS: 2592000
+      APP_ENV: test
+      OTP_PROVIDER: local
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -33,6 +41,21 @@ jobs:
       - name: Validate Prisma schema
         run: npm run db:validate
 
+      - name: Start empty PostgreSQL
+        run: docker compose --env-file .env.example up -d --wait --wait-timeout 120 postgres
+
+      - name: Deploy migrations
+        run: docker compose --env-file .env.example run --rm migrate
+
+      - name: Run integration tests
+        run: docker compose --profile test --env-file .env.example run --rm integration npm run test:integration
+
+      - name: Run security release gate
+        run: bash test/security-release.sh
+
+      - name: Check OpenAPI drift
+        run: docker compose --env-file .env.example run --rm backend npm run openapi:check
+
       - name: Validate Compose contract
         run: bash test/compose-contract.sh
 
@@ -42,12 +65,32 @@ jobs:
       - name: Audit production dependencies
         run: docker run --rm --entrypoint npm milktrack-backend:ci audit --omit=dev --omit=optional
 
-      - name: Start Compose runtime contract
-        run: docker compose up --build --wait --wait-timeout 120
-
       - name: Check production runtime contract
         run: bash test/runtime-contract.sh milktrack-backend:ci
 
+      - name: Check retained database volume
+        run: bash test/retained-volume-contract.sh
+
       - name: Stop Compose stack
         if: always()
-        run: docker compose down -v
+        run: docker compose --env-file .env.example down -v --remove-orphans
+
+  publish-openapi:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: verify
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Publish OpenAPI release artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" openapi/v1.json --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" openapi/v1.json --generate-notes --verify-tag
+          fi

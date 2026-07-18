@@ -2,6 +2,15 @@
 set -eu
 
 production_image="${1:-milktrack-backend:production}"
+project="${COMPOSE_PROJECT_NAME:-}"
+runtime_container="${project:-milktrack}-production-contract"
+
+cleanup() {
+  docker rm --force "$runtime_container" >/dev/null 2>&1 || true
+}
+
+trap cleanup EXIT
+trap 'exit 130' HUP INT TERM
 
 docker run --rm --entrypoint node "$production_image" --input-type=module --eval '
   import { existsSync } from "node:fs";
@@ -54,5 +63,39 @@ if [ "$privileges" != 't|f|t|f' ]; then
 fi
 echo 'runtime privileges: passed'
 
-docker compose exec -T backend node -e "require('node:assert/strict').equal(process.env.TEST_OWNER_DATABASE_URL, undefined); require('node:assert/strict').equal(process.env.MIGRATION_DATABASE_URL, undefined)"
-echo 'backend owner URL isolation: passed'
+if [ -z "$project" ]; then
+  echo 'COMPOSE_PROJECT_NAME is required to locate the isolated Compose network' >&2
+  exit 1
+fi
+
+docker run --detach \
+  --name "$runtime_container" \
+  --network "${project}_default" \
+  --env DATABASE_URL=postgresql://milktrack_app:milktrack_app_local@postgres:5432/milktrack \
+  --env AUTH_HMAC_KEY=MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY= \
+  --env MFA_ENCRYPTION_KEY=ZmVkY2JhOTg3NjU0MzIxMGZlZGNiYTk4NzY1NDMyMTA= \
+  --env SESSION_TTL_SECONDS=2592000 \
+  --env APP_ENV=test \
+  --env OTP_PROVIDER=local \
+  "$production_image" >/dev/null
+
+attempt=0
+until docker exec "$runtime_container" node --input-type=module --eval \
+  "fetch('http://127.0.0.1:3000/v1/health').then(response => process.exit(response.ok ? 0 : 1), () => process.exit(1))"
+do
+  attempt=$((attempt + 1))
+  if [ "$attempt" -ge 60 ]; then
+    docker logs "$runtime_container" >&2
+    echo 'production image did not become healthy within 120 seconds' >&2
+    exit 1
+  fi
+  sleep 2
+done
+
+if docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$runtime_container" \
+  | grep -Eq '^(TEST_OWNER_DATABASE_URL|MIGRATION_DATABASE_URL)='
+then
+    echo 'production runtime received an owner database URL' >&2
+    exit 1
+fi
+echo 'production runtime boot and owner URL isolation: passed'
