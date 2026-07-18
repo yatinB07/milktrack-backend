@@ -4,3 +4,4 @@ coverage/
 src/generated/prisma/
 .env
 npm-debug.log*
+.worktrees/
