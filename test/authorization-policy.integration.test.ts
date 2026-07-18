@@ -29,11 +29,12 @@ const forbidden = (error: unknown) =>
 const actor = (
   userId: string,
   platformRoles: Actor['platformRoles'] = [],
+  authenticationMethod: Actor['authenticationMethod'] = 'administrator_mfa',
 ): Actor => ({
   userId,
   sessionId: randomUUID(),
   displayName: 'Authorization Test User',
-  authenticationMethod: 'administrator_mfa',
+  authenticationMethod,
   platformRoles,
   memberships: [],
 });
@@ -62,13 +63,14 @@ async function insertVendor(
 }
 
 async function insertMembership(input: Readonly<{
+  id?: string;
   vendorId: string;
   userId: string;
   role?: string;
   status?: string;
   deleted?: boolean;
 }>): Promise<string> {
-  const id = randomUUID();
+  const id = input.id ?? randomUUID();
   await ownerPool.query(
     `INSERT INTO vendor_memberships
       (id, vendor_id, user_id, role, status, joined_at, ended_at, deleted_at, updated_at)
@@ -142,6 +144,116 @@ async function cleanup(input: Readonly<{
 }
 
 test.after(() => ownerPool.end());
+
+void test('vendor authorization considers every active role instead of an arbitrary membership', async () => {
+  const vendorId = randomUUID();
+  const userIds = [randomUUID(), randomUUID(), randomUUID()];
+  const prisma = new PrismaService();
+  const runner = new PrismaTenantTransactionRunner(prisma);
+  const policy = new PrismaAuthorizationPolicy(new PrismaAuditWriter());
+  await Promise.all(userIds.map(insertUser));
+  await insertVendor(vendorId);
+  await insertMembership({
+    id: '00000000-0000-4000-8000-000000000001',
+    vendorId,
+    userId: userIds[0],
+    role: 'customer',
+  });
+  await insertMembership({
+    id: 'ffffffff-ffff-4fff-bfff-ffffffffffff',
+    vendorId,
+    userId: userIds[0],
+    role: 'vendor_administrator',
+  });
+  await insertMembership({
+    id: '00000000-0000-4000-8000-000000000002',
+    vendorId,
+    userId: userIds[1],
+    role: 'vendor_administrator',
+  });
+  await insertMembership({
+    id: 'ffffffff-ffff-4fff-bfff-fffffffffffe',
+    vendorId,
+    userId: userIds[1],
+    role: 'customer',
+  });
+  await insertMembership({ vendorId, userId: userIds[2], role: 'customer' });
+  await insertMembership({ vendorId, userId: userIds[2], role: 'delivery_agent' });
+
+  try {
+    await runner.run(vendorId, (tx) =>
+      policy.requireVendor(
+        tx,
+        actor(userIds[0]),
+        vendorId,
+        'membership:read',
+        'membership.list',
+      ),
+    );
+    await runner.run(vendorId, (tx) =>
+      policy.requireVendor(
+        tx,
+        actor(userIds[1]),
+        vendorId,
+        'membership:read',
+        'membership.list',
+      ),
+    );
+    await assert.rejects(
+      runner.run(vendorId, (tx) =>
+        policy.requireVendor(
+          tx,
+          actor(userIds[2], [], 'phone_otp'),
+          vendorId,
+          'membership:read',
+          'membership.list',
+        ),
+      ),
+      forbidden,
+    );
+  } finally {
+    await prisma.$disconnect();
+    await cleanup({ vendorIds: [vendorId], userIds });
+  }
+});
+
+void test('privileged vendor roles require administrator MFA', async () => {
+  const vendorId = randomUUID();
+  const userId = randomUUID();
+  const prisma = new PrismaService();
+  const runner = new PrismaTenantTransactionRunner(prisma);
+  const policy = new PrismaAuthorizationPolicy(new PrismaAuditWriter());
+  await insertUser(userId);
+  await insertVendor(vendorId);
+  await insertMembership({ vendorId, userId, role: 'vendor_owner' });
+
+  try {
+    await assert.rejects(
+      runner.run(vendorId, (tx) =>
+        policy.requireVendor(
+          tx,
+          actor(userId, [], 'phone_otp'),
+          vendorId,
+          'membership:manage',
+          'membership.create',
+        ),
+      ),
+      forbidden,
+    );
+    await runner.run(vendorId, (tx) =>
+      policy.requireVendor(
+        tx,
+        actor(userId),
+        vendorId,
+        'membership:manage',
+        'membership.create',
+      ),
+    );
+  } finally {
+    await prisma.$disconnect();
+    await cleanup({ vendorIds: [vendorId], userIds: [userId] });
+  }
+});
 
 void test('active memberships are vendor-specific and ended or deleted memberships deny', async () => {
   const vendorIds = [randomUUID(), randomUUID()];

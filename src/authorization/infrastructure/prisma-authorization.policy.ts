@@ -39,12 +39,12 @@ export class PrismaAuthorizationPolicy extends AuthorizationPolicy {
   ): Promise<void> {
     requireVendorOperation(operation, permission);
 
-    const [vendor, membership] = await Promise.all([
+    const [vendor, memberships] = await Promise.all([
       tx.vendor.findFirst({
         where: { id: vendorId, status: 'active', deletedAt: null },
         select: { id: true },
       }),
-      tx.vendorMembership.findFirst({
+      tx.vendorMembership.findMany({
         where: {
           vendorId,
           userId: actor.userId,
@@ -55,7 +55,13 @@ export class PrismaAuthorizationPolicy extends AuthorizationPolicy {
         select: { role: true },
       }),
     ]);
-    if (!vendor || !membership || !hasVendorPermission(membership.role, permission)) {
+    const authorized = memberships.some(
+      ({ role }) =>
+        hasVendorPermission(role, permission) &&
+        (actor.authenticationMethod === 'administrator_mfa' ||
+          (role !== 'vendor_owner' && role !== 'vendor_administrator')),
+    );
+    if (!vendor || !authorized) {
       forbid();
     }
   }

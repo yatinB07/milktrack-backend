@@ -9,11 +9,15 @@ import {
   requirePlatformPermission,
   requireVendorPermission,
 } from '../src/authorization/application/authorization.policy.js';
+import type { AuditWriter } from '../src/audit/application/audit-writer.js';
+import { PrismaAuthorizationPolicy } from '../src/authorization/infrastructure/prisma-authorization.policy.js';
 import type {
+  Actor,
   PlatformRole,
   VendorRole,
 } from '../src/common/context/request-context.js';
 import { ApplicationError } from '../src/common/errors/application.error.js';
+import type { Prisma } from '../src/generated/prisma/client.js';
 
 const platform = {
   product_owner: ['vendor:read'],
@@ -86,5 +90,41 @@ void test('vendor roles allow exactly the reviewed permission matrix', () => {
   assert.throws(
     () => requireVendorPermission('customer', 'audit:read'),
     forbidden,
+  );
+});
+
+void test('vendor policy grants access when any active membership role permits it', async () => {
+  const audits: AuditWriter = { append: () => Promise.resolve() };
+  const policy = new PrismaAuthorizationPolicy(audits);
+  const actor: Actor = {
+    userId: '00000000-0000-4000-8000-000000000001',
+    sessionId: '00000000-0000-4000-8000-000000000002',
+    displayName: 'Multi-role user',
+    authenticationMethod: 'administrator_mfa',
+    platformRoles: [],
+    memberships: [],
+  };
+  const tx = {
+    vendor: {
+      findFirst: () => Promise.resolve({ id: actor.userId }),
+    },
+    vendorMembership: {
+      findFirst: () => Promise.resolve({ role: 'customer' }),
+      findMany: () =>
+        Promise.resolve([
+          { role: 'customer' },
+          { role: 'vendor_administrator' },
+        ]),
+    },
+  } as unknown as Prisma.TransactionClient;
+
+  await assert.doesNotReject(
+    policy.requireVendor(
+      tx,
+      actor,
+      actor.userId,
+      'membership:read',
+      'membership.list',
+    ),
   );
 });
