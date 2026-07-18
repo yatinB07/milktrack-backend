@@ -1,4 +1,9 @@
-import { Injectable, type CanActivate, type ExecutionContext } from '@nestjs/common';
+import {
+  Inject,
+  Injectable,
+  type CanActivate,
+  type ExecutionContext,
+} from '@nestjs/common';
 
 import { RequestContextStore } from '../../common/context/request-context.js';
 import { ApplicationError } from '../../common/errors/application.error.js';
@@ -21,7 +26,9 @@ function unauthenticated(): ApplicationError {
 @Injectable()
 export class ActorGuard implements CanActivate {
   constructor(
+    @Inject(AuthenticationService)
     private readonly authentication: AuthenticationService,
+    @Inject(RequestContextStore)
     private readonly context: RequestContextStore,
   ) {}
 

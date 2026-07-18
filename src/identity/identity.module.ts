@@ -1,6 +1,11 @@
 import { Module } from '@nestjs/common';
 
+import { ActorGuard } from '../authorization/http/actor.guard.js';
 import { validateAuthenticationEnvironment } from '../bootstrap/auth-environment.js';
+import {
+  RequestContextStore,
+  requestContextStore,
+} from '../common/context/request-context.js';
 import { DatabaseModule } from '../database/database.module.js';
 import {
   AuthenticationService,
@@ -9,10 +14,13 @@ import {
 import { OtpDelivery } from './application/otp-delivery.js';
 import { LocalOtpDelivery } from './infrastructure/local-otp.delivery.js';
 import { PrismaIdentityStore } from './infrastructure/prisma-identity.store.js';
+import { AuthController } from './http/auth.controller.js';
 
 @Module({
   imports: [DatabaseModule],
+  controllers: [AuthController],
   providers: [
+    { provide: RequestContextStore, useValue: requestContextStore },
     PrismaIdentityStore,
     {
       provide: OtpDelivery,
@@ -33,6 +41,7 @@ import { PrismaIdentityStore } from './infrastructure/prisma-identity.store.js';
         });
       },
     },
+    ActorGuard,
   ],
   exports: [AuthenticationService],
 })

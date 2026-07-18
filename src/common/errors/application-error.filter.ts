@@ -7,16 +7,31 @@ import {
   type ExceptionFilter,
   Injectable,
 } from '@nestjs/common';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 import { RequestContextStore } from '../context/request-context.js';
 import { ApplicationError } from './application.error.js';
 
 export class ApiErrorResponseDto {
+  @ApiProperty({ type: String })
   code!: string;
+
+  @ApiProperty({ type: String })
   message!: string;
+
+  @ApiProperty({ type: Boolean })
   retryable!: boolean;
+
+  @ApiProperty({ type: String, format: 'uuid' })
   correlationId!: string;
+
+  @ApiPropertyOptional({ type: Number, minimum: 1 })
   retryAfterSeconds?: number;
+
+  @ApiPropertyOptional({
+    type: 'object',
+    additionalProperties: { type: 'array', items: { type: 'string' } },
+  })
   fieldErrors?: Readonly<Record<string, readonly string[]>>;
 }
 
