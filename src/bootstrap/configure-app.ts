@@ -6,10 +6,13 @@ import { RequestContextMiddleware } from '../common/context/request-context.midd
 import { requestContextStore } from '../common/context/request-context.js';
 import { ApplicationErrorFilter } from '../common/errors/application-error.filter.js';
 
-export function configureApp(app: INestApplication): void {
+export function configureApp(app: INestApplication, authHmacKey: Buffer): void {
   app.setGlobalPrefix('v1');
   app.use(helmet());
-  const requestContextMiddleware = new RequestContextMiddleware(requestContextStore);
+  const requestContextMiddleware = new RequestContextMiddleware(
+    requestContextStore,
+    authHmacKey,
+  );
   app.use(requestContextMiddleware.use.bind(requestContextMiddleware));
   app.useGlobalFilters(new ApplicationErrorFilter(requestContextStore));
   app.useGlobalPipes(

@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHmac, randomUUID } from 'node:crypto';
 
 import { Injectable, type NestMiddleware } from '@nestjs/common';
 
@@ -9,6 +9,7 @@ const UUID_PATTERN =
 
 type RequestLike = Readonly<{
   headers: Readonly<Record<string, string | readonly string[] | undefined>>;
+  socket: Readonly<{ remoteAddress?: string }>;
 }>;
 
 type ResponseLike = {
@@ -17,7 +18,10 @@ type ResponseLike = {
 
 @Injectable()
 export class RequestContextMiddleware implements NestMiddleware {
-  constructor(private readonly context: RequestContextStore) {}
+  constructor(
+    private readonly context: RequestContextStore,
+    private readonly authHmacKey: Buffer,
+  ) {}
 
   use(request: RequestLike, response: ResponseLike, next: () => void): void {
     const inboundCorrelationId = request.headers['x-correlation-id'];
@@ -28,6 +32,10 @@ export class RequestContextMiddleware implements NestMiddleware {
         : randomUUID();
 
     response.setHeader('x-correlation-id', correlationId);
-    this.context.run({ correlationId }, next);
+    const remoteAddress = request.socket.remoteAddress;
+    const ipHash = remoteAddress
+      ? createHmac('sha256', this.authHmacKey).update(remoteAddress).digest('hex')
+      : undefined;
+    this.context.run({ correlationId, ipHash }, next);
   }
 }

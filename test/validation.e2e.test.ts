@@ -17,7 +17,10 @@ void describe('configureApp validation', () => {
   before(async () => {
     const { configureApp } = await import('../src/bootstrap/configure-app.js');
     app = await NestFactory.create(ValidationTestModule, { logger: false });
-    configureApp(app);
+    configureApp(
+      app,
+      Buffer.from('0123456789abcdef0123456789abcdef'),
+    );
     await app.listen(0, '127.0.0.1');
 
     const address = (app.getHttpServer() as Server).address();

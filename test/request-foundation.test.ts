@@ -21,6 +21,7 @@ import { CursorCodec } from '../src/common/cursor/cursor.js';
 import { ApplicationError } from '../src/common/errors/application.error.js';
 
 const inboundCorrelationId = '11111111-1111-4111-8111-111111111111';
+const authHmacKey = Buffer.from('0123456789abcdef0123456789abcdef');
 
 @Controller('request-foundation-test')
 class RequestFoundationTestController {
@@ -143,7 +144,7 @@ void describe('request middleware and application error filter', () => {
 
   before(async () => {
     app = await NestFactory.create(RequestFoundationTestModule, { logger: false });
-    configureApp(app);
+    configureApp(app, authHmacKey);
     await app.listen(0, '127.0.0.1');
 
     const address = (app.getHttpServer() as Server).address();

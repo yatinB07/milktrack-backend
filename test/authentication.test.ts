@@ -18,6 +18,8 @@ import {
 } from '../src/identity/domain/identity-normalization.js';
 import { LocalOtpDelivery } from '../src/identity/infrastructure/local-otp.delivery.js';
 
+const authHmacKey = Buffer.from('0123456789abcdef0123456789abcdef');
+
 void test('local OTP delivery is restricted to explicit local development and test environments', async () => {
   for (const appEnv of ['development', 'test'] as const) {
     const delivery = new LocalOtpDelivery({ appEnv, provider: 'local' });
@@ -118,7 +120,7 @@ void describe('authentication rate-limit HTTP contract', () => {
 
   before(async () => {
     app = await NestFactory.create(AuthenticationTestModule, { logger: false });
-    configureApp(app);
+    configureApp(app, authHmacKey);
     await app.listen(0, '127.0.0.1');
     const address = (app.getHttpServer() as Server).address();
     assert.ok(address && typeof address !== 'string');

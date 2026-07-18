@@ -10,9 +10,9 @@ import { configureApp } from './configure-app.js';
 export async function createApp(
   options: { logger?: false } = {},
 ): Promise<INestApplication> {
-  validateAuthenticationEnvironment(process.env);
+  const authenticationEnvironment = validateAuthenticationEnvironment(process.env);
   const app = await NestFactory.create(AppModule, options);
-  configureApp(app);
+  configureApp(app, authenticationEnvironment.authHmacKey);
   app.enableShutdownHooks();
   return app;
 }

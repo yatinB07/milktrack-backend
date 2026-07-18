@@ -39,16 +39,24 @@ export type RequestContext = Readonly<{
   ipHash?: string;
 }>;
 
+type RequestContextCell = { current: RequestContext };
+
 @Injectable()
 export class RequestContextStore {
-  private readonly storage = new AsyncLocalStorage<RequestContext>();
+  private readonly storage = new AsyncLocalStorage<RequestContextCell>();
 
   run<T>(context: RequestContext, callback: () => T): T {
-    return this.storage.run(context, callback);
+    return this.storage.run({ current: context }, callback);
   }
 
   get(): RequestContext | undefined {
-    return this.storage.getStore();
+    return this.storage.getStore()?.current;
+  }
+
+  replaceActor(actor: Actor): void {
+    const cell = this.storage.getStore();
+    if (!cell) throw new Error('Request context is unavailable');
+    cell.current = { ...cell.current, actor };
   }
 
   require(): RequestContext {
