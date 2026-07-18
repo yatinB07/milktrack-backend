@@ -9,8 +9,8 @@ import { PrismaAuditWriter } from '../src/audit/infrastructure/prisma-audit.writ
 import type { Actor } from '../src/common/context/request-context.js';
 import { requestContextStore } from '../src/common/context/request-context.js';
 import { ApplicationError } from '../src/common/errors/application.error.js';
-import { PrismaService } from '../src/database/prisma.service.js';
-import { PrismaTenantTransactionRunner } from '../src/database/tenant-transaction.runner.js';
+import { PrismaService } from '../src/database/infrastructure/prisma.service.js';
+import { PrismaTenantTransactionRunner } from '../src/database/infrastructure/prisma-tenant-transaction.runner.js';
 import { TransitionVendor } from '../src/vendors/application/transition-vendor.js';
 import { PrismaVendorStore } from '../src/vendors/infrastructure/prisma-vendor.store.js';
 

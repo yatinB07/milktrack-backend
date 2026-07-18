@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 
 import { Inject, Injectable } from '@nestjs/common';
 
-import { PrismaService } from '../../database/prisma.service.js';
+import { PrismaService } from '../../database/infrastructure/prisma.service.js';
 
 export type SecurityDenial = Readonly<{
   actorUserId: string;

@@ -6,33 +6,45 @@ import {
   requestContextStore,
 } from '../common/context/request-context.js';
 import { DatabaseModule } from '../database/database.module.js';
-import { IdentityModule } from '../identity/identity.module.js';
+import {
+  AuthenticationAuthorityPort,
+  UserLifecycleAuthorizationPort,
+} from './application/identity-authorization.port.js';
 import { AuthorizationPolicy } from './application/authorization.policy.js';
 import {
   PrismaTenantAuthorizationExecutor,
   TenantAuthorizationExecutor,
 } from './application/tenant-authorization.executor.js';
 import { PrismaAuthorizationPolicy } from './infrastructure/prisma-authorization.policy.js';
+import { PrismaIdentityAuthorizationAdapter } from './infrastructure/prisma-identity-authorization.adapter.js';
 import { PrismaSecurityDenialRecorder } from './infrastructure/security-denial.recorder.js';
-import { ActorGuard } from './http/actor.guard.js';
 
 @Module({
-  imports: [AuditModule, DatabaseModule, IdentityModule],
+  imports: [AuditModule, DatabaseModule],
   providers: [
     PrismaAuthorizationPolicy,
     { provide: RequestContextStore, useValue: requestContextStore },
     { provide: AuthorizationPolicy, useExisting: PrismaAuthorizationPolicy },
     PrismaSecurityDenialRecorder,
     PrismaTenantAuthorizationExecutor,
-    ActorGuard,
+    PrismaIdentityAuthorizationAdapter,
+    {
+      provide: AuthenticationAuthorityPort,
+      useExisting: PrismaIdentityAuthorizationAdapter,
+    },
+    {
+      provide: UserLifecycleAuthorizationPort,
+      useExisting: PrismaIdentityAuthorizationAdapter,
+    },
     {
       provide: TenantAuthorizationExecutor,
       useExisting: PrismaTenantAuthorizationExecutor,
     },
   ],
   exports: [
-    ActorGuard,
     AuthorizationPolicy,
+    AuthenticationAuthorityPort,
+    UserLifecycleAuthorizationPort,
     RequestContextStore,
     TenantAuthorizationExecutor,
   ],

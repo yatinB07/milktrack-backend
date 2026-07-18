@@ -10,10 +10,7 @@ import {
 } from '../../common/context/request-context.js';
 import { CursorCodec } from '../../common/cursor/cursor.js';
 import { ApplicationError } from '../../common/errors/application.error.js';
-import {
-  PrismaTenantTransactionRunner,
-  type TenantTransactionRunner,
-} from '../../database/tenant-transaction.runner.js';
+import { TenantTransactionRunner } from '../../common/application/transaction-context.js';
 import type { VendorStatus } from '../domain/vendor-lifecycle.js';
 import { PrismaVendorStore } from '../infrastructure/prisma-vendor.store.js';
 import { TransitionVendor } from './transition-vendor.js';
@@ -76,7 +73,7 @@ export class PrismaVendorService extends VendorService {
   constructor(
     @Inject(AuthorizationPolicy)
     private readonly authorization: AuthorizationPolicy,
-    @Inject(PrismaTenantTransactionRunner)
+    @Inject(TenantTransactionRunner)
     private readonly transactions: TenantTransactionRunner,
     @Inject(PrismaVendorStore)
     private readonly vendors: PrismaVendorStore,

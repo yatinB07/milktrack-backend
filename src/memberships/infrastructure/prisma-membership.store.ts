@@ -1,9 +1,10 @@
 import { Injectable } from '@nestjs/common';
 
+import type { TransactionContext } from '../../common/application/transaction-context.js';
 import { CursorCodec } from '../../common/cursor/cursor.js';
 import type { VendorRole } from '../../common/context/request-context.js';
 import { ApplicationError } from '../../common/errors/application.error.js';
-import type { Prisma } from '../../generated/prisma/client.js';
+import { unwrapPrismaTransaction } from '../../database/infrastructure/prisma-transaction-context.js';
 
 export type MembershipRecord = Readonly<{
   id: string;
@@ -56,9 +57,10 @@ export class PrismaMembershipStore {
   private readonly cursors = new CursorCodec();
 
   async listActive(
-    tx: Prisma.TransactionClient,
+    context: TransactionContext,
     query: Readonly<{ cursor?: string; limit?: number }>,
   ): Promise<MembershipRecordPage> {
+    const tx = unwrapPrismaTransaction(context);
     const limit = this.cursors.parseLimit(query.limit);
     const cursor = query.cursor ? this.cursors.decode(query.cursor) : undefined;
     const rows = await tx.vendorMembership.findMany({
@@ -90,9 +92,10 @@ export class PrismaMembershipStore {
   }
 
   findActive(
-    tx: Prisma.TransactionClient,
+    context: TransactionContext,
     id: string,
   ): Promise<MembershipRecord | null> {
+    const tx = unwrapPrismaTransaction(context);
     return tx.vendorMembership.findFirst({
       where: { id, status: 'active', endedAt: null, deletedAt: null },
       select: resultFields,
@@ -100,14 +103,15 @@ export class PrismaMembershipStore {
   }
 
   findIncludingDeleted(
-    tx: Prisma.TransactionClient,
+    context: TransactionContext,
     id: string,
   ): Promise<MembershipRecord | null> {
+    const tx = unwrapPrismaTransaction(context);
     return tx.vendorMembership.findFirst({ where: { id }, select: resultFields });
   }
 
   async create(
-    tx: Prisma.TransactionClient,
+    context: TransactionContext,
     input: Readonly<{
       id: string;
       vendorId: string;
@@ -116,6 +120,7 @@ export class PrismaMembershipStore {
       at: Date;
     }>,
   ): Promise<MembershipRecord> {
+    const tx = unwrapPrismaTransaction(context);
     try {
       return await tx.vendorMembership.create({
         data: {
@@ -138,10 +143,11 @@ export class PrismaMembershipStore {
   }
 
   async updateRole(
-    tx: Prisma.TransactionClient,
+    context: TransactionContext,
     id: string,
     role: VendorRole,
   ): Promise<MembershipRecord> {
+    const tx = unwrapPrismaTransaction(context);
     try {
       return await tx.vendorMembership.update({
         where: { id },
@@ -155,10 +161,11 @@ export class PrismaMembershipStore {
   }
 
   end(
-    tx: Prisma.TransactionClient,
+    context: TransactionContext,
     id: string,
     at: Date,
   ): Promise<MembershipRecord> {
+    const tx = unwrapPrismaTransaction(context);
     return tx.vendorMembership.update({
       where: { id },
       data: { status: 'ended', endedAt: at },
@@ -167,12 +174,13 @@ export class PrismaMembershipStore {
   }
 
   softDelete(
-    tx: Prisma.TransactionClient,
+    context: TransactionContext,
     id: string,
     actorId: string,
     reason: string,
     at: Date,
   ): Promise<MembershipRecord> {
+    const tx = unwrapPrismaTransaction(context);
     return tx.vendorMembership.update({
       where: { id },
       data: { deletedAt: at, deletedBy: actorId, deletionReason: reason },
@@ -181,9 +189,10 @@ export class PrismaMembershipStore {
   }
 
   async restore(
-    tx: Prisma.TransactionClient,
+    context: TransactionContext,
     id: string,
   ): Promise<MembershipRecord> {
+    const tx = unwrapPrismaTransaction(context);
     try {
       return await tx.vendorMembership.update({
         where: { id },
@@ -196,19 +205,22 @@ export class PrismaMembershipStore {
     }
   }
 
-  async lockTarget(tx: Prisma.TransactionClient, id: string): Promise<boolean> {
+  async lockTarget(context: TransactionContext, id: string): Promise<boolean> {
+    const tx = unwrapPrismaTransaction(context);
     const rows = await tx.$queryRaw<{ id: string }[]>`
       SELECT id FROM vendor_memberships WHERE id = ${id}::uuid FOR UPDATE`;
     return rows.length === 1;
   }
 
-  async lockVendor(tx: Prisma.TransactionClient): Promise<void> {
+  async lockVendor(context: TransactionContext): Promise<void> {
+    const tx = unwrapPrismaTransaction(context);
     await tx.$queryRaw`
       SELECT id FROM vendors
       WHERE id = current_setting('app.vendor_id')::uuid FOR UPDATE`;
   }
 
-  async lockActiveOwners(tx: Prisma.TransactionClient): Promise<number> {
+  async lockActiveOwners(context: TransactionContext): Promise<number> {
+    const tx = unwrapPrismaTransaction(context);
     const rows = await tx.$queryRaw<{ id: string }[]>`
       SELECT vm.id FROM vendor_memberships vm
       JOIN users u ON u.id = vm.user_id
@@ -220,9 +232,10 @@ export class PrismaMembershipStore {
   }
 
   async actorHasActiveOwner(
-    tx: Prisma.TransactionClient,
+    context: TransactionContext,
     userId: string,
   ): Promise<boolean> {
+    const tx = unwrapPrismaTransaction(context);
     return (
       (await tx.vendorMembership.count({
         where: {

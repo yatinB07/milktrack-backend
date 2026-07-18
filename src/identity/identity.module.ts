@@ -1,6 +1,6 @@
 import { Module } from '@nestjs/common';
 
-import { ActorGuard } from '../authorization/http/actor.guard.js';
+import { AuthorizationModule } from '../authorization/authorization.module.js';
 import { validateAuthenticationEnvironment } from '../bootstrap/auth-environment.js';
 import {
   RequestContextStore,
@@ -21,9 +21,10 @@ import { LocalOtpDelivery } from './infrastructure/local-otp.delivery.js';
 import { PrismaIdentityStore } from './infrastructure/prisma-identity.store.js';
 import { PrismaUserLifecycleStore } from './infrastructure/prisma-user-lifecycle.store.js';
 import { AuthController } from './http/auth.controller.js';
+import { ActorGuard } from './http/actor.guard.js';
 
 @Module({
-  imports: [DatabaseModule],
+  imports: [AuthorizationModule, DatabaseModule],
   controllers: [AuthController],
   providers: [
     { provide: RequestContextStore, useValue: requestContextStore },
@@ -56,6 +57,6 @@ import { AuthController } from './http/auth.controller.js';
     },
     ActorGuard,
   ],
-  exports: [AuthenticationService, UserLifecycleService],
+  exports: [ActorGuard, AuthenticationService, UserLifecycleService],
 })
 export class IdentityModule {}

@@ -5,7 +5,7 @@ import { after, before, describe, it } from 'node:test';
 import { Module, type INestApplication } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 
-import { ActorGuard } from '../src/authorization/http/actor.guard.js';
+import { ActorGuard } from '../src/identity/http/actor.guard.js';
 import { configureApp } from '../src/bootstrap/configure-app.js';
 import {
   type Actor,

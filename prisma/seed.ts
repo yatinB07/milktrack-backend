@@ -3,7 +3,7 @@ import { PasswordHasher } from '../src/identity/domain/password.js';
 import { SecretBox } from '../src/identity/domain/secret-box.js';
 import { Totp } from '../src/identity/domain/totp.js';
 import { validateAuthenticationEnvironment } from '../src/bootstrap/auth-environment.js';
-import { PrismaService } from '../src/database/prisma.service.js';
+import { PrismaService } from '../src/database/infrastructure/prisma.service.js';
 import type { Prisma } from '../src/generated/prisma/client.js';
 
 const seedUsers = [

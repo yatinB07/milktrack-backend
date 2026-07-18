@@ -5,8 +5,12 @@ import test from 'node:test';
 import pg from 'pg';
 
 import { ApplicationError } from '../src/common/errors/application.error.js';
-import { PrismaService } from '../src/database/prisma.service.js';
-import { PrismaTenantTransactionRunner } from '../src/database/tenant-transaction.runner.js';
+import { PrismaService } from '../src/database/infrastructure/prisma.service.js';
+import { PrismaTenantTransactionRunner } from '../src/database/infrastructure/prisma-tenant-transaction.runner.js';
+import {
+  unwrapPrismaTransaction,
+  wrapPrismaTransaction,
+} from '../src/database/infrastructure/prisma-transaction-context.js';
 import { PrismaAuditWriter } from '../src/audit/infrastructure/prisma-audit.writer.js';
 
 const ownerPool = new pg.Pool({
@@ -33,12 +37,13 @@ void test('audit append commits and rolls back with its vendor transaction', asy
   );
 
   try {
-    await runner.run(vendorId, async (tx) => {
+    await runner.run(vendorId, async (context) => {
+      const tx = unwrapPrismaTransaction(context);
       await tx.vendor.update({
         where: { id: vendorId },
         data: { displayName: 'Committed' },
       });
-      await writer.append(tx, {
+      await writer.append(context, {
         id: committedAuditId,
         vendorId,
         actorUserId,
@@ -53,12 +58,13 @@ void test('audit append commits and rolls back with its vendor transaction', asy
     });
 
     await assert.rejects(
-      runner.run(vendorId, async (tx) => {
+      runner.run(vendorId, async (context) => {
+        const tx = unwrapPrismaTransaction(context);
         await tx.vendor.update({
           where: { id: vendorId },
           data: { displayName: 'Rolled Back' },
         });
-        await writer.append(tx, {
+        await writer.append(context, {
           id: rolledBackAuditId,
           vendorId,
           actorUserId,
@@ -127,7 +133,7 @@ void test('audit append rejects prohibited keys nested inside arrays and objects
   try {
     await assert.rejects(
       prisma.$transaction((tx) =>
-        writer.append(tx, {
+        writer.append(wrapPrismaTransaction(tx), {
           id: auditId,
           actorUserId: randomUUID(),
           action: 'test',

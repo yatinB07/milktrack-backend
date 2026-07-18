@@ -1,6 +1,6 @@
 import type { Actor, PlatformRole, VendorRole } from '../../common/context/request-context.js';
+import type { TransactionContext } from '../../common/application/transaction-context.js';
 import { ApplicationError } from '../../common/errors/application.error.js';
-import type { Prisma } from '../../generated/prisma/client.js';
 
 export type PlatformPermission =
   | 'vendor:read'
@@ -93,7 +93,7 @@ export abstract class AuthorizationPolicy {
   abstract requirePlatform(actor: Actor, permission: PlatformPermission): void;
 
   abstract requireVendor(
-    tx: Prisma.TransactionClient,
+    tx: TransactionContext,
     actor: Actor,
     vendorId: string,
     permission: VendorPermission,
@@ -101,7 +101,7 @@ export abstract class AuthorizationPolicy {
   ): Promise<void>;
 
   abstract requireSupport(
-    tx: Prisma.TransactionClient,
+    tx: TransactionContext,
     actor: Actor,
     vendorId: string,
     scope: string,

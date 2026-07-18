@@ -2,12 +2,10 @@ import { randomUUID } from 'node:crypto';
 
 import { Inject, Injectable } from '@nestjs/common';
 
-import type {
-  Actor,
-  ActorMembership,
-  VendorRole,
-} from '../../common/context/request-context.js';
-import { PrismaService } from '../../database/prisma.service.js';
+import { AuthenticationAuthorityPort } from '../../authorization/application/identity-authorization.port.js';
+import type { Actor } from '../../common/context/request-context.js';
+import { PrismaService } from '../../database/infrastructure/prisma.service.js';
+import { wrapPrismaTransaction } from '../../database/infrastructure/prisma-transaction-context.js';
 import type { Prisma } from '../../generated/prisma/client.js';
 import { OtpCodes } from '../domain/otp.js';
 import type { PasswordHash } from '../domain/password.js';
@@ -25,7 +23,6 @@ type PersistedSession = Readonly<{
 }>;
 
 type AuthenticationMethod = 'phone_otp' | 'administrator_mfa';
-type AuthenticationVendorStatus = 'onboarding' | 'trial' | 'active';
 
 const NIL_USER_ID = '00000000-0000-0000-0000-000000000000';
 
@@ -40,7 +37,11 @@ type AuditInput = Readonly<{
 
 @Injectable()
 export class PrismaIdentityStore {
-  constructor(@Inject(PrismaService) private readonly prisma: PrismaService) {}
+  constructor(
+    @Inject(PrismaService) private readonly prisma: PrismaService,
+    @Inject(AuthenticationAuthorityPort)
+    private readonly authority: AuthenticationAuthorityPort,
+  ) {}
 
   async createOtpChallenge(input: Readonly<{
     id: string;
@@ -309,14 +310,14 @@ export class PrismaIdentityStore {
           lockedUntil: true,
         },
       });
-      const platformRole = await tx.platformRoleAssignment.findFirst({
-        where: { userId, revokedAt: null },
-        select: { id: true },
-      });
-      const memberships = await this.authenticationMemberships(tx, userId);
+      const authority = await this.authority.snapshot(
+        wrapPrismaTransaction(tx),
+        userId,
+        ['onboarding', 'trial', 'active'],
+      );
       const isAdministrator =
-        platformRole !== null ||
-        memberships.some(({ role }) =>
+        authority.platformRoles.length > 0 ||
+        authority.memberships.some(({ role }) =>
           role === 'vendor_owner' || role === 'vendor_administrator',
         );
       const credential = password
@@ -508,10 +509,6 @@ export class PrismaIdentityStore {
         where: { userId: pending.userId },
         select: { changedAt: true, lockedUntil: true },
       });
-      const platformRole = await tx.platformRoleAssignment.findFirst({
-        where: { userId: pending.userId, revokedAt: null },
-        select: { id: true },
-      });
       const lockedFactor = await tx.$queryRaw<{ id: string }[]>`
         SELECT id FROM mfa_factors
         WHERE user_id = ${pending.userId}::uuid AND type = 'totp' AND revoked_at IS NULL
@@ -522,10 +519,14 @@ export class PrismaIdentityStore {
         where: { id: lockedFactor[0]?.id ?? NIL_USER_ID },
         select: { id: true, encryptedSecret: true, lastUsedCounter: true },
       });
-      const memberships = await this.authenticationMemberships(tx, pending.userId);
+      const authority = await this.authority.snapshot(
+        wrapPrismaTransaction(tx),
+        pending.userId,
+        ['onboarding', 'trial', 'active'],
+      );
       const hasAdministratorAuthority =
-        platformRole !== null ||
-        memberships.some(({ role }) =>
+        authority.platformRoles.length > 0 ||
+        authority.memberships.some(({ role }) =>
           role === 'vendor_owner' || role === 'vendor_administrator',
         );
       if (
@@ -720,10 +721,6 @@ export class PrismaIdentityStore {
               displayName: true,
               status: true,
               deletedAt: true,
-              platformRoles: {
-                where: { revokedAt: null },
-                select: { role: true },
-              },
               mfaFactors: {
                 where: { type: 'totp', revokedAt: null },
                 select: { id: true },
@@ -743,20 +740,25 @@ export class PrismaIdentityStore {
       ) {
         return undefined;
       }
-      const activeMemberships = await this.activeMemberships(tx, session.userId);
-      const authenticationMemberships = await this.authenticationMemberships(
-        tx,
+      const activeAuthority = await this.authority.snapshot(
+        wrapPrismaTransaction(tx),
         session.userId,
+        ['active'],
       );
-      const hasPrivilegedMembership = authenticationMemberships.some(({ role }) =>
+      const authenticationAuthority = await this.authority.snapshot(
+        wrapPrismaTransaction(tx),
+        session.userId,
+        ['onboarding', 'trial', 'active'],
+      );
+      const hasPrivilegedMembership = authenticationAuthority.memberships.some(({ role }) =>
         role === 'vendor_owner' || role === 'vendor_administrator',
       );
       const methodIsEligible = session.authenticationMethod === 'phone_otp'
-        ? activeMemberships.length > 0 &&
-          session.user.platformRoles.length === 0 &&
+        ? activeAuthority.memberships.length > 0 &&
+          authenticationAuthority.platformRoles.length === 0 &&
           !hasPrivilegedMembership
         : session.user.mfaFactors.length > 0 &&
-          (session.user.platformRoles.length > 0 || hasPrivilegedMembership);
+          (authenticationAuthority.platformRoles.length > 0 || hasPrivilegedMembership);
       if (!methodIsEligible) {
         return undefined;
       }
@@ -770,10 +772,10 @@ export class PrismaIdentityStore {
         sessionId: session.id,
         displayName: session.user.displayName,
         authenticationMethod: session.authenticationMethod,
-        platformRoles: session.user.platformRoles.map(({ role }) => role),
+        platformRoles: authenticationAuthority.platformRoles,
         memberships: session.authenticationMethod === 'phone_otp'
-          ? activeMemberships
-          : authenticationMemberships,
+          ? activeAuthority.memberships
+          : authenticationAuthority.memberships,
       };
     });
   }
@@ -934,18 +936,23 @@ export class PrismaIdentityStore {
   ): Promise<boolean> {
     const user = await tx.user.findFirst({
       where: { id: userId, status: 'active', deletedAt: null },
-      select: {
-        id: true,
-        platformRoles: { where: { revokedAt: null }, select: { id: true }, take: 1 },
-      },
+      select: { id: true },
     });
-    const activeMemberships = await this.activeMemberships(tx, userId);
-    const authenticationMemberships = await this.authenticationMemberships(tx, userId);
+    const activeAuthority = await this.authority.snapshot(
+      wrapPrismaTransaction(tx),
+      userId,
+      ['active'],
+    );
+    const authenticationAuthority = await this.authority.snapshot(
+      wrapPrismaTransaction(tx),
+      userId,
+      ['onboarding', 'trial', 'active'],
+    );
     return user !== null &&
-      user.platformRoles.length === 0 &&
-      activeMemberships.length > 0 &&
-      activeMemberships.every(({ role }) => role === 'customer' || role === 'delivery_agent') &&
-      !authenticationMemberships.some(({ role }) =>
+      authenticationAuthority.platformRoles.length === 0 &&
+      activeAuthority.memberships.length > 0 &&
+      activeAuthority.memberships.every(({ role }) => role === 'customer' || role === 'delivery_agent') &&
+      !authenticationAuthority.memberships.some(({ role }) =>
         role === 'vendor_owner' || role === 'vendor_administrator',
       );
   }
@@ -959,7 +966,6 @@ export class PrismaIdentityStore {
       where: { id: userId, status: 'active', deletedAt: null },
       select: {
         id: true,
-        platformRoles: { where: { revokedAt: null }, select: { id: true }, take: 1 },
         mfaFactors: {
           where: { type: 'totp', revokedAt: null },
           select: { id: true },
@@ -968,72 +974,25 @@ export class PrismaIdentityStore {
       },
     });
     if (!user) return false;
-    const activeMemberships = await this.activeMemberships(tx, userId);
-    const authenticationMemberships = await this.authenticationMemberships(tx, userId);
-    const hasPrivilegedMembership = authenticationMemberships.some(({ role }) =>
+    const activeAuthority = await this.authority.snapshot(
+      wrapPrismaTransaction(tx),
+      userId,
+      ['active'],
+    );
+    const authenticationAuthority = await this.authority.snapshot(
+      wrapPrismaTransaction(tx),
+      userId,
+      ['onboarding', 'trial', 'active'],
+    );
+    const hasPrivilegedMembership = authenticationAuthority.memberships.some(({ role }) =>
       role === 'vendor_owner' || role === 'vendor_administrator',
     );
     return authenticationMethod === 'phone_otp'
-      ? user.platformRoles.length === 0 &&
-          activeMemberships.length > 0 &&
+      ? authenticationAuthority.platformRoles.length === 0 &&
+          activeAuthority.memberships.length > 0 &&
           !hasPrivilegedMembership
       : user.mfaFactors.length > 0 &&
-        (user.platformRoles.length > 0 || hasPrivilegedMembership);
-  }
-
-  private async activeMemberships(
-    tx: Prisma.TransactionClient,
-    userId: string,
-  ): Promise<ActorMembership[]> {
-    return this.membershipsForVendorStatuses(tx, userId, ['active']);
-  }
-
-  private async authenticationMemberships(
-    tx: Prisma.TransactionClient,
-    userId: string,
-  ): Promise<ActorMembership[]> {
-    return this.membershipsForVendorStatuses(tx, userId, [
-      'onboarding',
-      'trial',
-      'active',
-    ]);
-  }
-
-  private async membershipsForVendorStatuses(
-    tx: Prisma.TransactionClient,
-    userId: string,
-    statuses: readonly AuthenticationVendorStatus[],
-  ): Promise<ActorMembership[]> {
-    const vendors = await tx.vendor.findMany({
-      where: { status: { in: [...statuses] }, deletedAt: null },
-      select: { id: true, displayName: true },
-    });
-    const memberships: ActorMembership[] = [];
-    // ponytail: Phase 1 scans vendors through existing RLS; add a reviewed security-definer lookup if profiling shows this auth path is material.
-    for (const vendor of vendors) {
-      await tx.$queryRaw`SELECT set_config('app.vendor_id', ${vendor.id}, true)`;
-      const rows = await tx.$queryRaw<{
-        id: string;
-        vendor_id: string;
-        role: VendorRole;
-        status: ActorMembership['status'];
-      }[]>`
-        SELECT id, vendor_id, role, status FROM vendor_memberships
-        WHERE vendor_id = ${vendor.id}::uuid AND user_id = ${userId}::uuid
-          AND status = 'active' AND ended_at IS NULL AND deleted_at IS NULL
-        `;
-      for (const row of rows) {
-        memberships.push({
-          id: row.id,
-          vendorId: row.vendor_id,
-          vendorName: vendor.displayName,
-          role: row.role,
-          status: row.status,
-        });
-      }
-    }
-    await tx.$queryRaw`SELECT set_config('app.vendor_id', '', true)`;
-    return memberships;
+        (authenticationAuthority.platformRoles.length > 0 || hasPrivilegedMembership);
   }
 
   private createSession(

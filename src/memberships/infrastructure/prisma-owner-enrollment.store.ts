@@ -3,11 +3,12 @@ import { randomUUID } from 'node:crypto';
 import { Inject, Injectable } from '@nestjs/common';
 
 import { AuditWriter } from '../../audit/application/audit-writer.js';
-import { PrismaService } from '../../database/prisma.service.js';
 import {
-  PrismaTenantTransactionRunner,
-  type TenantTransactionRunner,
-} from '../../database/tenant-transaction.runner.js';
+  TenantTransactionRunner,
+  type TransactionContext,
+} from '../../common/application/transaction-context.js';
+import { PrismaService } from '../../database/infrastructure/prisma.service.js';
+import { unwrapPrismaTransaction } from '../../database/infrastructure/prisma-transaction-context.js';
 import { Prisma, type OwnerEnrollment } from '../../generated/prisma/client.js';
 import {
   type OwnerEnrollmentResult,
@@ -20,7 +21,7 @@ type HandlePhase = 'setup' | 'completion';
 export class PrismaOwnerEnrollmentStore extends OwnerEnrollmentStore {
   constructor(
     @Inject(PrismaService) private readonly prisma: PrismaService,
-    @Inject(PrismaTenantTransactionRunner)
+    @Inject(TenantTransactionRunner)
     private readonly transactions: TenantTransactionRunner,
     @Inject(AuditWriter) private readonly audits: AuditWriter,
   ) {
@@ -43,7 +44,8 @@ export class PrismaOwnerEnrollmentStore extends OwnerEnrollmentStore {
   }>): Promise<'success' | 'invalid'> {
     const resolved = await this.resolve(input.setupTokenHash, 'setup');
     if (!resolved) return 'invalid';
-    return this.transactions.run(resolved.vendorId, async (tx) => {
+    return this.transactions.run(resolved.vendorId, async (context) => {
+      const tx = unwrapPrismaTransaction(context);
       await tx.$queryRaw`
         SELECT pg_advisory_xact_lock(hashtextextended(${'session-user:' + resolved.userId}, 0))::text`;
       const vendor = await tx.$queryRaw<{ status: string }[]>`
@@ -88,7 +90,7 @@ export class PrismaOwnerEnrollmentStore extends OwnerEnrollmentStore {
           startedAt: input.now,
         },
       });
-      await this.audit(tx, enrollment, input, 'vendor.owner_enrollment_started');
+      await this.audit(context, enrollment, input, 'vendor.owner_enrollment_started');
       return 'success';
     });
   }
@@ -104,7 +106,8 @@ export class PrismaOwnerEnrollmentStore extends OwnerEnrollmentStore {
   }>): Promise<OwnerEnrollmentResult | 'invalid' | 'owner_exists'> {
     const resolved = await this.resolve(input.completionTokenHash, 'completion');
     if (!resolved) return 'invalid';
-    return this.transactions.run(resolved.vendorId, async (tx) => {
+    return this.transactions.run(resolved.vendorId, async (context) => {
+      const tx = unwrapPrismaTransaction(context);
       const enrollment = await this.lockEnrollment(tx, resolved.enrollmentId);
       if (!this.canComplete(enrollment, input.completionTokenHash, input.now)) {
         return 'invalid';
@@ -117,7 +120,7 @@ export class PrismaOwnerEnrollmentStore extends OwnerEnrollmentStore {
           data: { attemptCount, ...(locked ? { lockedAt: input.now } : {}) },
         });
         await this.audit(
-          tx,
+          context,
           enrollment,
           input,
           locked
@@ -232,7 +235,7 @@ export class PrismaOwnerEnrollmentStore extends OwnerEnrollmentStore {
         data: { revokedAt: input.now },
       });
       await this.audit(
-        tx,
+        context,
         enrollment,
         input,
         'vendor.owner_enrollment_completed',
@@ -294,9 +297,9 @@ export class PrismaOwnerEnrollmentStore extends OwnerEnrollmentStore {
   }
 
   private audit(
-    tx: Prisma.TransactionClient,
+    transaction: TransactionContext,
     enrollment: OwnerEnrollment,
-    context: Readonly<{
+    requestContext: Readonly<{
       correlationId: string;
       ipHash?: string;
       deviceId?: string;
@@ -304,7 +307,7 @@ export class PrismaOwnerEnrollmentStore extends OwnerEnrollmentStore {
     action: string,
     newValue?: unknown,
   ): Promise<void> {
-    return this.audits.append(tx, {
+    return this.audits.append(transaction, {
       id: randomUUID(),
       vendorId: enrollment.vendorId,
       actorUserId: enrollment.userId,
@@ -312,9 +315,9 @@ export class PrismaOwnerEnrollmentStore extends OwnerEnrollmentStore {
       entityType: 'vendor_membership',
       entityId: enrollment.membershipId,
       ...(newValue !== undefined ? { newValue } : {}),
-      correlationId: context.correlationId,
-      ...(context.ipHash ? { ipHash: context.ipHash } : {}),
-      ...(context.deviceId ? { deviceId: context.deviceId } : {}),
+      correlationId: requestContext.correlationId,
+      ...(requestContext.ipHash ? { ipHash: requestContext.ipHash } : {}),
+      ...(requestContext.deviceId ? { deviceId: requestContext.deviceId } : {}),
     });
   }
 }

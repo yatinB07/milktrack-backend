@@ -3,11 +3,12 @@ import { randomUUID } from 'node:crypto';
 import { Inject, Injectable } from '@nestjs/common';
 
 import { AuditWriter } from '../../audit/application/audit-writer.js';
+import type { TransactionContext } from '../../common/application/transaction-context.js';
 import {
   type Actor,
   requestContextStore,
 } from '../../common/context/request-context.js';
-import type { Prisma } from '../../generated/prisma/client.js';
+import { unwrapPrismaTransaction } from '../../database/infrastructure/prisma-transaction-context.js';
 import {
   AuthorizationPolicy,
   forbid,
@@ -31,12 +32,13 @@ export class PrismaAuthorizationPolicy extends AuthorizationPolicy {
   }
 
   async requireVendor(
-    tx: Prisma.TransactionClient,
+    context: TransactionContext,
     actor: Actor,
     vendorId: string,
     permission: VendorPermission,
     operation: string,
   ): Promise<void> {
+    const tx = unwrapPrismaTransaction(context);
     requireVendorOperation(operation, permission);
 
     // Membership administration is part of vendor onboarding. Other vendor
@@ -77,12 +79,13 @@ export class PrismaAuthorizationPolicy extends AuthorizationPolicy {
   }
 
   async requireSupport(
-    tx: Prisma.TransactionClient,
+    context: TransactionContext,
     actor: Actor,
     vendorId: string,
     scope: string,
     at: Date,
   ): Promise<void> {
+    const tx = unwrapPrismaTransaction(context);
     if (!actor.platformRoles.includes('support_operations') || !scope.endsWith(':read')) {
       forbid();
     }
@@ -108,8 +111,8 @@ export class PrismaAuthorizationPolicy extends AuthorizationPolicy {
     );
     if (!vendor || !grant) forbid();
 
-    const context = requestContextStore.get();
-    await this.audits.append(tx, {
+    const requestContext = requestContextStore.get();
+    await this.audits.append(context, {
       id: randomUUID(),
       vendorId,
       actorUserId: actor.userId,
@@ -117,7 +120,7 @@ export class PrismaAuthorizationPolicy extends AuthorizationPolicy {
       entityType: 'support_access_grant',
       entityId: grant.id,
       newValue: { scope },
-      correlationId: context?.correlationId ?? randomUUID(),
+      correlationId: requestContext?.correlationId ?? randomUUID(),
     });
   }
 }

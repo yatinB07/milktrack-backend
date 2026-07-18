@@ -1,4 +1,4 @@
-import type { Prisma } from '../../generated/prisma/client.js';
+import type { TransactionContext } from '../../common/application/transaction-context.js';
 
 export type AppendAuditEvent = Readonly<{
   id: string;
@@ -18,7 +18,7 @@ export type AppendAuditEvent = Readonly<{
 export abstract class AuditWriter {
   /** Appends through the caller's transaction so the audit and business write are atomic. */
   abstract append(
-    tx: Prisma.TransactionClient,
+    tx: TransactionContext,
     event: AppendAuditEvent,
   ): Promise<void>;
 }

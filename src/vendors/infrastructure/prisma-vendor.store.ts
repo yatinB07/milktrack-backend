@@ -2,8 +2,9 @@ import { Inject, Injectable } from '@nestjs/common';
 
 import { ApplicationError } from '../../common/errors/application.error.js';
 import type { CursorValue } from '../../common/cursor/cursor.js';
-import { PrismaService } from '../../database/prisma.service.js';
-import type { Prisma } from '../../generated/prisma/client.js';
+import type { TransactionContext } from '../../common/application/transaction-context.js';
+import { PrismaService } from '../../database/infrastructure/prisma.service.js';
+import { unwrapPrismaTransaction } from '../../database/infrastructure/prisma-transaction-context.js';
 import type { CreateVendorCommand } from '../application/vendor.service.js';
 import type { VendorStatus } from '../domain/vendor-lifecycle.js';
 
@@ -42,10 +43,11 @@ export class PrismaVendorStore {
   constructor(@Inject(PrismaService) private readonly prisma: PrismaService) {}
 
   async create(
-    tx: Prisma.TransactionClient,
+    context: TransactionContext,
     vendorId: string,
     command: CreateVendorCommand,
   ): Promise<VendorRecord> {
+    const tx = unwrapPrismaTransaction(context);
     try {
       return await tx.vendor.create({
         data: { id: vendorId, ...command },
@@ -112,9 +114,10 @@ export class PrismaVendorStore {
   }
 
   async findActive(
-    tx: Prisma.TransactionClient,
+    context: TransactionContext,
     vendorId: string,
   ): Promise<VendorRecord> {
+    const tx = unwrapPrismaTransaction(context);
     const vendor = await tx.vendor.findFirst({
       where: { id: vendorId, deletedAt: null },
       select: resultFields,
@@ -126,11 +129,12 @@ export class PrismaVendorStore {
   }
 
   async updateStatus(
-    tx: Prisma.TransactionClient,
+    context: TransactionContext,
     vendorId: string,
     expectedVersion: number,
     status: VendorStatus,
   ): Promise<VendorRecord> {
+    const tx = unwrapPrismaTransaction(context);
     const updated = await tx.vendor.updateMany({
       where: { id: vendorId, version: expectedVersion, deletedAt: null },
       data: { status, version: { increment: 1 } },

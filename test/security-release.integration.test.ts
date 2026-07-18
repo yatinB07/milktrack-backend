@@ -14,8 +14,8 @@ import {
   requestContextStore,
 } from '../src/common/context/request-context.js';
 import { ApplicationError } from '../src/common/errors/application.error.js';
-import { PrismaService } from '../src/database/prisma.service.js';
-import { PrismaTenantTransactionRunner } from '../src/database/tenant-transaction.runner.js';
+import { PrismaService } from '../src/database/infrastructure/prisma.service.js';
+import { PrismaTenantTransactionRunner } from '../src/database/infrastructure/prisma-tenant-transaction.runner.js';
 import { PrismaMembershipService } from '../src/memberships/application/membership.service.js';
 import { PrismaMembershipStore } from '../src/memberships/infrastructure/prisma-membership.store.js';
 

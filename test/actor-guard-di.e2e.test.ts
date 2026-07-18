@@ -4,7 +4,7 @@ import { it } from 'node:test';
 import { Module, type ExecutionContext } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 
-import { ActorGuard } from '../src/authorization/http/actor.guard.js';
+import { ActorGuard } from '../src/identity/http/actor.guard.js';
 import {
   type Actor,
   RequestContextStore,

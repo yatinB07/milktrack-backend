@@ -7,7 +7,7 @@ import {
 
 import { RequestContextStore } from '../../common/context/request-context.js';
 import { ApplicationError } from '../../common/errors/application.error.js';
-import { AuthenticationService } from '../../identity/application/authentication.service.js';
+import { AuthenticationService } from '../application/authentication.service.js';
 
 type RequestWithHeaders = Readonly<{
   headers: Readonly<Record<string, string | readonly string[] | undefined>>;

@@ -3,11 +3,12 @@ import { randomUUID } from 'node:crypto';
 import { Inject, Injectable } from '@nestjs/common';
 
 import { AuditWriter } from '../../audit/application/audit-writer.js';
-import { ApplicationError } from '../../common/errors/application.error.js';
 import {
-  PrismaTenantTransactionRunner,
-  type TenantTransactionRunner,
-} from '../../database/tenant-transaction.runner.js';
+  TenantTransactionRunner,
+  type TransactionContext,
+} from '../../common/application/transaction-context.js';
+import { ApplicationError } from '../../common/errors/application.error.js';
+import { unwrapPrismaTransaction } from '../../database/infrastructure/prisma-transaction-context.js';
 import { Prisma } from '../../generated/prisma/client.js';
 import {
   type OwnerOnboardingUnitOfWork,
@@ -26,7 +27,7 @@ function prismaCode(error: unknown, code: string): boolean {
 @Injectable()
 export class PrismaVendorOwnerOnboardingStore extends VendorOwnerOnboardingStore {
   constructor(
-    @Inject(PrismaTenantTransactionRunner)
+    @Inject(TenantTransactionRunner)
     private readonly transactions: TenantTransactionRunner,
     @Inject(AuditWriter) private readonly audits: AuditWriter,
   ) {
@@ -37,7 +38,7 @@ export class PrismaVendorOwnerOnboardingStore extends VendorOwnerOnboardingStore
     vendorId: string,
     operation: (unit: OwnerOnboardingUnitOfWork) => Promise<T>,
   ): Promise<T> {
-    return this.transactions.run(vendorId, (tx) => operation(this.unit(tx)));
+    return this.transactions.run(vendorId, (context) => operation(this.unit(context)));
   }
 
   markDelivery(
@@ -45,7 +46,8 @@ export class PrismaVendorOwnerOnboardingStore extends VendorOwnerOnboardingStore
     enrollmentId: string,
     state: 'delivered' | 'failed',
   ): Promise<void> {
-    return this.transactions.run(vendorId, async (tx) => {
+    return this.transactions.run(vendorId, async (context) => {
+      const tx = unwrapPrismaTransaction(context);
       const enrollment = await tx.ownerEnrollment.findFirst({
         where: { id: enrollmentId, vendorId, retiredAt: null, consumedAt: null },
         select: { id: true, membershipId: true },
@@ -74,7 +76,8 @@ export class PrismaVendorOwnerOnboardingStore extends VendorOwnerOnboardingStore
     membershipId: string;
     expiresAt: Date;
   }>> {
-    return this.transactions.run(input.vendorId, async (tx) => {
+    return this.transactions.run(input.vendorId, async (context) => {
+      const tx = unwrapPrismaTransaction(context);
       const vendors = await tx.$queryRaw<{ status: string }[]>`
         SELECT status::text FROM vendors
         WHERE id = ${input.vendorId}::uuid AND deleted_at IS NULL
@@ -133,7 +136,7 @@ export class PrismaVendorOwnerOnboardingStore extends VendorOwnerOnboardingStore
           lockedAt: null,
         },
       });
-      await this.audits.append(tx, {
+      await this.audits.append(context, {
         id: randomUUID(),
         vendorId: input.vendorId,
         actorUserId: input.actorUserId,
@@ -152,7 +155,8 @@ export class PrismaVendorOwnerOnboardingStore extends VendorOwnerOnboardingStore
     });
   }
 
-  private unit(tx: Prisma.TransactionClient): OwnerOnboardingUnitOfWork {
+  private unit(context: TransactionContext): OwnerOnboardingUnitOfWork {
+    const tx = unwrapPrismaTransaction(context);
     return {
       lockVendor: async () => {
         const rows = await tx.$queryRaw<Array<{ status: string }>>`
@@ -200,7 +204,7 @@ export class PrismaVendorOwnerOnboardingStore extends VendorOwnerOnboardingStore
             where: { id: enrollment.membershipId, status: 'invited' },
             data: { status: 'ended', endedAt: input.at },
           });
-          await this.audits.append(tx, {
+          await this.audits.append(context, {
             id: randomUUID(),
             vendorId: (await tx.ownerEnrollment.findUniqueOrThrow({
               where: { id: enrollment.id },
@@ -309,7 +313,7 @@ export class PrismaVendorOwnerOnboardingStore extends VendorOwnerOnboardingStore
         }
       },
       appendAudit: (input) =>
-        this.audits.append(tx, {
+        this.audits.append(context, {
           id: input.id,
           vendorId: input.vendorId,
           actorUserId: input.actorUserId,

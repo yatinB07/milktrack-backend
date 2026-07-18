@@ -8,10 +8,7 @@ import {
   requestContextStore,
 } from '../../common/context/request-context.js';
 import { ApplicationError } from '../../common/errors/application.error.js';
-import {
-  PrismaTenantTransactionRunner,
-  type TenantTransactionRunner,
-} from '../../database/tenant-transaction.runner.js';
+import { TenantTransactionRunner } from '../../common/application/transaction-context.js';
 import {
   requireVendorTransition,
   type VendorStatus,
@@ -33,7 +30,7 @@ export type VendorResult = VendorRecord;
 @Injectable()
 export class TransitionVendor {
   constructor(
-    @Inject(PrismaTenantTransactionRunner)
+    @Inject(TenantTransactionRunner)
     private readonly transactions: TenantTransactionRunner,
     @Inject(PrismaVendorStore)
     private readonly vendors: PrismaVendorStore,

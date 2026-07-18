@@ -6,7 +6,8 @@ import pg from 'pg';
 
 import { requestContextStore } from '../src/common/context/request-context.js';
 import { ApplicationError } from '../src/common/errors/application.error.js';
-import { PrismaService } from '../src/database/prisma.service.js';
+import { PrismaIdentityAuthorizationAdapter } from '../src/authorization/infrastructure/prisma-identity-authorization.adapter.js';
+import { PrismaService } from '../src/database/infrastructure/prisma.service.js';
 import {
   PrismaAuthenticationService,
   type SessionTokens,
@@ -138,7 +139,7 @@ function createService(): Readonly<{
     prisma,
     delivery,
     service: new PrismaAuthenticationService(
-      new PrismaIdentityStore(prisma),
+      new PrismaIdentityStore(prisma, new PrismaIdentityAuthorizationAdapter()),
       delivery,
       {
         authHmacKey: authKey,

@@ -5,8 +5,9 @@ import test from 'node:test';
 import pg from 'pg';
 
 import { ApplicationError } from '../src/common/errors/application.error.js';
-import { PrismaService } from '../src/database/prisma.service.js';
-import { PrismaTenantTransactionRunner } from '../src/database/tenant-transaction.runner.js';
+import { PrismaService } from '../src/database/infrastructure/prisma.service.js';
+import { PrismaTenantTransactionRunner } from '../src/database/infrastructure/prisma-tenant-transaction.runner.js';
+import { unwrapPrismaTransaction } from '../src/database/infrastructure/prisma-transaction-context.js';
 
 const ownerPool = new pg.Pool({
   connectionString: process.env.TEST_OWNER_DATABASE_URL,
@@ -57,13 +58,16 @@ void test('tenant transaction exposes only the selected vendor and keeps context
   );
 
   try {
-    const result = await runner.run(vendorIds[0], async (tx) => ({
-      memberships: await tx.vendorMembership.findMany(),
-      setting: await tx.$queryRaw<Array<{ connection_id: number; vendor_id: string }>>`
-        SELECT pg_backend_pid() AS connection_id,
-               current_setting('app.vendor_id', true) AS vendor_id
-      `,
-    }));
+    const result = await runner.run(vendorIds[0], async (context) => {
+      const tx = unwrapPrismaTransaction(context);
+      return {
+        memberships: await tx.vendorMembership.findMany(),
+        setting: await tx.$queryRaw<Array<{ connection_id: number; vendor_id: string }>>`
+          SELECT pg_backend_pid() AS connection_id,
+                 current_setting('app.vendor_id', true) AS vendor_id
+        `,
+      };
+    });
     const afterTransaction = await prisma.$queryRaw<
       Array<{ connection_id: number; vendor_id: string | null }>
     >`

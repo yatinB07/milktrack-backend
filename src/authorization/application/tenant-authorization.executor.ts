@@ -2,12 +2,11 @@ import { Inject, Injectable } from '@nestjs/common';
 
 import type { Actor } from '../../common/context/request-context.js';
 import { requestContextStore } from '../../common/context/request-context.js';
-import { ApplicationError } from '../../common/errors/application.error.js';
 import {
-  PrismaTenantTransactionRunner,
-  type TenantTransactionRunner,
-} from '../../database/tenant-transaction.runner.js';
-import type { Prisma } from '../../generated/prisma/client.js';
+  TenantTransactionRunner,
+  type TransactionContext,
+} from '../../common/application/transaction-context.js';
+import { ApplicationError } from '../../common/errors/application.error.js';
 import {
   AuthorizationPolicy,
   requireVendorOperation,
@@ -25,14 +24,14 @@ export type TenantAuthorizationInput = Readonly<{
 export abstract class TenantAuthorizationExecutor {
   abstract execute<T>(
     input: TenantAuthorizationInput,
-    operation: (tx: Prisma.TransactionClient) => Promise<T>,
+    operation: (tx: TransactionContext) => Promise<T>,
   ): Promise<T>;
 }
 
 @Injectable()
 export class PrismaTenantAuthorizationExecutor extends TenantAuthorizationExecutor {
   constructor(
-    @Inject(PrismaTenantTransactionRunner)
+    @Inject(TenantTransactionRunner)
     private readonly transactions: TenantTransactionRunner,
     @Inject(AuthorizationPolicy)
     private readonly policy: AuthorizationPolicy,
@@ -44,7 +43,7 @@ export class PrismaTenantAuthorizationExecutor extends TenantAuthorizationExecut
 
   async execute<T>(
     input: TenantAuthorizationInput,
-    operation: (tx: Prisma.TransactionClient) => Promise<T>,
+    operation: (tx: TransactionContext) => Promise<T>,
   ): Promise<T> {
     try {
       return await this.transactions.run(input.vendorId, async (tx) => {

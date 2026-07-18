@@ -1,6 +1,8 @@
 import { Injectable } from '@nestjs/common';
 
 import { ApplicationError } from '../../common/errors/application.error.js';
+import type { TransactionContext } from '../../common/application/transaction-context.js';
+import { unwrapPrismaTransaction } from '../../database/infrastructure/prisma-transaction-context.js';
 import type { Prisma } from '../../generated/prisma/client.js';
 import {
   type AppendAuditEvent,
@@ -12,9 +14,10 @@ const PROHIBITED_KEY = /password|otp|token|secret/i;
 @Injectable()
 export class PrismaAuditWriter extends AuditWriter {
   async append(
-    tx: Prisma.TransactionClient,
+    context: TransactionContext,
     event: AppendAuditEvent,
   ): Promise<void> {
+    const tx = unwrapPrismaTransaction(context);
     const oldValue = this.toJsonValue(event.oldValue);
     const newValue = this.toJsonValue(event.newValue);
     this.assertRedacted(oldValue);

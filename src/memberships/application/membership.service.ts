@@ -9,8 +9,8 @@ import {
   type VendorRole,
 } from '../../common/context/request-context.js';
 import { ApplicationError } from '../../common/errors/application.error.js';
+import type { TransactionContext } from '../../common/application/transaction-context.js';
 import { TenantAuthorizationExecutor } from '../../authorization/application/tenant-authorization.executor.js';
-import type { Prisma } from '../../generated/prisma/client.js';
 import {
   type MembershipRecord,
   PrismaMembershipStore,
@@ -288,12 +288,12 @@ export class PrismaMembershipService extends MembershipService {
     );
   }
 
-  private async lockTarget(tx: Prisma.TransactionClient, id: string): Promise<void> {
+  private async lockTarget(tx: TransactionContext, id: string): Promise<void> {
     if (!(await this.memberships.lockTarget(tx, id))) throw membershipNotFound();
   }
 
   private async active(
-    tx: Prisma.TransactionClient,
+    tx: TransactionContext,
     id: string,
   ): Promise<MembershipRecord> {
     const membership = await this.memberships.findActive(tx, id);
@@ -302,7 +302,7 @@ export class PrismaMembershipService extends MembershipService {
   }
 
   private async requireOwner(
-    tx: Prisma.TransactionClient,
+    tx: TransactionContext,
     actor: Actor,
     lockedOwnerCount?: number,
   ): Promise<number> {
@@ -319,7 +319,7 @@ export class PrismaMembershipService extends MembershipService {
   }
 
   private async protectOwnerRemoval(
-    tx: Prisma.TransactionClient,
+    tx: TransactionContext,
     actor: Actor,
     target: MembershipRecord,
     ownerCount: number,
@@ -336,7 +336,7 @@ export class PrismaMembershipService extends MembershipService {
   }
 
   private async audit(
-    tx: Prisma.TransactionClient,
+    tx: TransactionContext,
     actor: Actor,
     vendorId: string,
     entityId: string,

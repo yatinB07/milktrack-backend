@@ -18,6 +18,7 @@ import type {
 } from '../src/common/context/request-context.js';
 import { ApplicationError } from '../src/common/errors/application.error.js';
 import type { Prisma } from '../src/generated/prisma/client.js';
+import { wrapPrismaTransaction } from '../src/database/infrastructure/prisma-transaction-context.js';
 
 const platform = {
   product_owner: ['vendor:read'],
@@ -120,7 +121,7 @@ void test('vendor policy grants access when any active membership role permits i
 
   await assert.doesNotReject(
     policy.requireVendor(
-      tx,
+      wrapPrismaTransaction(tx),
       actor,
       actor.userId,
       'membership:read',

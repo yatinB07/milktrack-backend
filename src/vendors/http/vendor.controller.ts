@@ -17,7 +17,7 @@ import {
   ApiTags,
 } from '@nestjs/swagger';
 
-import { ActorGuard } from '../../authorization/http/actor.guard.js';
+import { ActorGuard } from '../../identity/http/actor.guard.js';
 import { requestContextStore } from '../../common/context/request-context.js';
 import { ApiErrorResponseDto } from '../../common/errors/application-error.filter.js';
 import { VendorService } from '../application/vendor.service.js';

@@ -12,9 +12,9 @@ import { PrismaSecurityDenialRecorder } from '../src/authorization/infrastructur
 import type { Actor } from '../src/common/context/request-context.js';
 import { requestContextStore } from '../src/common/context/request-context.js';
 import { ApplicationError } from '../src/common/errors/application.error.js';
-import { PrismaService } from '../src/database/prisma.service.js';
-import { PrismaTenantTransactionRunner } from '../src/database/tenant-transaction.runner.js';
-import type { Prisma } from '../src/generated/prisma/client.js';
+import { PrismaService } from '../src/database/infrastructure/prisma.service.js';
+import { PrismaTenantTransactionRunner } from '../src/database/infrastructure/prisma-tenant-transaction.runner.js';
+import { unwrapPrismaTransaction } from '../src/database/infrastructure/prisma-transaction-context.js';
 
 const ownerPool = new pg.Pool({
   connectionString: process.env.TEST_OWNER_DATABASE_URL,
@@ -573,7 +573,8 @@ void test('denial audit failure returns stable 503 and cannot commit a protected
   const mutatingDenyPolicy: AuthorizationPolicy = {
     requirePlatform: () => undefined,
     requireSupport: () => Promise.reject(new Error('unused')),
-    requireVendor: async (tx: Prisma.TransactionClient) => {
+    requireVendor: async (context) => {
+      const tx = unwrapPrismaTransaction(context);
       await tx.vendor.update({
         where: { id: vendorId },
         data: { version: { increment: 1 } },

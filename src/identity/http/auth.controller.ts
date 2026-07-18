@@ -21,7 +21,7 @@ import {
   ApiUnauthorizedResponse,
 } from '@nestjs/swagger';
 
-import { ActorGuard } from '../../authorization/http/actor.guard.js';
+import { ActorGuard } from './actor.guard.js';
 import { RequestContextStore } from '../../common/context/request-context.js';
 import { ApiErrorResponseDto } from '../../common/errors/application-error.filter.js';
 import { ApplicationError } from '../../common/errors/application.error.js';

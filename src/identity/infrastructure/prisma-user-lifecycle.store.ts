@@ -1,6 +1,8 @@
 import { Inject, Injectable } from '@nestjs/common';
 
-import { PrismaService } from '../../database/prisma.service.js';
+import { UserLifecycleAuthorizationPort } from '../../authorization/application/identity-authorization.port.js';
+import { PrismaService } from '../../database/infrastructure/prisma.service.js';
+import { wrapPrismaTransaction } from '../../database/infrastructure/prisma-transaction-context.js';
 import type { Prisma } from '../../generated/prisma/client.js';
 import {
   type UserLifecycleUnitOfWork,
@@ -22,6 +24,8 @@ const userFields = {
 export class PrismaUserLifecycleStore extends UserLifecycleStore {
   constructor(
     @Inject(PrismaService) private readonly prisma: PrismaService,
+    @Inject(UserLifecycleAuthorizationPort)
+    private readonly authority: UserLifecycleAuthorizationPort,
   ) {
     super();
   }
@@ -33,58 +37,17 @@ export class PrismaUserLifecycleStore extends UserLifecycleStore {
   }
 
   private unit(tx: Prisma.TransactionClient): UserLifecycleUnitOfWork {
+    const context = wrapPrismaTransaction(tx);
     return {
       lockSessionUser: async (userId) => {
         await tx.$queryRaw`
           SELECT pg_advisory_xact_lock(hashtextextended(${'session-user:' + userId}, 0))::text`;
       },
-      lockManagedVendors: async () => {
-        const rows = await tx.$queryRaw<{ id: string }[]>`
-          SELECT id FROM vendors
-          WHERE status IN ('onboarding', 'trial', 'active', 'suspended')
-            AND deleted_at IS NULL
-          ORDER BY id FOR UPDATE`;
-        return rows.map(({ id }) => id);
-      },
-      ownerCounts: async (vendorIds, userId) => {
-        const counts: Array<{
-          vendorId: string;
-          targetIsOwner: boolean;
-          count: number;
-        }> = [];
-        for (const vendorId of vendorIds) {
-          await tx.$executeRaw`SELECT set_config('app.vendor_id', ${vendorId}, true)`;
-          const owners = await tx.vendorMembership.findMany({
-            where: {
-              role: 'vendor_owner',
-              status: 'active',
-              endedAt: null,
-              deletedAt: null,
-              user: { status: 'active', deletedAt: null },
-            },
-            select: { userId: true },
-          });
-          counts.push({
-            vendorId,
-            targetIsOwner: owners.some((owner) => owner.userId === userId),
-            count: owners.length,
-          });
-        }
-        // Global lifecycle audits require an empty tenant context after the scoped checks.
-        await tx.$executeRaw`SELECT set_config('app.vendor_id', '', true)`;
-        return counts;
-      },
-      lockActivePlatformAdministrators: async () => {
-        const rows = await tx.$queryRaw<{ user_id: string }[]>`
-          SELECT pra.user_id
-          FROM platform_role_assignments pra
-          JOIN users u ON u.id = pra.user_id
-          WHERE pra.role = 'platform_administrator' AND pra.revoked_at IS NULL
-            AND u.status = 'active' AND u.deleted_at IS NULL
-          ORDER BY pra.user_id
-          FOR UPDATE OF pra, u`;
-        return rows.map(({ user_id }) => user_id);
-      },
+      lockManagedVendors: () => this.authority.lockManagedVendors(context),
+      ownerCounts: (vendorIds, userId) =>
+        this.authority.ownerCounts(context, vendorIds, userId),
+      lockActivePlatformAdministrators: () =>
+        this.authority.lockActivePlatformAdministrators(context),
       lockUser: async (userId) => {
         const rows = await tx.$queryRaw<{ id: string }[]>`
           SELECT id FROM users WHERE id = ${userId}::uuid FOR UPDATE`;

@@ -1,8 +1,9 @@
 import { Injectable } from '@nestjs/common';
 
 import type { CursorValue } from '../../common/cursor/cursor.js';
+import type { TransactionContext } from '../../common/application/transaction-context.js';
 import { ApplicationError } from '../../common/errors/application.error.js';
-import type { Prisma } from '../../generated/prisma/client.js';
+import { unwrapPrismaTransaction } from '../../database/infrastructure/prisma-transaction-context.js';
 import type { AuditEventResult } from '../application/list-audit-events.js';
 
 export type AuditReaderQuery = Readonly<{
@@ -16,12 +17,13 @@ export type AuditReaderQuery = Readonly<{
 @Injectable()
 export class PrismaAuditReader {
   async list(
-    tx: Prisma.TransactionClient,
+    context: TransactionContext,
     vendorId: string,
     query: AuditReaderQuery,
   ): Promise<
     Readonly<{ items: readonly AuditEventResult[]; next?: CursorValue }>
   > {
+    const tx = unwrapPrismaTransaction(context);
     const rows = await tx.auditEvent.findMany({
       where: {
         vendorId,
