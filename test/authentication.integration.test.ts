@@ -67,6 +67,20 @@ const tokenHash = (value: string) =>
 const guaranteedWrongCode = (code: string) =>
   ((Number(code) + 1) % 1_000_000).toString().padStart(6, '0');
 
+async function waitForLockWaiters(expected: number): Promise<void> {
+  const deadline = Date.now() + 5_000;
+  while (Date.now() < deadline) {
+    const result = await ownerPool.query<{ count: string }>(
+      `SELECT count(*)::text AS count
+       FROM pg_stat_activity
+       WHERE datname = current_database() AND wait_event_type = 'Lock'`,
+    );
+    if (Number(result.rows[0]?.count) >= expected) return;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  assert.fail(`Expected at least ${expected} database lock waiters`);
+}
+
 function totpCode(secret: string, timeMs = Date.now()): string {
   const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
   let bits = 0;
@@ -1721,6 +1735,67 @@ void test('refresh rotation locks the predecessor, creates one successor, and re
     );
     assert.equal(replayAudit.rowCount, 1);
   } finally {
+    await prisma.$disconnect();
+    await cleanupFixture(fixture);
+  }
+});
+
+void test('logout cannot succeed behind an in-flight refresh and leave its successor active', async () => {
+  const fixture = await insertPhoneFixture('+919876500023');
+  const { prisma, delivery, service } = createService();
+  const blocker = await ownerPool.connect();
+  const suffix = randomUUID().replaceAll('-', '');
+  const trigger = `block_refresh_insert_${suffix}`;
+  const triggerFunction = `block_refresh_insert_fn_${suffix}`;
+  const lockKey = 7_718_007;
+  try {
+    const predecessor = await requestPhoneSession(
+      service,
+      delivery,
+      fixture.phone,
+      'logout-refresh-race',
+    );
+    await ownerPool.query(
+      `CREATE FUNCTION ${triggerFunction}() RETURNS trigger LANGUAGE plpgsql AS $$
+       BEGIN
+         IF NEW.user_id = '${fixture.userId}'::uuid AND NEW.predecessor_id IS NOT NULL THEN
+           PERFORM pg_advisory_xact_lock(${lockKey});
+         END IF;
+         RETURN NEW;
+       END $$`,
+    );
+    await ownerPool.query(
+      `CREATE TRIGGER ${trigger} BEFORE INSERT ON sessions
+       FOR EACH ROW EXECUTE FUNCTION ${triggerFunction}()`,
+    );
+    await blocker.query('BEGIN');
+    await blocker.query('SELECT pg_advisory_xact_lock($1)', [lockKey]);
+
+    const refresh = service.refresh(predecessor.refreshToken, 'logout-refresh-race');
+    await waitForLockWaiters(1);
+    const logout = service.logout(predecessor.accessToken);
+    await waitForLockWaiters(2);
+    await blocker.query('COMMIT');
+
+    const [refreshResult, logoutResult] = await Promise.allSettled([refresh, logout]);
+    assert.equal(refreshResult.status, 'fulfilled');
+    assert.ok(
+      logoutResult.status === 'rejected' && expectAuthenticationFailure(logoutResult.reason),
+    );
+    assert.equal(
+      (
+        await ownerPool.query(
+          'SELECT id FROM sessions WHERE user_id = $1 AND revoked_at IS NULL',
+          [fixture.userId],
+        )
+      ).rowCount,
+      1,
+    );
+  } finally {
+    await blocker.query('ROLLBACK');
+    blocker.release();
+    await ownerPool.query(`DROP TRIGGER IF EXISTS ${trigger} ON sessions`);
+    await ownerPool.query(`DROP FUNCTION IF EXISTS ${triggerFunction}()`);
     await prisma.$disconnect();
     await cleanupFixture(fixture);
   }

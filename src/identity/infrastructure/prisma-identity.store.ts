@@ -576,8 +576,17 @@ export class PrismaIdentityStore {
     correlationId: string,
   ): Promise<boolean> {
     return this.prisma.$transaction(async (tx) => {
-      const session = await tx.session.findUnique({
+      const candidate = await tx.session.findUnique({
         where: { accessTokenHash },
+        select: { userId: true },
+      });
+      if (!candidate) return false;
+      await this.sessionUserLock(tx, candidate.userId);
+      const locked = await tx.$queryRaw<{ id: string }[]>`
+        SELECT id FROM sessions WHERE access_token_hash = ${accessTokenHash} FOR UPDATE`;
+      if (!locked[0]) return false;
+      const session = await tx.session.findUnique({
+        where: { id: locked[0].id },
         select: { id: true, userId: true, deviceId: true, revokedAt: true },
       });
       if (!session || session.revokedAt) return false;

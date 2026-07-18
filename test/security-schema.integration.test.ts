@@ -10,7 +10,7 @@ const ownerPool = new pg.Pool({
 });
 test.after(() => Promise.all([pool.end(), ownerPool.end()]));
 
-void test('migrations 003 and 004 safely upgrade a legacy session without resetting data', async () => {
+void test('migrations 003 through 005 safely upgrade legacy data without resetting it', async () => {
   const schema = `migration_${randomUUID().replaceAll('-', '')}`;
   const migrations = await Promise.all(
     [
@@ -18,6 +18,7 @@ void test('migrations 003 and 004 safely upgrade a legacy session without resett
       '202607180002_preserve_vendor_audit_history',
       '202607180003_bind_session_authentication_method',
       '202607180004_allow_anonymous_auth_audits',
+      '202607180005_constrain_anonymous_auth_audits',
     ].map((directory) =>
       readFile(new URL(`../prisma/migrations/${directory}/migration.sql`, import.meta.url), 'utf8'),
     ),
@@ -48,6 +49,7 @@ void test('migrations 003 and 004 safely upgrade a legacy session without resett
 
     await client.query(migrations[2]);
     await client.query(migrations[3]);
+    await client.query(migrations[4]);
 
     const session = await client.query<{
       authentication_method: string;
@@ -88,6 +90,43 @@ void test('migrations 003 and 004 safely upgrade a legacy session without resett
       [schema],
     );
     assert.deepEqual(auditActor.rows, [{ is_nullable: 'YES' }]);
+
+    const anonymousChallengeId = randomUUID();
+    await client.query(
+      `INSERT INTO audit_events
+         (id, actor_user_id, action, entity_type, entity_id, correlation_id)
+       VALUES ($1, NULL, 'auth.otp_challenge_issued', 'authentication', $1, $2)`,
+      [anonymousChallengeId, randomUUID()],
+    );
+
+    const vendorId = randomUUID();
+    await client.query(
+      `INSERT INTO vendors
+         (id, code, legal_name, display_name, timezone, currency,
+          skip_cutoff_minutes, billing_day, updated_at)
+       VALUES ($1, $2, 'Audit Constraint', 'Audit Constraint',
+               'Asia/Kolkata', 'INR', 0, 1, now())`,
+      [vendorId, `audit-${vendorId}`],
+    );
+    const forbiddenAnonymousEvents = [
+      [null, 'auth.session_created', 'authentication'],
+      [null, 'vendor.created', 'vendor'],
+      [null, 'auth.otp_challenge_issued', 'vendor'],
+      [vendorId, 'auth.otp_challenge_issued', 'authentication'],
+    ] as const;
+    for (const [eventVendorId, action, entityType] of forbiddenAnonymousEvents) {
+      await client.query('SAVEPOINT anonymous_audit_check');
+      await assert.rejects(
+        client.query(
+          `INSERT INTO audit_events
+             (id, vendor_id, actor_user_id, action, entity_type, entity_id, correlation_id)
+           VALUES ($1, $2, NULL, $3, $4, $1, $5)`,
+          [randomUUID(), eventVendorId, action, entityType, randomUUID()],
+        ),
+        /audit_events_actor_required_check/,
+      );
+      await client.query('ROLLBACK TO SAVEPOINT anonymous_audit_check');
+    }
   } finally {
     await client.query('ROLLBACK');
     client.release();
