@@ -74,6 +74,13 @@ void test('TOTP accepts the current 30-second step and rejects a code outside ±
   assert.equal(totp.verify(secretBase32, totpCode(secret, now + 60_000), now), false);
 });
 
+void test('TOTP secret validation accepts canonical base32 and rejects malformed input', () => {
+  const totp = new Totp();
+
+  assert.doesNotThrow(() => totp.validateSecret('JBSWY3DPEHPK3PXP'));
+  assert.throws(() => totp.validateSecret('not-base32!'), /RFC 4648 base32/);
+});
+
 void test('AES-GCM round-trips plaintext and rejects tampering', () => {
   const box = new SecretBox(MFA_KEY);
   const encrypted = box.encrypt('base32 MFA secret');

@@ -45,6 +45,10 @@ function codeAt(secret: Buffer, counter: number): string {
 }
 
 export class Totp {
+  validateSecret(secretBase32: string): void {
+    decodeBase32(secretBase32);
+  }
+
   /** Verifies a six-digit SHA-1 TOTP in the current 30-second step or either neighbor. */
   verify(secretBase32: string, code: string, timeMs = Date.now()): boolean {
     if (!/^\d{6}$/.test(code) || !Number.isFinite(timeMs) || timeMs < 0) return false;

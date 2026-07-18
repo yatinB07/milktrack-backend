@@ -10,6 +10,7 @@
     "build": "nest build",
     "db:generate": "prisma generate",
     "db:migrate:deploy": "prisma migrate deploy",
+    "db:seed": "tsx prisma/seed.ts",
     "db:validate": "prisma validate",
     "lint": "eslint .",
     "start": "node dist/main.js",
