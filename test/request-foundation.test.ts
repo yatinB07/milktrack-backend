@@ -71,6 +71,50 @@ void test('cursor round-trips timestamp/id and rejects tampering or limit > 100'
   );
 });
 
+void test('cursor rejects non-canonical encodings and tuple values', () => {
+  const codec = new CursorCodec();
+  const invalidPayloads: unknown[] = [
+    ['2026-07-18T00:00:00.000Z', 1],
+    [1, inboundCorrelationId],
+    ['2026-07-18T00:00:00Z', inboundCorrelationId],
+  ];
+
+  for (const payload of invalidPayloads) {
+    const cursor = Buffer.from(JSON.stringify(payload)).toString('base64url');
+    assert.throws(
+      () => codec.decode(cursor),
+      (error: unknown) =>
+        error instanceof ApplicationError && error.code === 'INVALID_CURSOR',
+    );
+  }
+
+  const validCursor = codec.encode({
+    createdAt: new Date('2026-07-18T00:00:00.000Z'),
+    id: inboundCorrelationId,
+  });
+  for (const cursor of [`${validCursor}=`, `${validCursor}!`]) {
+    assert.throws(
+      () => codec.decode(cursor),
+      (error: unknown) =>
+        error instanceof ApplicationError && error.code === 'INVALID_CURSOR',
+    );
+  }
+});
+
+void test('production app creation registers and removes shutdown hooks', async () => {
+  const before = process.listenerCount('SIGTERM');
+  const { createApp } = await import('../src/bootstrap/create-app.js');
+  const app = await createApp({ logger: false });
+
+  try {
+    assert.equal(process.listenerCount('SIGTERM'), before + 1);
+  } finally {
+    await app.close();
+  }
+
+  assert.equal(process.listenerCount('SIGTERM'), before);
+});
+
 void test('request context requires an authenticated actor', () => {
   const store = new RequestContextStore();
   assert.throws(

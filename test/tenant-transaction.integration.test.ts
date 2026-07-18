@@ -59,20 +59,29 @@ void test('tenant transaction exposes only the selected vendor and keeps context
   try {
     const result = await runner.run(vendorIds[0], async (tx) => ({
       memberships: await tx.vendorMembership.findMany(),
-      setting: await tx.$queryRaw<Array<{ vendor_id: string }>>`
-        SELECT current_setting('app.vendor_id', true) AS vendor_id
+      setting: await tx.$queryRaw<Array<{ connection_id: number; vendor_id: string }>>`
+        SELECT pg_backend_pid() AS connection_id,
+               current_setting('app.vendor_id', true) AS vendor_id
       `,
     }));
-    const freshConnection = await ownerPool.query<{ vendor_id: string | null }>(
-      "SELECT NULLIF(current_setting('app.vendor_id', true), '') AS vendor_id",
-    );
+    const afterTransaction = await prisma.$queryRaw<
+      Array<{ connection_id: number; vendor_id: string | null }>
+    >`
+      SELECT pg_backend_pid() AS connection_id,
+             NULLIF(current_setting('app.vendor_id', true), '') AS vendor_id
+    `;
 
     assert.deepEqual(
       result.memberships.map((membership) => membership.vendorId),
       [vendorIds[0]],
     );
     assert.equal(result.setting[0]?.vendor_id, vendorIds[0]);
-    assert.equal(freshConnection.rows[0]?.vendor_id, null);
+    assert.equal(
+      afterTransaction[0]?.connection_id,
+      result.setting[0]?.connection_id,
+      'the runtime pool must reuse the tested transaction connection',
+    );
+    assert.equal(afterTransaction[0]?.vendor_id, null);
   } finally {
     await prisma.$disconnect();
     await ownerPool.query(

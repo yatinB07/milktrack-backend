@@ -11,5 +11,6 @@ export async function createApp(
 ): Promise<INestApplication> {
   const app = await NestFactory.create(AppModule, options);
   configureApp(app);
+  app.enableShutdownHooks();
   return app;
 }

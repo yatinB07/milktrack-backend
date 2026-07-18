@@ -14,18 +14,22 @@ export class CursorCodec {
 
   decode(cursor: string): CursorValue {
     try {
-      const parsed: unknown = JSON.parse(
-        Buffer.from(cursor, 'base64url').toString('utf8'),
-      );
+      if (!/^[A-Za-z0-9_-]+$/.test(cursor)) throw new Error();
+      const decoded = Buffer.from(cursor, 'base64url');
+      if (decoded.toString('base64url') !== cursor) throw new Error();
+
+      const parsed: unknown = JSON.parse(decoded.toString('utf8'));
       if (
         !Array.isArray(parsed) ||
         parsed.length !== 2 ||
-        Number.isNaN(Date.parse(String(parsed[0]))) ||
-        !UUID_PATTERN.test(String(parsed[1]))
+        typeof parsed[0] !== 'string' ||
+        typeof parsed[1] !== 'string' ||
+        new Date(parsed[0]).toISOString() !== parsed[0] ||
+        !UUID_PATTERN.test(parsed[1])
       ) {
         throw new Error();
       }
-      return { createdAt: new Date(String(parsed[0])), id: String(parsed[1]) };
+      return { createdAt: new Date(parsed[0]), id: parsed[1] };
     } catch {
       throw new ApplicationError('INVALID_CURSOR', 'Cursor is invalid', 400);
     }
