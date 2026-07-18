@@ -1,0 +1,55 @@
+services:
+  postgres:
+    image: postgres:18
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-milktrack}
+      POSTGRES_USER: ${POSTGRES_USER:-milktrack_owner}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-milktrack_owner_local}
+      MILKTRACK_APP_USER: ${MILKTRACK_APP_USER:-milktrack_app}
+      MILKTRACK_APP_PASSWORD: ${MILKTRACK_APP_PASSWORD:-milktrack_app_local}
+    volumes:
+      - postgres_data:/var/lib/postgresql
+      - ./docker/postgres/01-runtime-role.sh:/docker-entrypoint-initdb.d/01-runtime-role.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+      start_period: 5s
+
+  migrate:
+    build:
+      context: .
+      target: development
+    command: ["npm", "run", "db:migrate:deploy"]
+    environment:
+      DATABASE_URL: ${MIGRATION_DATABASE_URL:-postgresql://milktrack_owner:milktrack_owner_local@postgres:5432/milktrack}
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  backend:
+    build:
+      context: .
+      target: development
+    command: ["npm", "run", "start:dev"]
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgresql://milktrack_app:milktrack_app_local@postgres:5432/milktrack}
+    ports:
+      - "${BACKEND_PORT:-3000}:3000"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3000/v1/health').then(response => process.exit(response.ok ? 0 : 1), () => process.exit(1))"
+      interval: 2s
+      timeout: 3s
+      retries: 30
+      start_period: 5s
+
+volumes:
+  postgres_data:
