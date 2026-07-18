@@ -145,6 +145,7 @@ void test('security contract rejects bearer authentication on an anonymous opera
 void test('publishes the complete Phase 1 HTTP contract without persistence secrets', async () => {
   const { document, serialized } = await readDocument();
   const paths = object(document.paths, 'OpenAPI paths must be documented');
+  assert.deepEqual(Object.keys(paths).sort(), Object.keys(phaseOneOperations).sort());
 
   for (const [path, methods] of Object.entries(phaseOneOperations)) {
     const pathItem = object(paths[path], `missing OpenAPI path ${path}`);
@@ -196,7 +197,25 @@ void test('publishes the complete Phase 1 HTTP contract without persistence secr
   );
   assertPhaseOneSecurity(document);
 
-  for (const forbidden of ['passwordHash', 'codeHash', 'refreshTokenHash', 'encryptedSecret', 'Prisma']) {
-    assert(!serialized.includes(forbidden), `OpenAPI must not expose ${forbidden}`);
+  for (const [path, methods] of Object.entries(phaseOneOperations)) {
+    assert.deepEqual(
+      Object.keys(object(paths[path], `missing ${path}`)).sort(),
+      [...methods].sort(),
+      `${path} must publish only approved methods`,
+    );
   }
+
+  const normalized = serialized.replaceAll(/[^a-z0-9]/gi, '').toLowerCase();
+  for (const forbidden of ['passwordHash', 'codeHash', 'refreshTokenHash', 'encryptedSecret', 'Prisma']) {
+    assert(!normalized.includes(forbidden.toLowerCase()), `OpenAPI must not expose ${forbidden}`);
+  }
+
+  const schemas = object(components.schemas, 'OpenAPI schemas must be documented');
+  const vendorProperties = object(
+    object(schemas.VendorResponseDto, 'VendorResponseDto must be documented').properties,
+    'VendorResponseDto properties must be documented',
+  );
+  assert.equal(object(vendorProperties.id, 'vendor id must be documented').format, 'uuid');
+  assert.equal(object(vendorProperties.createdAt, 'createdAt must be documented').format, 'date-time');
+  assert.equal(object(vendorProperties.updatedAt, 'updatedAt must be documented').format, 'date-time');
 });

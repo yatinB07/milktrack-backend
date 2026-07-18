@@ -6,6 +6,7 @@ import {
   Controller,
   Get,
   Inject,
+  Logger,
   Module,
   type INestApplication,
 } from '@nestjs/common';
@@ -199,8 +200,19 @@ void describe('request middleware and application error filter', () => {
   });
 
   void it('does not expose unknown error details', async () => {
+    const calls: unknown[][] = [];
+    const original = Object.getOwnPropertyDescriptor(Logger.prototype, 'error');
+    assert(original);
+    Object.defineProperty(Logger.prototype, 'error', {
+      ...original,
+      value: (...args: unknown[]): void => {
+        calls.push(args);
+      },
+    });
     const response = await fetch(`${baseUrl}/unknown-error`, {
       headers: { 'x-correlation-id': inboundCorrelationId },
+    }).finally(() => {
+      Object.defineProperty(Logger.prototype, 'error', original);
     });
     const body = (await response.json()) as Record<string, unknown>;
 
@@ -208,5 +220,12 @@ void describe('request middleware and application error filter', () => {
     assert.equal(body.code, 'INTERNAL_ERROR');
     assert.equal(body.correlationId, inboundCorrelationId);
     assert.doesNotMatch(JSON.stringify(body), /sensitive internal detail|stack/i);
+    assert.equal(calls.length, 1);
+    assert.equal(
+      calls[0]?.[0],
+      `Unexpected request failure (${inboundCorrelationId}; Error)`,
+    );
+    assert.equal(calls[0]?.length, 1);
+    assert.doesNotMatch(JSON.stringify(calls), /sensitive internal detail|stack/i);
   });
 });

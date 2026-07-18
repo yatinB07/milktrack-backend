@@ -56,19 +56,29 @@ async function insertMembership(input: Readonly<{
   role: string;
   status?: string;
   deleted?: boolean;
+  createdAt?: string;
 }>): Promise<string> {
   const id = randomUUID();
   const status = input.status ?? 'active';
   await ownerPool.query(
     `INSERT INTO vendor_memberships
        (id, vendor_id, user_id, role, status, joined_at, ended_at,
-        deleted_at, deleted_by, deletion_reason, updated_at)
+        deleted_at, deleted_by, deletion_reason, created_at, updated_at)
      VALUES ($1, $2, $3, $4::"MembershipRole", $5::"MembershipStatus", now(),
              CASE WHEN $5::text = 'ended' THEN now() ELSE NULL END,
              CASE WHEN $6 THEN now() ELSE NULL END,
              CASE WHEN $6 THEN $3::uuid ELSE NULL END,
-             CASE WHEN $6 THEN 'Seeded deletion' ELSE NULL END, now())`,
-    [id, input.vendorId, input.userId, input.role, status, input.deleted ?? false],
+             CASE WHEN $6 THEN 'Seeded deletion' ELSE NULL END,
+             COALESCE($7::timestamptz, now()), now())`,
+    [
+      id,
+      input.vendorId,
+      input.userId,
+      input.role,
+      status,
+      input.deleted ?? false,
+      input.createdAt ?? null,
+    ],
   );
   return id;
 }
@@ -270,6 +280,58 @@ void describe('membership and user lifecycle HTTP API', () => {
       );
       assert.equal(crossTenant.status, 404);
       assert.equal(((await crossTenant.json()) as { code: string }).code, 'MEMBERSHIP_NOT_FOUND');
+    } finally {
+      await cleanup(seed);
+    }
+  });
+
+  void it('does not skip memberships created within the same millisecond', async () => {
+    const seed: Seed = { vendorIds: [], userIds: [] };
+    const actorId = await insertUser(seed, 'Vendor Owner');
+    const userIds = [await insertUser(seed), await insertUser(seed)];
+    const vendorId = await insertVendor(seed);
+    await insertMembership({
+      vendorId,
+      userId: actorId,
+      role: 'vendor_owner',
+      createdAt: '2099-07-18T12:00:00.000400Z',
+    });
+    await insertMembership({
+      vendorId,
+      userId: userIds[0],
+      role: 'customer',
+      createdAt: '2099-07-18T12:00:00.000100Z',
+    });
+    await insertMembership({
+      vendorId,
+      userId: userIds[1],
+      role: 'delivery_agent',
+      createdAt: '2099-07-18T12:00:00.000000Z',
+    });
+    const token = await issueSession(actorId);
+
+    try {
+      const seen = new Set<string>();
+      let cursor: string | undefined;
+      do {
+        const response = await request(
+          baseUrl,
+          token,
+          `/v1/vendors/${vendorId}/memberships?limit=1${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`,
+        );
+        const body = (await response.json()) as {
+          items: Array<{ id: string }>;
+          nextCursor?: string;
+        };
+        assert.equal(response.status, 200, JSON.stringify(body));
+        assert.equal(body.items.length, 1);
+        const [item] = body.items;
+        assert(item);
+        seen.add(item.id);
+        cursor = body.nextCursor;
+      } while (cursor);
+
+      assert.equal(seen.size, 3);
     } finally {
       await cleanup(seed);
     }

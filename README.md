@@ -20,6 +20,8 @@ separate production values through the deployment platform. In particular:
   one-shot migration service and into the test-only integration service as
   `TEST_OWNER_DATABASE_URL`; the backend service never receives either value.
 - `DATABASE_URL` uses the restricted runtime role without `BYPASSRLS`.
+  Its username is fixed as `milktrack_app` because committed migrations grant
+  privileges to that role; only its injected password is configurable.
 - `AUTH_HMAC_KEY` and `MFA_ENCRYPTION_KEY` must each be an independently
   generated, canonical Base64 encoding of exactly 32 bytes.
 - `SESSION_TTL_SECONDS` controls the expiry of each issued refresh session; a
@@ -151,9 +153,11 @@ With the Compose stack running, build and inspect the least-privileged
 production image:
 
 ```bash
+COMPOSE_PROJECT_NAME=milktrack-production-contract docker compose --env-file .env up --build -d --wait --wait-timeout 120
 docker build --target production -t milktrack-backend:production .
 docker run --rm --entrypoint npm milktrack-backend:production audit --omit=dev --omit=optional
-bash test/runtime-contract.sh milktrack-backend:production
+COMPOSE_PROJECT_NAME=milktrack-production-contract bash test/runtime-contract.sh milktrack-backend:production
+COMPOSE_PROJECT_NAME=milktrack-production-contract docker compose --env-file .env down
 ```
 
 ## OpenAPI contract

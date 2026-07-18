@@ -3,11 +3,12 @@ set -eu
 
 : "${POSTGRES_USER:?POSTGRES_USER is required}"
 : "${POSTGRES_DB:?POSTGRES_DB is required}"
-: "${MILKTRACK_APP_USER:?MILKTRACK_APP_USER is required}"
 : "${MILKTRACK_APP_PASSWORD:?MILKTRACK_APP_PASSWORD is required}"
 
-if [ "$MILKTRACK_APP_USER" = "$POSTGRES_USER" ]; then
-  echo "MILKTRACK_APP_USER must differ from POSTGRES_USER" >&2
+MILKTRACK_APP_USER=milktrack_app
+
+if [ "$POSTGRES_USER" = "$MILKTRACK_APP_USER" ]; then
+  echo "POSTGRES_USER must differ from the fixed milktrack_app runtime role" >&2
   exit 1
 fi
 

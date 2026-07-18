@@ -82,8 +82,10 @@ authenticate opaque session
 
 `vendor_memberships`, `support_access_grants`, and `audit_events` have row-level
 security enabled and forced. Their policies compare `vendor_id` with the
-transaction-local `app.vendor_id`. The API connects as `milktrack_app`, which is
-neither the table owner nor a superuser and has no `BYPASSRLS`, schema-create,
+transaction-local `app.vendor_id`. The fixed runtime role is `milktrack_app`,
+matching the role named by committed migrations. Only its injected password is
+configurable. This role is neither the table owner nor a superuser and has no
+`BYPASSRLS`, schema-create,
 database-create, or role-create privilege. PostgreSQL therefore remains a
 defense-in-depth boundary even if application query filtering is missed.
 

@@ -700,6 +700,7 @@
             "type": "string"
           },
           "createdAt": {
+            "format": "date-time",
             "type": "string"
           },
           "currency": {
@@ -709,6 +710,7 @@
             "type": "string"
           },
           "id": {
+            "format": "uuid",
             "type": "string"
           },
           "legalName": {
@@ -732,6 +734,7 @@
             "type": "string"
           },
           "updatedAt": {
+            "format": "date-time",
             "type": "string"
           },
           "version": {
@@ -739,8 +742,10 @@
           }
         },
         "required": [
-          "status",
           "id",
+          "status",
+          "createdAt",
+          "updatedAt",
           "code",
           "legalName",
           "displayName",
@@ -748,9 +753,7 @@
           "currency",
           "skipCutoffMinutes",
           "billingDay",
-          "version",
-          "createdAt",
-          "updatedAt"
+          "version"
         ],
         "type": "object"
       },

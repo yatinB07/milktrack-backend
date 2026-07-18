@@ -91,6 +91,7 @@ export class TransitionVendorRequestDto {
 }
 
 export class VendorResponseDto {
+  @ApiProperty({ type: String, format: 'uuid' })
   id!: string;
   code!: string;
   legalName!: string;
@@ -104,7 +105,10 @@ export class VendorResponseDto {
   skipCutoffMinutes!: number;
   billingDay!: number;
   version!: number;
+  @ApiProperty({ type: String, format: 'date-time' })
   createdAt!: string;
+
+  @ApiProperty({ type: String, format: 'date-time' })
   updatedAt!: string;
 }
 

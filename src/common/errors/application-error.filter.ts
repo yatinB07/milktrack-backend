@@ -4,6 +4,7 @@ import {
   ArgumentsHost,
   Catch,
   HttpException,
+  Logger,
   type ExceptionFilter,
   Injectable,
 } from '@nestjs/common';
@@ -44,11 +45,27 @@ type HttpResponse = {
 @Catch()
 @Injectable()
 export class ApplicationErrorFilter implements ExceptionFilter {
+  private readonly logger = new Logger(ApplicationErrorFilter.name);
+
   constructor(private readonly context: RequestContextStore) {}
 
   catch(exception: unknown, host: ArgumentsHost): void {
     const response = host.switchToHttp().getResponse<HttpResponse>();
     const correlationId = this.context.get()?.correlationId ?? randomUUID();
+    if (
+      !(exception instanceof ApplicationError) &&
+      (!(exception instanceof HttpException) || exception.getStatus() >= 500)
+    ) {
+      const classification =
+        exception instanceof HttpException
+          ? 'HttpException'
+          : exception instanceof Error
+            ? 'Error'
+            : 'Unknown';
+      this.logger.error(
+        `Unexpected request failure (${correlationId}; ${classification})`,
+      );
+    }
     const error =
       exception instanceof ApplicationError
         ? exception

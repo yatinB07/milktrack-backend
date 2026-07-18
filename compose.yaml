@@ -1,11 +1,10 @@
 services:
   postgres:
-    image: postgres:18
+    image: postgres:18.4@sha256:32ca0af8e77bfb8c6610c488e4691f83f972a3e9e64d3b02facf3ab111ad5500
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-milktrack}
       POSTGRES_USER: ${POSTGRES_USER:-milktrack_owner}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-milktrack_owner_local}
-      MILKTRACK_APP_USER: ${MILKTRACK_APP_USER:-milktrack_app}
       MILKTRACK_APP_PASSWORD: ${MILKTRACK_APP_PASSWORD:-milktrack_app_local}
     volumes:
       - postgres_data:/var/lib/postgresql
