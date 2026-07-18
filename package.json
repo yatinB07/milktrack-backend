@@ -14,7 +14,8 @@
     "lint": "eslint .",
     "start": "node dist/main.js",
     "start:dev": "nest start --watch",
-    "test": "node --import tsx --test test/**/*.test.ts",
+    "test": "node --import tsx --test test/health.e2e.test.ts test/validation.e2e.test.ts $(find test -name '*.test.ts' ! -name '*.integration.test.ts' ! -name '*.e2e.test.ts' -print)",
+    "test:integration": "node --import tsx --test $(find test -type f \\( -name '*.integration.test.ts' -o -name '*.e2e.test.ts' \\) -print)",
     "typecheck": "tsc --noEmit",
     "verify": "npm run lint && npm run typecheck && npm test && npm run build"
   },

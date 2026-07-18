@@ -51,5 +51,17 @@ services:
       retries: 30
       start_period: 5s
 
+  integration:
+    profiles: ["test"]
+    build:
+      context: .
+      target: development
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgresql://milktrack_app:milktrack_app_local@postgres:5432/milktrack}
+      TEST_OWNER_DATABASE_URL: ${MIGRATION_DATABASE_URL:-postgresql://milktrack_owner:milktrack_owner_local@postgres:5432/milktrack}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
 volumes:
   postgres_data:

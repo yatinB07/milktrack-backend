@@ -7,3 +7,267 @@ generator client {
 datasource db {
   provider = "postgresql"
 }
+
+enum UserStatus {
+  active
+  suspended
+  deactivated
+}
+
+enum IdentityType {
+  phone
+  email
+}
+
+enum MfaFactorType {
+  totp
+}
+
+enum VendorStatus {
+  pending_approval
+  onboarding
+  trial
+  active
+  suspended
+  closed
+}
+
+enum MembershipRole {
+  vendor_owner
+  vendor_administrator
+  delivery_agent
+  customer
+}
+
+enum MembershipStatus {
+  invited
+  active
+  ended
+}
+
+enum PlatformRole {
+  product_owner
+  platform_administrator
+  support_operations
+}
+
+enum OtpPurpose {
+  sign_in
+}
+
+model User {
+  id             String                      @id @db.Uuid
+  displayName    String                      @map("display_name")
+  status         UserStatus                  @default(active)
+  locale         String                      @default("en")
+  deactivatedAt  DateTime?                   @map("deactivated_at") @db.Timestamptz(6)
+  deletedAt      DateTime?                   @map("deleted_at") @db.Timestamptz(6)
+  deletedBy      String?                     @map("deleted_by") @db.Uuid
+  deletionReason String?                     @map("deletion_reason")
+  createdAt      DateTime                    @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime                    @updatedAt @map("updated_at") @db.Timestamptz(6)
+  identities     UserIdentity[]
+  password       PasswordCredential?
+  mfaFactors     MfaFactor[]
+  pendingMfa     PendingMfaAuthentication[]
+  sessions       Session[]
+  memberships    VendorMembership[]
+  platformRoles  PlatformRoleAssignment[]
+
+  @@map("users")
+}
+
+model UserIdentity {
+  id              String         @id @db.Uuid
+  userId          String         @map("user_id") @db.Uuid
+  type            IdentityType
+  normalizedValue String         @map("normalized_value")
+  verifiedAt      DateTime?      @map("verified_at") @db.Timestamptz(6)
+  isPrimary       Boolean        @default(false) @map("is_primary")
+  createdAt       DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime       @updatedAt @map("updated_at") @db.Timestamptz(6)
+  user            User           @relation(fields: [userId], references: [id])
+  challenges      OtpChallenge[]
+
+  @@unique([type, normalizedValue])
+  @@map("user_identities")
+}
+
+model PasswordCredential {
+  userId         String    @id @map("user_id") @db.Uuid
+  passwordHash   String    @map("password_hash")
+  salt           String
+  algorithm      String
+  parameters     Json
+  changedAt      DateTime  @map("changed_at") @db.Timestamptz(6)
+  failedAttempts Int       @default(0) @map("failed_attempts")
+  lockedUntil    DateTime? @map("locked_until") @db.Timestamptz(6)
+  user           User      @relation(fields: [userId], references: [id])
+
+  @@map("password_credentials")
+}
+
+model MfaFactor {
+  id              String        @id @db.Uuid
+  userId          String        @map("user_id") @db.Uuid
+  type            MfaFactorType
+  encryptedSecret String        @map("encrypted_secret")
+  enabledAt       DateTime      @map("enabled_at") @db.Timestamptz(6)
+  lastUsedAt      DateTime?     @map("last_used_at") @db.Timestamptz(6)
+  revokedAt       DateTime?     @map("revoked_at") @db.Timestamptz(6)
+  user            User          @relation(fields: [userId], references: [id])
+
+  @@index([userId, revokedAt])
+  @@map("mfa_factors")
+}
+
+model PendingMfaAuthentication {
+  id                          String    @id @db.Uuid
+  userId                      String    @map("user_id") @db.Uuid
+  tokenHash                   String    @unique @map("token_hash")
+  deviceId                    String    @map("device_id")
+  passwordCredentialChangedAt DateTime  @map("password_credential_changed_at") @db.Timestamptz(6)
+  expiresAt                   DateTime  @map("expires_at") @db.Timestamptz(6)
+  attemptCount                Int       @default(0) @map("attempt_count")
+  consumedAt                  DateTime? @map("consumed_at") @db.Timestamptz(6)
+  createdAt                   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  user                        User      @relation(fields: [userId], references: [id])
+
+  @@index([userId, expiresAt])
+  @@map("pending_mfa_authentications")
+}
+
+model OtpChallenge {
+  id              String        @id @db.Uuid
+  identityId      String?       @map("identity_id") @db.Uuid
+  tokenHash       String        @unique @map("token_hash")
+  destinationHash String        @map("destination_hash")
+  purpose         OtpPurpose
+  codeHash        String        @map("code_hash")
+  expiresAt       DateTime      @map("expires_at") @db.Timestamptz(6)
+  attemptCount    Int           @default(0) @map("attempt_count")
+  consumedAt      DateTime?     @map("consumed_at") @db.Timestamptz(6)
+  requestIpHash   String?       @map("request_ip_hash")
+  createdAt       DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+  identity        UserIdentity? @relation(fields: [identityId], references: [id])
+
+  @@index([destinationHash, purpose, createdAt(sort: Desc)])
+  @@map("otp_challenges")
+}
+
+model Session {
+  id               String    @id @db.Uuid
+  userId           String    @map("user_id") @db.Uuid
+  accessTokenHash  String    @unique @map("access_token_hash")
+  refreshTokenHash String    @unique @map("refresh_token_hash")
+  predecessorId    String?   @unique @map("predecessor_id") @db.Uuid
+  deviceId         String    @map("device_id")
+  deviceName       String?   @map("device_name")
+  ipHash           String?   @map("ip_hash")
+  userAgent        String?   @map("user_agent")
+  accessExpiresAt  DateTime  @map("access_expires_at") @db.Timestamptz(6)
+  expiresAt        DateTime  @map("expires_at") @db.Timestamptz(6)
+  revokedAt        DateTime? @map("revoked_at") @db.Timestamptz(6)
+  lastSeenAt       DateTime  @map("last_seen_at") @db.Timestamptz(6)
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  user             User      @relation(fields: [userId], references: [id])
+
+  @@index([userId, revokedAt, expiresAt])
+  @@map("sessions")
+}
+
+model Vendor {
+  id                String               @id @db.Uuid
+  code              String
+  legalName         String               @map("legal_name")
+  displayName       String               @map("display_name")
+  status            VendorStatus         @default(pending_approval)
+  timezone          String
+  currency          String               @db.Char(3)
+  skipCutoffMinutes Int                  @map("skip_cutoff_minutes")
+  billingDay        Int                  @map("billing_day")
+  version           Int                  @default(1)
+  deletedAt         DateTime?            @map("deleted_at") @db.Timestamptz(6)
+  deletedBy         String?              @map("deleted_by") @db.Uuid
+  deletionReason    String?              @map("deletion_reason")
+  createdAt         DateTime             @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime             @updatedAt @map("updated_at") @db.Timestamptz(6)
+  memberships       VendorMembership[]
+  supportGrants     SupportAccessGrant[]
+  auditEvents       AuditEvent[]
+
+  @@map("vendors")
+}
+
+model VendorMembership {
+  id             String           @id @db.Uuid
+  vendorId       String           @map("vendor_id") @db.Uuid
+  userId         String           @map("user_id") @db.Uuid
+  role           MembershipRole
+  status         MembershipStatus @default(invited)
+  joinedAt       DateTime?        @map("joined_at") @db.Timestamptz(6)
+  endedAt        DateTime?        @map("ended_at") @db.Timestamptz(6)
+  deletedAt      DateTime?        @map("deleted_at") @db.Timestamptz(6)
+  deletedBy      String?          @map("deleted_by") @db.Uuid
+  deletionReason String?          @map("deletion_reason")
+  createdAt      DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime         @updatedAt @map("updated_at") @db.Timestamptz(6)
+  vendor         Vendor           @relation(fields: [vendorId], references: [id])
+  user           User             @relation(fields: [userId], references: [id])
+
+  @@unique([vendorId, id])
+  @@index([vendorId, status, id])
+  @@map("vendor_memberships")
+}
+
+model PlatformRoleAssignment {
+  id        String       @id @db.Uuid
+  userId    String       @map("user_id") @db.Uuid
+  role      PlatformRole
+  grantedBy String       @map("granted_by") @db.Uuid
+  grantedAt DateTime     @default(now()) @map("granted_at") @db.Timestamptz(6)
+  revokedAt DateTime?    @map("revoked_at") @db.Timestamptz(6)
+  user      User         @relation(fields: [userId], references: [id])
+
+  @@index([userId, revokedAt])
+  @@map("platform_role_assignments")
+}
+
+model SupportAccessGrant {
+  id            String    @id @db.Uuid
+  vendorId      String    @map("vendor_id") @db.Uuid
+  granteeUserId String    @map("grantee_user_id") @db.Uuid
+  requestedBy   String    @map("requested_by") @db.Uuid
+  approvedBy    String    @map("approved_by") @db.Uuid
+  purpose       String
+  scope         Json      @map("scope_json")
+  accessMode    String    @default("read") @map("access_mode")
+  startsAt      DateTime  @map("starts_at") @db.Timestamptz(6)
+  expiresAt     DateTime  @map("expires_at") @db.Timestamptz(6)
+  revokedAt     DateTime? @map("revoked_at") @db.Timestamptz(6)
+  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  vendor        Vendor    @relation(fields: [vendorId], references: [id])
+
+  @@index([vendorId, granteeUserId, expiresAt])
+  @@map("support_access_grants")
+}
+
+model AuditEvent {
+  id            String   @id @db.Uuid
+  vendorId      String?  @map("vendor_id") @db.Uuid
+  actorUserId   String   @map("actor_user_id") @db.Uuid
+  action        String
+  entityType    String   @map("entity_type")
+  entityId      String   @map("entity_id") @db.Uuid
+  oldValue      Json?    @map("old_value")
+  newValue      Json?    @map("new_value")
+  reason        String?
+  correlationId String   @map("correlation_id") @db.Uuid
+  ipHash        String?  @map("ip_hash")
+  deviceId      String?  @map("device_id")
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  vendor        Vendor?  @relation(fields: [vendorId], references: [id])
+
+  @@index([vendorId, createdAt(sort: Desc), id(sort: Desc)])
+  @@map("audit_events")
+}

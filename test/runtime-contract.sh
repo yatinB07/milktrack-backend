@@ -53,3 +53,6 @@ if [ "$privileges" != 't|f|t|f' ]; then
   exit 1
 fi
 echo 'runtime privileges: passed'
+
+docker compose exec -T backend node -e "require('node:assert/strict').equal(process.env.TEST_OWNER_DATABASE_URL, undefined); require('node:assert/strict').equal(process.env.MIGRATION_DATABASE_URL, undefined)"
+echo 'backend owner URL isolation: passed'
