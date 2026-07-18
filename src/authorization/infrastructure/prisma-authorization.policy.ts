@@ -39,9 +39,19 @@ export class PrismaAuthorizationPolicy extends AuthorizationPolicy {
   ): Promise<void> {
     requireVendorOperation(operation, permission);
 
+    // Membership administration is part of vendor onboarding. Other vendor
+    // operations remain unavailable until the vendor becomes active.
+    const permittedVendorStatuses = operation.startsWith('membership.')
+      ? (['onboarding', 'trial', 'active'] as const)
+      : (['active'] as const);
+
     const [vendor, memberships] = await Promise.all([
       tx.vendor.findFirst({
-        where: { id: vendorId, status: 'active', deletedAt: null },
+        where: {
+          id: vendorId,
+          status: { in: [...permittedVendorStatuses] },
+          deletedAt: null,
+        },
         select: { id: true },
       }),
       tx.vendorMembership.findMany({

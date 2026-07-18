@@ -1,4 +1,23 @@
-import { createHmac, timingSafeEqual } from 'node:crypto';
+import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
+
+const BASE32_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+
+function encodeBase32(value: Buffer): string {
+  let bits = 0;
+  let buffer = 0;
+  let result = '';
+  for (const byte of value) {
+    buffer = (buffer << 8) | byte;
+    bits += 8;
+    while (bits >= 5) {
+      bits -= 5;
+      result += BASE32_ALPHABET[(buffer >>> bits) & 0x1f];
+      buffer &= (1 << bits) - 1;
+    }
+  }
+  if (bits > 0) result += BASE32_ALPHABET[(buffer << (5 - bits)) & 0x1f];
+  return result;
+}
 
 function decodeBase32(value: string): Buffer {
   const normalized = value.toUpperCase();
@@ -45,6 +64,10 @@ function codeAt(secret: Buffer, counter: number): string {
 }
 
 export class Totp {
+  generateSecret(): string {
+    return encodeBase32(randomBytes(20));
+  }
+
   validateSecret(secretBase32: string): void {
     decodeBase32(secretBase32);
   }

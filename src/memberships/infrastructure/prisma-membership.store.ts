@@ -202,12 +202,20 @@ export class PrismaMembershipStore {
     return rows.length === 1;
   }
 
+  async lockVendor(tx: Prisma.TransactionClient): Promise<void> {
+    await tx.$queryRaw`
+      SELECT id FROM vendors
+      WHERE id = current_setting('app.vendor_id')::uuid FOR UPDATE`;
+  }
+
   async lockActiveOwners(tx: Prisma.TransactionClient): Promise<number> {
     const rows = await tx.$queryRaw<{ id: string }[]>`
-      SELECT id FROM vendor_memberships
-      WHERE role = 'vendor_owner' AND status = 'active'
-        AND ended_at IS NULL AND deleted_at IS NULL
-      ORDER BY id FOR UPDATE`;
+      SELECT vm.id FROM vendor_memberships vm
+      JOIN users u ON u.id = vm.user_id
+      WHERE vm.role = 'vendor_owner' AND vm.status = 'active'
+        AND vm.ended_at IS NULL AND vm.deleted_at IS NULL
+        AND u.status = 'active' AND u.deleted_at IS NULL
+      ORDER BY vm.id FOR UPDATE OF vm, u`;
     return rows.length;
   }
 
@@ -223,6 +231,7 @@ export class PrismaMembershipStore {
           status: 'active',
           endedAt: null,
           deletedAt: null,
+          user: { status: 'active', deletedAt: null },
         },
       })) > 0
     );

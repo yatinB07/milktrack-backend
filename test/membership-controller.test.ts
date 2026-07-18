@@ -7,9 +7,9 @@ import {
   UserLifecycleController,
 } from '../src/memberships/http/membership.controller.js';
 import { ApplicationError } from '../src/common/errors/application.error.js';
-import type { PrismaService } from '../src/database/prisma.service.js';
 import {
-  PrismaUserLifecycleService,
+  DefaultUserLifecycleService,
+  type UserLifecycleStore,
   type UserLifecycleService,
 } from '../src/identity/application/user-lifecycle.service.js';
 import {
@@ -83,34 +83,30 @@ void test('user lifecycle controller maps restored users to the public DTO shape
 });
 
 void test('user lifecycle protects the last active platform administrator', async () => {
-  let queryNumber = 0;
   let mutations = 0;
   const targetId = '00000000-0000-4000-8000-000000000006';
-  const tx = {
-    $queryRaw: () => {
-      queryNumber += 1;
-      if (queryNumber === 1) return Promise.resolve([]); // Session advisory lock.
-      if (queryNumber === 2) return Promise.resolve([{ user_id: targetId }]);
-      return Promise.resolve([{ id: targetId }]);
-    },
-    user: {
-      findFirst: () => Promise.resolve({ id: targetId }),
-      update: () => {
-        mutations += 1;
-        return Promise.resolve({});
-      },
-    },
-    session: {
-      updateMany: () => {
-        mutations += 1;
-        return Promise.resolve({ count: 0 });
-      },
-    },
-  };
-  const prisma = {
-    $transaction: (operation: (client: typeof tx) => Promise<unknown>) => operation(tx),
-  } as unknown as PrismaService;
-  const service = new PrismaUserLifecycleService(prisma);
+  const store = {
+    run: (operation) =>
+      operation({
+        lockSessionUser: () => Promise.resolve(),
+        lockActivePlatformAdministrators: () => Promise.resolve([targetId]),
+        lockManagedVendors: () => Promise.resolve([]),
+        ownerCounts: () => Promise.resolve([]),
+        lockUser: () => Promise.reject(new Error('must not query target')),
+        softDelete: () => {
+          mutations += 1;
+          return Promise.resolve();
+        },
+        deactivate: () => Promise.reject(new Error('must not deactivate')),
+        restore: () => Promise.reject(new Error('must not restore')),
+        revokeSessions: () => {
+          mutations += 1;
+          return Promise.resolve();
+        },
+        appendAudit: () => Promise.resolve(),
+      }),
+  } satisfies UserLifecycleStore;
+  const service = new DefaultUserLifecycleService(store);
 
   await assert.rejects(
     service.softDelete(actor, targetId, 'Attempt to delete last administrator'),

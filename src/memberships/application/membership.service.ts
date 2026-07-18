@@ -145,7 +145,10 @@ export class PrismaMembershipService extends MembershipService {
     return this.authorization.execute(
       { actor, vendorId, permission: 'membership:manage', operation: 'membership.create' },
       async (tx) => {
-        if (command.role === 'vendor_owner') await this.requireOwner(tx, actor);
+        if (command.role === 'vendor_owner') {
+          await this.memberships.lockVendor(tx);
+          await this.requireOwner(tx, actor);
+        }
         const created = await this.memberships.create(tx, {
           id: randomUUID(),
           vendorId,
@@ -170,6 +173,7 @@ export class PrismaMembershipService extends MembershipService {
     return this.authorization.execute(
       { actor, vendorId, permission: 'membership:manage', operation: 'membership.update-role' },
       async (tx) => {
+        await this.memberships.lockVendor(tx);
         const ownerCount = await this.memberships.lockActiveOwners(tx);
         await this.lockTarget(tx, membershipId);
         const current = await this.active(tx, membershipId);
@@ -203,6 +207,7 @@ export class PrismaMembershipService extends MembershipService {
     return this.authorization.execute(
       { actor, vendorId, permission: 'membership:manage', operation: 'membership.end' },
       async (tx) => {
+        await this.memberships.lockVendor(tx);
         const ownerCount = await this.memberships.lockActiveOwners(tx);
         await this.lockTarget(tx, membershipId);
         const current = await this.active(tx, membershipId);
@@ -228,6 +233,7 @@ export class PrismaMembershipService extends MembershipService {
     await this.authorization.execute(
       { actor, vendorId, permission: 'membership:manage', operation: 'membership.delete' },
       async (tx) => {
+        await this.memberships.lockVendor(tx);
         const ownerCount = await this.memberships.lockActiveOwners(tx);
         await this.lockTarget(tx, membershipId);
         const current = await this.active(tx, membershipId);
@@ -257,6 +263,7 @@ export class PrismaMembershipService extends MembershipService {
     return this.authorization.execute(
       { actor, vendorId, permission: 'membership:manage', operation: 'membership.restore' },
       async (tx) => {
+        await this.memberships.lockVendor(tx);
         const ownerCount = await this.memberships.lockActiveOwners(tx);
         await this.lockTarget(tx, membershipId);
         const current = await this.memberships.findIncludingDeleted(tx, membershipId);

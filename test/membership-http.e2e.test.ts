@@ -147,6 +147,18 @@ async function grantPlatformAdministrator(userId: string): Promise<void> {
   );
 }
 
+async function insertEmailIdentity(
+  userId: string,
+  email: string,
+): Promise<void> {
+  await ownerPool.query(
+    `INSERT INTO user_identities
+       (id, user_id, type, normalized_value, verified_at, is_primary, updated_at)
+     VALUES ($1, $2, 'email', $3, now(), true, now())`,
+    [randomUUID(), userId, email],
+  );
+}
+
 async function cleanup(seed: Seed): Promise<void> {
   await ownerPool.query(
     `DELETE FROM audit_events
@@ -154,6 +166,10 @@ async function cleanup(seed: Seed): Promise<void> {
         OR vendor_id = ANY($2::uuid[])
         OR entity_id = ANY($1::uuid[])`,
     [seed.userIds, seed.vendorIds],
+  );
+  await ownerPool.query(
+    'DELETE FROM owner_enrollments WHERE vendor_id = ANY($1::uuid[])',
+    [seed.vendorIds],
   );
   await ownerPool.query(
     'DELETE FROM vendor_memberships WHERE vendor_id = ANY($1::uuid[])',
@@ -173,6 +189,14 @@ async function cleanup(seed: Seed): Promise<void> {
   await ownerPool.query('DELETE FROM mfa_factors WHERE user_id = ANY($1::uuid[])', [
     seed.userIds,
   ]);
+  await ownerPool.query(
+    'DELETE FROM password_credentials WHERE user_id = ANY($1::uuid[])',
+    [seed.userIds],
+  );
+  await ownerPool.query(
+    'DELETE FROM user_identities WHERE user_id = ANY($1::uuid[])',
+    [seed.userIds],
+  );
   await ownerPool.query('DELETE FROM users WHERE id = ANY($1::uuid[])', [
     seed.userIds,
   ]);
@@ -1039,6 +1063,11 @@ void describe('membership and user lifecycle HTTP API', () => {
     assert.ok(path?.get?.security);
     assert.ok(path?.post?.security);
     assert.ok(openApi.components?.securitySchemes?.opaqueBearer);
+    assert.ok(
+      openApi.paths['/v1/platform/vendors/{vendorId}/owners/initial']?.post
+        ?.security,
+    );
+    assert.ok(openApi.paths['/v1/platform/users/{id}/deactivate']?.post?.security);
 
     const seed: Seed = { vendorIds: [], userIds: [] };
     const ownerId = await insertUser(seed, 'Vendor Owner');
@@ -1057,6 +1086,386 @@ void describe('membership and user lifecycle HTTP API', () => {
         },
       );
       assert.equal(unknown.status, 400);
+    } finally {
+      await cleanup(seed);
+    }
+  });
+
+  void it('onboards exactly one initial owner through an audited platform operation', async () => {
+    const seed: Seed = { vendorIds: [], userIds: [] };
+    const administratorId = await insertUser(seed, 'Owner Onboarding Administrator');
+    await grantPlatformAdministrator(administratorId);
+    const administratorToken = await issueSession(administratorId);
+    const vendorId = await insertVendor(seed);
+    await ownerPool.query(
+      `UPDATE vendors SET status = 'onboarding' WHERE id = $1`,
+      [vendorId],
+    );
+    const email = `new-owner-${randomUUID()}@example.com`;
+
+    try {
+      const response = await request(
+        baseUrl,
+        administratorToken,
+        `/v1/platform/vendors/${vendorId}/owners/initial`,
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            email,
+            displayName: 'Initial Vendor Owner',
+            reason: 'Establish the initial vendor owner',
+          }),
+        },
+      );
+      const body = (await response.json()) as {
+        userId: string;
+        membershipId: string;
+        vendorId: string;
+        createdUser: boolean;
+        expiresAt: string;
+      };
+      assert.equal(response.status, 201, JSON.stringify(body));
+      seed.userIds.push(body.userId);
+      assert.equal(body.vendorId, vendorId);
+      assert.equal(body.createdUser, true);
+      assert.ok(new Date(body.expiresAt).getTime() > Date.now());
+
+      const records = await ownerPool.query<{
+        email: string;
+        role: string;
+        membership_status: string;
+        verified_at: Date | null;
+      }>(
+        `SELECT ui.normalized_value AS email, vm.role,
+                vm.status AS membership_status, ui.verified_at
+         FROM users u
+         JOIN user_identities ui ON ui.user_id = u.id AND ui.type = 'email'
+         JOIN vendor_memberships vm ON vm.user_id = u.id
+         WHERE u.id = $1 AND vm.vendor_id = $2`,
+        [body.userId, vendorId],
+      );
+      assert.equal(records.rows[0]?.email, email);
+      assert.equal(records.rows[0]?.role, 'vendor_owner');
+      assert.equal(records.rows[0]?.membership_status, 'invited');
+      assert.equal(records.rows[0]?.verified_at, null);
+
+      const audit = await ownerPool.query<{ action: string; reason: string }>(
+        `SELECT action, reason FROM audit_events
+         WHERE vendor_id = $1 AND entity_id = $2
+           AND action = 'vendor.owner_enrollment_invited'`,
+        [vendorId, body.membershipId],
+      );
+      assert.deepEqual(audit.rows, [{
+        action: 'vendor.owner_enrollment_invited',
+        reason: 'Establish the initial vendor owner',
+      }]);
+      assert.equal(
+        (
+          await request(
+            baseUrl,
+            administratorToken,
+            `/v1/vendors/${vendorId}/memberships`,
+          )
+        ).status,
+        403,
+      );
+
+      const duplicate = await request(
+        baseUrl,
+        administratorToken,
+        `/v1/platform/vendors/${vendorId}/owners/initial`,
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            email: `other-${randomUUID()}@example.com`,
+            displayName: 'Other Owner',
+            reason: 'Attempt a second initial owner',
+          }),
+        },
+      );
+      assert.equal(duplicate.status, 409);
+      assert.equal(
+        ((await duplicate.json()) as { code: string }).code,
+        'OWNER_ENROLLMENT_CONFLICT',
+      );
+    } finally {
+      await cleanup(seed);
+    }
+  });
+
+  void it('safely assigns an existing user and preserves its password credential', async () => {
+    const seed: Seed = { vendorIds: [], userIds: [] };
+    const administratorId = await insertUser(seed, 'Recovery Administrator');
+    await grantPlatformAdministrator(administratorId);
+    const administratorToken = await issueSession(administratorId);
+    const vendorId = await insertVendor(seed);
+    const existingUserId = await insertUser(seed, 'Existing User');
+    const email = `existing-${randomUUID()}@example.com`;
+    await insertEmailIdentity(existingUserId, email);
+    await ownerPool.query(
+      `INSERT INTO password_credentials
+         (user_id, password_hash, salt, algorithm, parameters, changed_at)
+       VALUES ($1, 'existing-hash', 'existing-salt', 'scrypt', '{}'::jsonb, now())`,
+      [existingUserId],
+    );
+
+    try {
+      const response = await request(
+        baseUrl,
+        administratorToken,
+        `/v1/platform/vendors/${vendorId}/owners/initial`,
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            email: email.toUpperCase(),
+            displayName: 'Ignored Replacement Name',
+            reason: 'Recover owner access with an existing user',
+          }),
+        },
+      );
+      const body = (await response.json()) as {
+        userId: string;
+        createdUser: boolean;
+      };
+      assert.equal(response.status, 201, JSON.stringify(body));
+      assert.equal(body.userId, existingUserId);
+      assert.equal(body.createdUser, false);
+      const preserved = await ownerPool.query<{
+        display_name: string;
+        password_hash: string;
+      }>(
+        `SELECT u.display_name, pc.password_hash
+         FROM users u JOIN password_credentials pc ON pc.user_id = u.id
+         WHERE u.id = $1`,
+        [existingUserId],
+      );
+      assert.deepEqual(preserved.rows, [{
+        display_name: 'Existing User',
+        password_hash: 'existing-hash',
+      }]);
+    } finally {
+      await cleanup(seed);
+    }
+  });
+
+  void it('serializes concurrent initial-owner establishment', async () => {
+    const seed: Seed = { vendorIds: [], userIds: [] };
+    const administratorId = await insertUser(seed, 'Concurrency Administrator');
+    await grantPlatformAdministrator(administratorId);
+    const administratorToken = await issueSession(administratorId);
+    const vendorId = await insertVendor(seed);
+
+    try {
+      const calls = ['first', 'second'].map((label) =>
+        request(
+          baseUrl,
+          administratorToken,
+          `/v1/platform/vendors/${vendorId}/owners/initial`,
+          {
+            method: 'POST',
+            body: JSON.stringify({
+              email: `${label}-${randomUUID()}@example.com`,
+              displayName: `${label} owner`,
+              reason: `Concurrent ${label} owner establishment`,
+            }),
+          },
+        ),
+      );
+      const responses = await Promise.all(calls);
+      assert.deepEqual(
+        responses.map(({ status }) => status).sort(),
+        [201, 409],
+        JSON.stringify(await Promise.all(
+          responses.map(async (response) => ({
+            status: response.status,
+            body: await response.clone().json(),
+          })),
+        )),
+      );
+      const successful = responses.find(({ status }) => status === 201);
+      assert.ok(successful);
+      const body = (await successful.json()) as { userId: string };
+      seed.userIds.push(body.userId);
+      const owners = await ownerPool.query<{ count: string }>(
+        `SELECT count(*) FROM vendor_memberships
+         WHERE vendor_id = $1 AND role = 'vendor_owner' AND status = 'invited'
+           AND ended_at IS NULL AND deleted_at IS NULL`,
+        [vendorId],
+      );
+      assert.equal(owners.rows[0]?.count, '1');
+    } finally {
+      const createdUsers = await ownerPool.query<{ user_id: string }>(
+        `SELECT user_id FROM vendor_memberships WHERE vendor_id = $1`,
+        [vendorId],
+      );
+      seed.userIds.push(...createdUsers.rows.map(({ user_id }) => user_id));
+      await cleanup(seed);
+    }
+  });
+
+  void it('rolls back initial-owner creation when its required audit fails', async () => {
+    const seed: Seed = { vendorIds: [], userIds: [] };
+    const administratorId = await insertUser(seed, 'Audit Failure Administrator');
+    await grantPlatformAdministrator(administratorId);
+    const administratorToken = await issueSession(administratorId);
+    const vendorId = await insertVendor(seed);
+    const email = `audit-failure-${randomUUID()}@example.com`;
+    await ownerPool.query(`
+      CREATE OR REPLACE FUNCTION task10_fail_owner_onboarding_audit() RETURNS trigger
+      LANGUAGE plpgsql AS $$
+      BEGIN
+        IF NEW.action = 'vendor.owner_enrollment_invited' THEN
+          RAISE EXCEPTION 'forced owner onboarding audit failure';
+        END IF;
+        RETURN NEW;
+      END $$`);
+    await ownerPool.query(`
+      CREATE TRIGGER task10_fail_owner_onboarding_audit
+      BEFORE INSERT ON audit_events
+      FOR EACH ROW EXECUTE FUNCTION task10_fail_owner_onboarding_audit()`);
+
+    try {
+      const response = await request(
+        baseUrl,
+        administratorToken,
+        `/v1/platform/vendors/${vendorId}/owners/initial`,
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            email,
+            displayName: 'Rolled Back Owner',
+            reason: 'Prove owner onboarding atomicity',
+          }),
+        },
+      );
+      assert.equal(response.status, 500);
+      const rows = await ownerPool.query<{ count: string }>(
+        `SELECT count(*) FROM users u
+         LEFT JOIN user_identities ui ON ui.user_id = u.id
+         LEFT JOIN vendor_memberships vm ON vm.user_id = u.id
+         WHERE ui.normalized_value = $1 OR vm.vendor_id = $2`,
+        [email, vendorId],
+      );
+      assert.equal(rows.rows[0]?.count, '0');
+    } finally {
+      await ownerPool.query(
+        'DROP TRIGGER IF EXISTS task10_fail_owner_onboarding_audit ON audit_events',
+      );
+      await ownerPool.query(
+        'DROP FUNCTION IF EXISTS task10_fail_owner_onboarding_audit()',
+      );
+      await cleanup(seed);
+    }
+  });
+
+  void it('deactivates accounts without deleting them and rejects tenant-orphaning changes', async () => {
+    const seed: Seed = { vendorIds: [], userIds: [] };
+    const administratorId = await insertUser(seed, 'Deactivation Administrator');
+    await grantPlatformAdministrator(administratorId);
+    const administratorToken = await issueSession(administratorId);
+    const ownerId = await insertUser(seed, 'Last Vendor Owner');
+    const vendorId = await insertVendor(seed);
+    await insertMembership({ vendorId, userId: ownerId, role: 'vendor_owner' });
+    const ownerToken = await issueSession(ownerId);
+
+    try {
+      for (const status of ['deactivated', 'active'] as const) {
+        const apparentOwnerId = await insertUser(seed, `${status} Apparent Owner`);
+        await insertMembership({
+          vendorId,
+          userId: apparentOwnerId,
+          role: 'vendor_owner',
+        });
+        await ownerPool.query(
+          `UPDATE users SET status = $2::"UserStatus", deleted_at = $3 WHERE id = $1`,
+          [
+            apparentOwnerId,
+            status,
+            status === 'active' ? new Date() : null,
+          ],
+        );
+      }
+      for (const path of [
+        `/v1/platform/users/${ownerId}/deactivate`,
+        `/v1/platform/users/${ownerId}`,
+      ]) {
+        const response = await request(baseUrl, administratorToken, path, {
+          method: path.endsWith('/deactivate') ? 'POST' : 'DELETE',
+          body: JSON.stringify({ reason: 'Would orphan the active vendor' }),
+        });
+        assert.equal(response.status, 409);
+        assert.equal(
+          ((await response.json()) as { code: string }).code,
+          'LAST_VENDOR_OWNER',
+        );
+      }
+
+      await ownerPool.query("UPDATE vendors SET status = 'suspended' WHERE id = $1", [
+        vendorId,
+      ]);
+      const suspendedLastOwner = await request(
+        baseUrl,
+        administratorToken,
+        `/v1/platform/users/${ownerId}/deactivate`,
+        {
+          method: 'POST',
+          body: JSON.stringify({ reason: 'Suspended vendor still needs an owner' }),
+        },
+      );
+      assert.equal(suspendedLastOwner.status, 409);
+      assert.equal(
+        ((await suspendedLastOwner.json()) as { code: string }).code,
+        'LAST_VENDOR_OWNER',
+      );
+
+      const replacementId = await insertUser(seed, 'Replacement Owner');
+      await insertMembership({ vendorId, userId: replacementId, role: 'vendor_owner' });
+      const response = await request(
+        baseUrl,
+        administratorToken,
+        `/v1/platform/users/${ownerId}/deactivate`,
+        {
+          method: 'POST',
+          body: JSON.stringify({ reason: 'Deactivate departed owner account' }),
+        },
+      );
+      const body = (await response.json()) as {
+        status: string;
+        deactivatedAt: string;
+      };
+      assert.equal(response.status, 200, JSON.stringify(body));
+      assert.equal(body.status, 'deactivated');
+      assert.ok(body.deactivatedAt);
+
+      const stored = await ownerPool.query<{
+        status: string;
+        deactivated_at: Date | null;
+        deleted_at: Date | null;
+        active_sessions: string;
+      }>(
+        `SELECT u.status, u.deactivated_at, u.deleted_at,
+                count(s.id) FILTER (WHERE s.revoked_at IS NULL)::text AS active_sessions
+         FROM users u LEFT JOIN sessions s ON s.user_id = u.id
+         WHERE u.id = $1 GROUP BY u.id`,
+        [ownerId],
+      );
+      assert.equal(stored.rows[0]?.status, 'deactivated');
+      assert.ok(stored.rows[0]?.deactivated_at);
+      assert.equal(stored.rows[0]?.deleted_at, null);
+      assert.equal(stored.rows[0]?.active_sessions, '0');
+      assert.equal(
+        (await request(baseUrl, ownerToken, `/v1/vendors/${vendorId}/memberships`)).status,
+        401,
+      );
+      const audit = await ownerPool.query<{ action: string; reason: string }>(
+        `SELECT action, reason FROM audit_events
+         WHERE entity_id = $1 AND action = 'user.deactivated'`,
+        [ownerId],
+      );
+      assert.deepEqual(audit.rows, [{
+        action: 'user.deactivated',
+        reason: 'Deactivate departed owner account',
+      }]);
     } finally {
       await cleanup(seed);
     }

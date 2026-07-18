@@ -1,12 +1,14 @@
 import { Type } from 'class-transformer';
 import {
   IsIn,
+  IsEmail,
   IsInt,
   IsOptional,
   IsString,
   IsUUID,
   Max,
   MaxLength,
+  Matches,
   Min,
   MinLength,
 } from 'class-validator';
@@ -115,4 +117,109 @@ export class UserResponseDto {
 
   @ApiProperty({ type: String, format: 'date-time' })
   updatedAt!: Date;
+
+  @ApiPropertyOptional({ type: String, format: 'date-time' })
+  deactivatedAt?: Date;
+}
+
+export class EstablishVendorOwnerRequestDto {
+  @ApiProperty({ type: String, format: 'email' })
+  @IsEmail()
+  email!: string;
+
+  @ApiProperty({ type: String, minLength: 2, maxLength: 120 })
+  @IsString()
+  @MinLength(2)
+  @MaxLength(120)
+  displayName!: string;
+
+  @ApiProperty({ type: String, minLength: 3, maxLength: 500 })
+  @IsString()
+  @MinLength(3)
+  @MaxLength(500)
+  reason!: string;
+}
+
+export class VendorOwnerOnboardingResponseDto {
+  @ApiProperty({ type: String, format: 'uuid' })
+  vendorId!: string;
+
+  @ApiProperty({ type: String, format: 'uuid' })
+  userId!: string;
+
+  @ApiProperty({ type: String, format: 'uuid' })
+  membershipId!: string;
+
+  @ApiProperty({ type: String, format: 'uuid' })
+  enrollmentId!: string;
+
+  @ApiProperty({ type: String, format: 'email' })
+  email!: string;
+
+  @ApiProperty({ type: Boolean })
+  createdUser!: boolean;
+
+  @ApiProperty({ type: String, format: 'date-time' })
+  expiresAt!: string;
+
+  @ApiProperty({ type: String, enum: ['delivered'] })
+  deliveryStatus!: 'delivered';
+}
+
+export class RetryOwnerEnrollmentResponseDto {
+  @ApiProperty({ type: String, format: 'uuid' })
+  enrollmentId!: string;
+
+  @ApiProperty({ type: String, format: 'uuid' })
+  membershipId!: string;
+
+  @ApiProperty({ type: String, format: 'date-time' })
+  expiresAt!: string;
+
+  @ApiProperty({ type: String, enum: ['delivered'] })
+  deliveryStatus!: 'delivered';
+}
+
+export class StartOwnerEnrollmentRequestDto {
+  @ApiProperty({ type: String, minLength: 20, writeOnly: true })
+  @IsString()
+  @MinLength(20)
+  setupToken!: string;
+
+  @ApiProperty({ type: String, minLength: 12, maxLength: 128, writeOnly: true })
+  @IsString()
+  @MinLength(12)
+  @MaxLength(128)
+  password!: string;
+}
+
+export class StartOwnerEnrollmentResponseDto {
+  @ApiProperty({ type: String })
+  completionToken!: string;
+
+  @ApiProperty({ type: String })
+  totpSecret!: string;
+}
+
+export class CompleteOwnerEnrollmentRequestDto {
+  @ApiProperty({ type: String, minLength: 20, writeOnly: true })
+  @IsString()
+  @MinLength(20)
+  completionToken!: string;
+
+  @ApiProperty({ type: String, pattern: '^\\d{6}$', writeOnly: true })
+  @IsString()
+  @Matches(/^\d{6}$/)
+  code!: string;
+}
+
+export class CompleteOwnerEnrollmentResponseDto {
+  @ApiProperty({ type: String, format: 'uuid' })
+  vendorId!: string;
+
+  @ApiProperty({ type: String, format: 'uuid' })
+  userId!: string;
+
+  @ApiProperty({ type: String, format: 'uuid' })
+  membershipId!: string;
 }

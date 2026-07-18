@@ -246,9 +246,14 @@ void test('Phase 1 tables, soft-delete columns, forced RLS and runtime role exis
   }>(
     `SELECT relname, relrowsecurity, relforcerowsecurity FROM pg_class
      WHERE relname = ANY($1::text[])`,
-    [['vendor_memberships', 'support_access_grants', 'audit_events']],
+    [[
+      'vendor_memberships',
+      'support_access_grants',
+      'audit_events',
+      'owner_enrollments',
+    ]],
   );
-  assert.equal(rls.rows.length, 3);
+  assert.equal(rls.rows.length, 4);
   assert.ok(
     rls.rows.every((row) => row.relrowsecurity && row.relforcerowsecurity),
   );
@@ -257,6 +262,143 @@ void test('Phase 1 tables, soft-delete columns, forced RLS and runtime role exis
     'SELECT rolbypassrls, rolsuper FROM pg_roles WHERE rolname = current_user',
   );
   assert.deepEqual(role.rows[0], { rolbypassrls: false, rolsuper: false });
+});
+
+void test('owner enrollment storage is tenant-forced and its resolver exposes only exact eligible handles', async () => {
+  const vendorIds = [randomUUID(), randomUUID()];
+  const userIds = [randomUUID(), randomUUID()];
+  const identityIds = [randomUUID(), randomUUID()];
+  const membershipIds = [randomUUID(), randomUUID()];
+  const enrollmentIds = [randomUUID(), randomUUID()];
+  const setupHashes = [`setup-${randomUUID()}`, `setup-${randomUUID()}`];
+  await ownerPool.query(
+    `INSERT INTO vendors
+       (id, code, legal_name, display_name, status, timezone, currency,
+        skip_cutoff_minutes, billing_day, updated_at)
+     VALUES ($1, $2, 'RLS One', 'RLS One', 'onboarding', 'Asia/Kolkata', 'INR', 0, 1, now()),
+            ($3, $4, 'RLS Two', 'RLS Two', 'onboarding', 'Asia/Kolkata', 'INR', 0, 1, now())`,
+    [vendorIds[0], `rls-${vendorIds[0]}`, vendorIds[1], `rls-${vendorIds[1]}`],
+  );
+  for (let index = 0; index < 2; index += 1) {
+    await ownerPool.query(
+      `INSERT INTO users (id, display_name, updated_at) VALUES ($1, $2, now())`,
+      [userIds[index], `RLS User ${index}`],
+    );
+    await ownerPool.query(
+      `INSERT INTO user_identities
+         (id, user_id, type, normalized_value, is_primary, updated_at)
+       VALUES ($1, $2, 'email', $3, true, now())`,
+      [identityIds[index], userIds[index], `rls-${userIds[index]}@example.com`],
+    );
+    await ownerPool.query(
+      `INSERT INTO vendor_memberships
+         (id, vendor_id, user_id, role, status, updated_at)
+       VALUES ($1, $2, $3, 'vendor_owner', 'invited', now())`,
+      [membershipIds[index], vendorIds[index], userIds[index]],
+    );
+    await ownerPool.query(
+      `INSERT INTO owner_enrollments
+         (id, vendor_id, membership_id, user_id, identity_id,
+          setup_token_hash, expires_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, now() + interval '1 hour', now())`,
+      [
+        enrollmentIds[index], vendorIds[index], membershipIds[index],
+        userIds[index], identityIds[index], setupHashes[index],
+      ],
+    );
+  }
+
+  const client = await pool.connect();
+  try {
+    const invisible = await client.query<{ count: string }>(
+      'SELECT count(*) FROM owner_enrollments',
+    );
+    assert.equal(invisible.rows[0]?.count, '0');
+    assert.equal(
+      (await client.query(
+        "UPDATE owner_enrollments SET delivery_state = 'failed' RETURNING id",
+      )).rowCount,
+      0,
+    );
+    const insertEnrollment = (vendorIndex: number) => client.query(
+      `INSERT INTO owner_enrollments
+         (id, vendor_id, membership_id, user_id, identity_id,
+          setup_token_hash, expires_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, now() + interval '1 hour', now())`,
+      [
+        randomUUID(), vendorIds[vendorIndex], membershipIds[vendorIndex],
+        userIds[vendorIndex], identityIds[vendorIndex], `runtime-${randomUUID()}`,
+      ],
+    );
+    await assert.rejects(insertEnrollment(0), /row-level security policy/);
+    await assert.rejects(
+      client.query('DELETE FROM owner_enrollments WHERE id = $1', [enrollmentIds[0]]),
+      /permission denied/,
+    );
+
+    const exact = await client.query(
+      'SELECT * FROM resolve_owner_enrollment_handle($1, $2)',
+      [setupHashes[0], 'setup'],
+    );
+    assert.deepEqual(exact.rows, [{
+      enrollment_id: enrollmentIds[0],
+      vendor_id: vendorIds[0],
+      user_id: userIds[0],
+    }]);
+    for (const [hash, phase] of [
+      ['wrong-hash', 'setup'],
+      [setupHashes[0], 'completion'],
+      [setupHashes[0], 'invalid-phase'],
+    ]) {
+      assert.equal(
+        (await client.query(
+          'SELECT * FROM resolve_owner_enrollment_handle($1, $2)',
+          [hash, phase],
+        )).rowCount,
+        0,
+      );
+    }
+
+    await client.query('BEGIN');
+    await client.query("SELECT set_config('app.vendor_id', $1, true)", [vendorIds[0]]);
+    assert.deepEqual(
+      (await client.query('SELECT id FROM owner_enrollments')).rows,
+      [{ id: enrollmentIds[0] }],
+    );
+    assert.equal(
+      (await client.query(
+        "UPDATE owner_enrollments SET delivery_state = 'failed' WHERE id = $1",
+        [enrollmentIds[1]],
+      )).rowCount,
+      0,
+    );
+    await assert.rejects(insertEnrollment(1), /row-level security policy/);
+    await client.query('ROLLBACK');
+
+    await ownerPool.query('DELETE FROM owner_enrollments WHERE id = $1', [
+      enrollmentIds[0],
+    ]);
+    await assert.rejects(
+      ownerPool.query(
+        `INSERT INTO owner_enrollments
+           (id, vendor_id, membership_id, user_id, identity_id,
+            setup_token_hash, expires_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, now() + interval '1 hour', now())`,
+        [
+          randomUUID(), vendorIds[0], membershipIds[0], userIds[0],
+          identityIds[1], `mismatch-${randomUUID()}`,
+        ],
+      ),
+      /owner_enrollments_identity_id_user_id_fkey/,
+    );
+  } finally {
+    client.release();
+    await ownerPool.query('DELETE FROM owner_enrollments WHERE id = ANY($1::uuid[])', [enrollmentIds]);
+    await ownerPool.query('DELETE FROM vendor_memberships WHERE id = ANY($1::uuid[])', [membershipIds]);
+    await ownerPool.query('DELETE FROM user_identities WHERE id = ANY($1::uuid[])', [identityIds]);
+    await ownerPool.query('DELETE FROM users WHERE id = ANY($1::uuid[])', [userIds]);
+    await ownerPool.query('DELETE FROM vendors WHERE id = ANY($1::uuid[])', [vendorIds]);
+  }
 });
 
 void test('audit inserts enforce global and exact tenant context', async () => {

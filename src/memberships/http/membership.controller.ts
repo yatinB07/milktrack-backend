@@ -33,14 +33,23 @@ import {
   type MembershipResult,
   MembershipService,
 } from '../application/membership.service.js';
+import { OwnerEnrollmentService } from '../application/owner-enrollment.service.js';
+import { VendorOwnerOnboardingService } from '../application/vendor-owner-onboarding.service.js';
 import {
+  CompleteOwnerEnrollmentRequestDto,
+  CompleteOwnerEnrollmentResponseDto,
   CreateMembershipRequestDto,
+  EstablishVendorOwnerRequestDto,
   ListMembershipsQueryDto,
   MembershipPageResponseDto,
   MembershipResponseDto,
   ReasonRequestDto,
+  RetryOwnerEnrollmentResponseDto,
+  StartOwnerEnrollmentRequestDto,
+  StartOwnerEnrollmentResponseDto,
   UpdateMembershipRoleRequestDto,
   UserResponseDto,
+  VendorOwnerOnboardingResponseDto,
 } from './membership.dto.js';
 
 const uuidPipe = new ParseUUIDPipe({ version: '4' });
@@ -74,6 +83,7 @@ function userResponse(result: UserResult): UserResponseDto {
     locale: result.locale,
     createdAt: result.createdAt,
     updatedAt: result.updatedAt,
+    ...(result.deactivatedAt ? { deactivatedAt: result.deactivatedAt } : {}),
   };
 }
 
@@ -230,6 +240,126 @@ export class UserLifecycleController {
     );
     return userResponse(result);
   }
+
+  @Post(':id/deactivate')
+  @HttpCode(200)
+  @ApiOkResponse({ type: UserResponseDto })
+  async deactivate(
+    @Param('id', uuidPipe) userId: string,
+    @Body() request: ReasonRequestDto,
+  ) {
+    return userResponse(
+      await this.users.deactivate(
+        requestContextStore.requireActor(),
+        userId,
+        request.reason,
+      ),
+    );
+  }
+}
+
+@ApiTags('Platform vendor owners')
+@ApiBearerAuth('opaqueBearer')
+@ApiResponse({ status: 400, type: ApiErrorResponseDto })
+@ApiResponse({ status: 401, type: ApiErrorResponseDto })
+@ApiResponse({ status: 403, type: ApiErrorResponseDto })
+@ApiResponse({ status: 404, type: ApiErrorResponseDto })
+@ApiResponse({ status: 409, type: ApiErrorResponseDto })
+@ApiResponse({ status: 503, type: ApiErrorResponseDto })
+@UseGuards(ActorGuard)
+@Controller('platform/vendors/:vendorId/owners')
+export class VendorOwnerOnboardingController {
+  constructor(
+    @Inject(VendorOwnerOnboardingService)
+    private readonly onboarding: VendorOwnerOnboardingService,
+  ) {}
+
+  @Post('initial')
+  @ApiCreatedResponse({ type: VendorOwnerOnboardingResponseDto })
+  async establish(
+    @Param('vendorId', uuidPipe) vendorId: string,
+    @Body() request: EstablishVendorOwnerRequestDto,
+  ) {
+    const result = await this.onboarding.establish(requestContextStore.requireActor(), {
+      vendorId,
+      email: request.email,
+      displayName: request.displayName,
+      reason: request.reason,
+    });
+    return {
+      vendorId: result.vendorId,
+      userId: result.userId,
+      membershipId: result.membershipId,
+      enrollmentId: result.enrollmentId,
+      email: result.email,
+      createdUser: result.createdUser,
+      expiresAt: result.expiresAt.toISOString(),
+      deliveryStatus: result.deliveryStatus,
+    } satisfies VendorOwnerOnboardingResponseDto;
+  }
+
+  @Post('enrollments/:enrollmentId/retry')
+  @HttpCode(200)
+  @ApiOkResponse({ type: RetryOwnerEnrollmentResponseDto })
+  async retry(
+    @Param('vendorId', uuidPipe) vendorId: string,
+    @Param('enrollmentId', uuidPipe) enrollmentId: string,
+    @Body() request: ReasonRequestDto,
+  ): Promise<RetryOwnerEnrollmentResponseDto> {
+    const result = await this.onboarding.retry(requestContextStore.requireActor(), {
+      vendorId,
+      enrollmentId,
+      reason: request.reason,
+    });
+    return {
+      enrollmentId: result.enrollmentId,
+      membershipId: result.membershipId,
+      expiresAt: result.expiresAt.toISOString(),
+      deliveryStatus: result.deliveryStatus,
+    };
+  }
+}
+
+@ApiTags('Owner enrollment')
+@ApiResponse({ status: 400, type: ApiErrorResponseDto })
+@ApiResponse({ status: 401, type: ApiErrorResponseDto })
+@ApiResponse({ status: 409, type: ApiErrorResponseDto })
+@Controller('auth/owner-enrollment')
+export class OwnerEnrollmentController {
+  constructor(
+    @Inject(OwnerEnrollmentService)
+    private readonly enrollment: OwnerEnrollmentService,
+  ) {}
+
+  @Post('start')
+  @HttpCode(200)
+  @ApiOkResponse({ type: StartOwnerEnrollmentResponseDto })
+  async start(
+    @Body() request: StartOwnerEnrollmentRequestDto,
+  ): Promise<StartOwnerEnrollmentResponseDto> {
+    const result = await this.enrollment.start(request.setupToken, request.password);
+    return {
+      completionToken: result.completionToken,
+      totpSecret: result.totpSecret,
+    };
+  }
+
+  @Post('complete')
+  @HttpCode(200)
+  @ApiOkResponse({ type: CompleteOwnerEnrollmentResponseDto })
+  async complete(
+    @Body() request: CompleteOwnerEnrollmentRequestDto,
+  ): Promise<CompleteOwnerEnrollmentResponseDto> {
+    const result = await this.enrollment.complete(
+      request.completionToken,
+      request.code,
+    );
+    return {
+      vendorId: result.vendorId,
+      userId: result.userId,
+      membershipId: result.membershipId,
+    };
+  }
 }
 
 // The integration runner uses tsx, which does not emit decorator parameter metadata.
@@ -259,7 +389,7 @@ for (const method of ['end', 'softDelete', 'restore'] as const) {
     method,
   );
 }
-for (const method of ['softDelete', 'restore'] as const) {
+for (const method of ['softDelete', 'restore', 'deactivate'] as const) {
   Reflect.defineMetadata(
     'design:paramtypes',
     [String, ReasonRequestDto],
@@ -267,3 +397,27 @@ for (const method of ['softDelete', 'restore'] as const) {
     method,
   );
 }
+Reflect.defineMetadata(
+  'design:paramtypes',
+  [String, EstablishVendorOwnerRequestDto],
+  VendorOwnerOnboardingController.prototype,
+  'establish',
+);
+Reflect.defineMetadata(
+  'design:paramtypes',
+  [String, String, ReasonRequestDto],
+  VendorOwnerOnboardingController.prototype,
+  'retry',
+);
+Reflect.defineMetadata(
+  'design:paramtypes',
+  [StartOwnerEnrollmentRequestDto],
+  OwnerEnrollmentController.prototype,
+  'start',
+);
+Reflect.defineMetadata(
+  'design:paramtypes',
+  [CompleteOwnerEnrollmentRequestDto],
+  OwnerEnrollmentController.prototype,
+  'complete',
+);

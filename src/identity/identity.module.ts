@@ -13,11 +13,13 @@ import {
 } from './application/authentication.service.js';
 import { OtpDelivery } from './application/otp-delivery.js';
 import {
-  PrismaUserLifecycleService,
+  DefaultUserLifecycleService,
   UserLifecycleService,
+  UserLifecycleStore,
 } from './application/user-lifecycle.service.js';
 import { LocalOtpDelivery } from './infrastructure/local-otp.delivery.js';
 import { PrismaIdentityStore } from './infrastructure/prisma-identity.store.js';
+import { PrismaUserLifecycleStore } from './infrastructure/prisma-user-lifecycle.store.js';
 import { AuthController } from './http/auth.controller.js';
 
 @Module({
@@ -26,10 +28,12 @@ import { AuthController } from './http/auth.controller.js';
   providers: [
     { provide: RequestContextStore, useValue: requestContextStore },
     PrismaIdentityStore,
-    PrismaUserLifecycleService,
+    PrismaUserLifecycleStore,
+    { provide: UserLifecycleStore, useExisting: PrismaUserLifecycleStore },
+    DefaultUserLifecycleService,
     {
       provide: UserLifecycleService,
-      useExisting: PrismaUserLifecycleService,
+      useExisting: DefaultUserLifecycleService,
     },
     {
       provide: OtpDelivery,

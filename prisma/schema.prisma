@@ -61,39 +61,42 @@ enum AuthenticationMethod {
 }
 
 model User {
-  id             String                      @id @db.Uuid
-  displayName    String                      @map("display_name")
-  status         UserStatus                  @default(active)
-  locale         String                      @default("en")
-  deactivatedAt  DateTime?                   @map("deactivated_at") @db.Timestamptz(6)
-  deletedAt      DateTime?                   @map("deleted_at") @db.Timestamptz(6)
-  deletedBy      String?                     @map("deleted_by") @db.Uuid
-  deletionReason String?                     @map("deletion_reason")
-  createdAt      DateTime                    @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt      DateTime                    @updatedAt @map("updated_at") @db.Timestamptz(6)
-  identities     UserIdentity[]
-  password       PasswordCredential?
-  mfaFactors     MfaFactor[]
-  pendingMfa     PendingMfaAuthentication[]
-  sessions       Session[]
-  memberships    VendorMembership[]
-  platformRoles  PlatformRoleAssignment[]
+  id               String                     @id @db.Uuid
+  displayName      String                     @map("display_name")
+  status           UserStatus                 @default(active)
+  locale           String                     @default("en")
+  deactivatedAt    DateTime?                  @map("deactivated_at") @db.Timestamptz(6)
+  deletedAt        DateTime?                  @map("deleted_at") @db.Timestamptz(6)
+  deletedBy        String?                    @map("deleted_by") @db.Uuid
+  deletionReason   String?                    @map("deletion_reason")
+  createdAt        DateTime                   @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime                   @updatedAt @map("updated_at") @db.Timestamptz(6)
+  identities       UserIdentity[]
+  password         PasswordCredential?
+  mfaFactors       MfaFactor[]
+  pendingMfa       PendingMfaAuthentication[]
+  sessions         Session[]
+  memberships      VendorMembership[]
+  platformRoles    PlatformRoleAssignment[]
+  ownerEnrollments OwnerEnrollment[]
 
   @@map("users")
 }
 
 model UserIdentity {
-  id              String         @id @db.Uuid
-  userId          String         @map("user_id") @db.Uuid
-  type            IdentityType
-  normalizedValue String         @map("normalized_value")
-  verifiedAt      DateTime?      @map("verified_at") @db.Timestamptz(6)
-  isPrimary       Boolean        @default(false) @map("is_primary")
-  createdAt       DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt       DateTime       @updatedAt @map("updated_at") @db.Timestamptz(6)
-  user            User           @relation(fields: [userId], references: [id])
-  challenges      OtpChallenge[]
+  id               String            @id @db.Uuid
+  userId           String            @map("user_id") @db.Uuid
+  type             IdentityType
+  normalizedValue  String            @map("normalized_value")
+  verifiedAt       DateTime?         @map("verified_at") @db.Timestamptz(6)
+  isPrimary        Boolean           @default(false) @map("is_primary")
+  createdAt        DateTime          @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime          @updatedAt @map("updated_at") @db.Timestamptz(6)
+  user             User              @relation(fields: [userId], references: [id])
+  challenges       OtpChallenge[]
+  ownerEnrollments OwnerEnrollment[]
 
+  @@unique([id, userId])
   @@unique([type, normalizedValue])
   @@map("user_identities")
 }
@@ -177,22 +180,22 @@ model OtpChallenge {
 }
 
 model Session {
-  id               String    @id @db.Uuid
-  userId           String    @map("user_id") @db.Uuid
-  accessTokenHash  String    @unique @map("access_token_hash")
-  refreshTokenHash String    @unique @map("refresh_token_hash")
-  predecessorId    String?   @unique @map("predecessor_id") @db.Uuid
+  id                   String               @id @db.Uuid
+  userId               String               @map("user_id") @db.Uuid
+  accessTokenHash      String               @unique @map("access_token_hash")
+  refreshTokenHash     String               @unique @map("refresh_token_hash")
+  predecessorId        String?              @unique @map("predecessor_id") @db.Uuid
   authenticationMethod AuthenticationMethod @map("authentication_method")
-  deviceId         String    @map("device_id")
-  deviceName       String?   @map("device_name")
-  ipHash           String?   @map("ip_hash")
-  userAgent        String?   @map("user_agent")
-  accessExpiresAt  DateTime  @map("access_expires_at") @db.Timestamptz(6)
-  expiresAt        DateTime  @map("expires_at") @db.Timestamptz(6)
-  revokedAt        DateTime? @map("revoked_at") @db.Timestamptz(6)
-  lastSeenAt       DateTime  @map("last_seen_at") @db.Timestamptz(6)
-  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
-  user             User      @relation(fields: [userId], references: [id])
+  deviceId             String               @map("device_id")
+  deviceName           String?              @map("device_name")
+  ipHash               String?              @map("ip_hash")
+  userAgent            String?              @map("user_agent")
+  accessExpiresAt      DateTime             @map("access_expires_at") @db.Timestamptz(6)
+  expiresAt            DateTime             @map("expires_at") @db.Timestamptz(6)
+  revokedAt            DateTime?            @map("revoked_at") @db.Timestamptz(6)
+  lastSeenAt           DateTime             @map("last_seen_at") @db.Timestamptz(6)
+  createdAt            DateTime             @default(now()) @map("created_at") @db.Timestamptz(6)
+  user                 User                 @relation(fields: [userId], references: [id])
 
   @@index([userId, revokedAt, expiresAt])
   @@map("sessions")
@@ -217,29 +220,62 @@ model Vendor {
   memberships       VendorMembership[]
   supportGrants     SupportAccessGrant[]
   auditEvents       AuditEvent[]
+  ownerEnrollments  OwnerEnrollment[]
 
   @@map("vendors")
 }
 
 model VendorMembership {
-  id             String           @id @db.Uuid
-  vendorId       String           @map("vendor_id") @db.Uuid
-  userId         String           @map("user_id") @db.Uuid
-  role           MembershipRole
-  status         MembershipStatus @default(invited)
-  joinedAt       DateTime?        @map("joined_at") @db.Timestamptz(6)
-  endedAt        DateTime?        @map("ended_at") @db.Timestamptz(6)
-  deletedAt      DateTime?        @map("deleted_at") @db.Timestamptz(6)
-  deletedBy      String?          @map("deleted_by") @db.Uuid
-  deletionReason String?          @map("deletion_reason")
-  createdAt      DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt      DateTime         @updatedAt @map("updated_at") @db.Timestamptz(6)
-  vendor         Vendor           @relation(fields: [vendorId], references: [id])
-  user           User             @relation(fields: [userId], references: [id])
+  id              String           @id @db.Uuid
+  vendorId        String           @map("vendor_id") @db.Uuid
+  userId          String           @map("user_id") @db.Uuid
+  role            MembershipRole
+  status          MembershipStatus @default(invited)
+  joinedAt        DateTime?        @map("joined_at") @db.Timestamptz(6)
+  endedAt         DateTime?        @map("ended_at") @db.Timestamptz(6)
+  deletedAt       DateTime?        @map("deleted_at") @db.Timestamptz(6)
+  deletedBy       String?          @map("deleted_by") @db.Uuid
+  deletionReason  String?          @map("deletion_reason")
+  createdAt       DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt       DateTime         @updatedAt @map("updated_at") @db.Timestamptz(6)
+  vendor          Vendor           @relation(fields: [vendorId], references: [id])
+  user            User             @relation(fields: [userId], references: [id])
+  ownerEnrollment OwnerEnrollment?
 
   @@unique([vendorId, id])
   @@index([vendorId, status, id])
   @@map("vendor_memberships")
+}
+
+model OwnerEnrollment {
+  id                 String           @id @db.Uuid
+  vendorId           String           @map("vendor_id") @db.Uuid
+  membershipId       String           @unique @map("membership_id") @db.Uuid
+  userId             String           @map("user_id") @db.Uuid
+  identityId         String           @map("identity_id") @db.Uuid
+  setupTokenHash     String           @unique @map("setup_token_hash")
+  completionTokenHash String?         @unique @map("completion_token_hash")
+  expiresAt          DateTime         @map("expires_at") @db.Timestamptz(6)
+  startedAt          DateTime?        @map("started_at") @db.Timestamptz(6)
+  consumedAt         DateTime?        @map("consumed_at") @db.Timestamptz(6)
+  retiredAt          DateTime?        @map("retired_at") @db.Timestamptz(6)
+  retirementReason   String?          @map("retirement_reason")
+  attemptCount       Int              @default(0) @map("attempt_count")
+  lockedAt           DateTime?        @map("locked_at") @db.Timestamptz(6)
+  deliveryState      String           @default("pending") @map("delivery_state")
+  passwordHash       String?          @map("password_hash")
+  passwordSalt       String?          @map("password_salt")
+  passwordParameters Json?            @map("password_parameters")
+  encryptedMfaSecret String?          @map("encrypted_mfa_secret")
+  createdAt          DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt          DateTime         @updatedAt @map("updated_at") @db.Timestamptz(6)
+  vendor             Vendor           @relation(fields: [vendorId], references: [id])
+  membership         VendorMembership @relation(fields: [membershipId], references: [id])
+  user               User             @relation(fields: [userId], references: [id])
+  identity           UserIdentity     @relation(fields: [identityId, userId], references: [id, userId])
+
+  @@index([vendorId, expiresAt])
+  @@map("owner_enrollments")
 }
 
 model PlatformRoleAssignment {
