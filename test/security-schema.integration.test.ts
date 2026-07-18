@@ -128,6 +128,18 @@ void test('audit inserts enforce global and exact tenant context', async () => {
 });
 
 void test('vendor identity changes cannot rewrite tenant audit history', async () => {
+  const constraint = await ownerPool.query<{
+    delete_action: string;
+    update_action: string;
+  }>(
+    `SELECT confdeltype AS delete_action, confupdtype AS update_action
+     FROM pg_constraint
+     WHERE conname = 'audit_events_vendor_id_fkey'`,
+  );
+  assert.deepEqual(constraint.rows, [
+    { delete_action: 'r', update_action: 'r' },
+  ]);
+
   const vendorIds = [randomUUID(), randomUUID()];
   const replacementVendorId = randomUUID();
   const auditIds = [randomUUID(), randomUUID()];

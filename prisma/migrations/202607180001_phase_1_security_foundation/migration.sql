@@ -295,7 +295,7 @@ ALTER TABLE "platform_role_assignments" ADD CONSTRAINT "platform_role_assignment
 ALTER TABLE "support_access_grants" ADD CONSTRAINT "support_access_grants_vendor_id_fkey" FOREIGN KEY ("vendor_id") REFERENCES "vendors"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "audit_events" ADD CONSTRAINT "audit_events_vendor_id_fkey" FOREIGN KEY ("vendor_id") REFERENCES "vendors"("id") ON DELETE RESTRICT ON UPDATE RESTRICT;
+ALTER TABLE "audit_events" ADD CONSTRAINT "audit_events_vendor_id_fkey" FOREIGN KEY ("vendor_id") REFERENCES "vendors"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 ALTER TABLE "vendors" ADD CONSTRAINT "vendors_currency_check" CHECK (currency ~ '^[A-Z]{3}$');
 ALTER TABLE "vendors" ADD CONSTRAINT "vendors_billing_day_check" CHECK (billing_day BETWEEN 1 AND 28);
