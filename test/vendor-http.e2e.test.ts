@@ -416,7 +416,7 @@ void test('audit failure rolls back create and OpenAPI publishes secured explici
     components?: { securitySchemes?: Record<string, unknown>; schemas?: Record<string, unknown> };
     paths?: Record<string, Record<string, { security?: unknown; responses?: unknown }>>;
   };
-  assert.ok(document.components?.securitySchemes?.bearer);
+  assert.ok(document.components?.securitySchemes?.opaqueBearer);
   for (const [path, method] of [
     ['/v1/platform/vendors', 'post'],
     ['/v1/platform/vendors', 'get'],
