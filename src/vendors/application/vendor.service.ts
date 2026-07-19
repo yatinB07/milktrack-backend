@@ -4,6 +4,7 @@ import { Inject, Injectable } from '@nestjs/common';
 
 import { AuditWriter } from '../../audit/application/audit-writer.js';
 import { AuthorizationPolicy } from '../../authorization/application/authorization.policy.js';
+import { TenantAuthorizationExecutor } from '../../authorization/application/tenant-authorization.executor.js';
 import {
   type Actor,
   requestContextStore,
@@ -61,6 +62,7 @@ export abstract class VendorService {
     query: ListVendorsQuery,
   ): Promise<Readonly<{ items: readonly VendorResult[]; nextCursor?: string }>>;
   abstract get(actor: Actor, vendorId: string): Promise<VendorResult>;
+  abstract getProfile(actor: Actor, vendorId: string): Promise<VendorResult>;
   abstract transition(
     actor: Actor,
     command: TransitionVendorCommand,
@@ -76,6 +78,8 @@ export class PrismaVendorService extends VendorService {
     private readonly authorization: AuthorizationPolicy,
     @Inject(TenantTransactionRunner)
     private readonly transactions: TenantTransactionRunner,
+    @Inject(TenantAuthorizationExecutor)
+    private readonly tenantAuthorization: TenantAuthorizationExecutor,
     @Inject(PrismaVendorStore)
     private readonly vendors: PrismaVendorStore,
     @Inject(AuditWriter)
@@ -132,6 +136,18 @@ export class PrismaVendorService extends VendorService {
   get(actor: Actor, vendorId: string): Promise<VendorResult> {
     this.authorization.requirePlatform(actor, 'vendor:read');
     return this.vendors.getActive(vendorId);
+  }
+
+  getProfile(actor: Actor, vendorId: string): Promise<VendorResult> {
+    return this.tenantAuthorization.execute(
+      {
+        actor,
+        vendorId,
+        permission: 'vendor:profile:read',
+        operation: 'vendor.profile.read',
+      },
+      (tx) => this.vendors.findActive(tx, vendorId),
+    );
   }
 
   transition(actor: Actor, command: TransitionVendorCommand): Promise<VendorResult> {

@@ -255,6 +255,115 @@ void test('privileged vendor roles require administrator MFA', async () => {
   }
 });
 
+void test('vendor profile access is limited to active owner and administrator memberships on available vendors', async () => {
+  const vendorIds = [
+    randomUUID(),
+    randomUUID(),
+    randomUUID(),
+    randomUUID(),
+    randomUUID(),
+    randomUUID(),
+  ];
+  const userIds = Array.from({ length: 10 }, randomUUID);
+  const prisma = new PrismaService();
+  const runner = new PrismaTenantTransactionRunner(prisma);
+  const policy = new PrismaAuthorizationPolicy(new PrismaAuditWriter());
+  await Promise.all(userIds.map(insertUser));
+  await Promise.all([
+    insertVendor(vendorIds[0], 'onboarding'),
+    insertVendor(vendorIds[1], 'trial'),
+    insertVendor(vendorIds[2]),
+    insertVendor(vendorIds[3], 'suspended'),
+    insertVendor(vendorIds[4], 'closed'),
+    insertVendor(vendorIds[5], 'active', true),
+  ]);
+  for (const [index, vendorId] of vendorIds.entries()) {
+    await insertMembership({
+      vendorId,
+      userId: userIds[index],
+      role: index % 2 === 0 ? 'vendor_owner' : 'vendor_administrator',
+    });
+  }
+
+  try {
+    for (const vendorId of vendorIds.slice(0, 3)) {
+      await runner.run(vendorId, (tx) =>
+        policy.requireVendor(
+          tx,
+          actor(userIds[vendorIds.indexOf(vendorId)]),
+          vendorId,
+          'vendor:profile:read',
+          'vendor.profile.read',
+        ),
+      );
+    }
+    for (const vendorId of vendorIds.slice(3)) {
+      await assert.rejects(
+        runner.run(vendorId, (tx) =>
+          policy.requireVendor(
+            tx,
+            actor(userIds[vendorIds.indexOf(vendorId)]),
+            vendorId,
+            'vendor:profile:read',
+            'vendor.profile.read',
+          ),
+        ),
+        forbidden,
+      );
+    }
+    for (const denied of [
+      { userId: userIds[6], role: 'delivery_agent' as const },
+      { userId: userIds[7], role: 'customer' as const },
+      { userId: userIds[8], role: 'vendor_owner' as const, status: 'ended' as const },
+      { userId: userIds[9], role: 'vendor_owner' as const, deleted: true },
+    ]) {
+      await insertMembership({
+        vendorId: vendorIds[2],
+        ...denied,
+      });
+      await assert.rejects(
+        runner.run(vendorIds[2], (tx) =>
+          policy.requireVendor(
+            tx,
+            actor(denied.userId),
+            vendorIds[2],
+            'vendor:profile:read',
+            'vendor.profile.read',
+          ),
+        ),
+        forbidden,
+      );
+    }
+    await assert.rejects(
+      runner.run(vendorIds[1], (tx) =>
+        policy.requireVendor(
+          tx,
+          actor(userIds[0]),
+          vendorIds[1],
+          'vendor:profile:read',
+          'vendor.profile.read',
+        ),
+      ),
+      forbidden,
+    );
+    await assert.rejects(
+      runner.run(vendorIds[2], (tx) =>
+        policy.requireVendor(
+          tx,
+          actor(userIds[0], ['platform_administrator']),
+          vendorIds[2],
+          'vendor:profile:read',
+          'vendor.profile.read',
+        ),
+      ),
+      forbidden,
+    );
+  } finally {
+    await prisma.$disconnect();
+    await cleanup({ vendorIds, userIds });
+  }
+});
+
 void test('active memberships are vendor-specific and ended or deleted memberships deny', async () => {
   const vendorIds = [randomUUID(), randomUUID()];
   const userId = randomUUID();

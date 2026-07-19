@@ -32,8 +32,18 @@ const platform = {
 } as const satisfies Readonly<Record<PlatformRole, readonly PlatformPermission[]>>;
 
 const vendor = {
-  vendor_owner: ['membership:read', 'membership:manage', 'audit:read'],
-  vendor_administrator: ['membership:read', 'membership:manage', 'audit:read'],
+  vendor_owner: [
+    'membership:read',
+    'membership:manage',
+    'audit:read',
+    'vendor:profile:read',
+  ],
+  vendor_administrator: [
+    'membership:read',
+    'membership:manage',
+    'audit:read',
+    'vendor:profile:read',
+  ],
   delivery_agent: ['delivery:read', 'delivery:record'],
   customer: ['customer:self'],
 } as const satisfies Readonly<Record<VendorRole, readonly VendorPermission[]>>;

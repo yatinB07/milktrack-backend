@@ -10,6 +10,7 @@ export type PlatformPermission =
   | 'user:manage';
 
 export type VendorPermission =
+  | 'vendor:profile:read'
   | 'membership:read'
   | 'membership:manage'
   | 'audit:read'
@@ -30,8 +31,14 @@ const platformPermissions: Readonly<Record<PlatformRole, ReadonlySet<PlatformPer
 };
 
 const vendorPermissions: Readonly<Record<VendorRole, ReadonlySet<VendorPermission>>> = {
-  vendor_owner: new Set(['membership:read', 'membership:manage', 'audit:read']),
+  vendor_owner: new Set([
+    'vendor:profile:read',
+    'membership:read',
+    'membership:manage',
+    'audit:read',
+  ]),
   vendor_administrator: new Set([
+    'vendor:profile:read',
     'membership:read',
     'membership:manage',
     'audit:read',
@@ -41,6 +48,7 @@ const vendorPermissions: Readonly<Record<VendorRole, ReadonlySet<VendorPermissio
 };
 
 const activeVendorOperations: Readonly<Record<string, VendorPermission>> = {
+  'vendor.profile.read': 'vendor:profile:read',
   'membership.list': 'membership:read',
   'membership.create': 'membership:manage',
   'membership.update-role': 'membership:manage',

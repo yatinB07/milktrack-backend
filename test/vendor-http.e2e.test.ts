@@ -80,6 +80,79 @@ async function seedPlatformActor(
   return token;
 }
 
+async function seedVendorActor(input: Readonly<{
+  vendorId: string;
+  role: 'vendor_owner' | 'vendor_administrator' | 'delivery_agent' | 'customer';
+  membershipStatus?: 'active' | 'ended';
+  deleted?: boolean;
+}>): Promise<string> {
+  const userId = randomUUID();
+  const token = `vendor-profile-${input.role}-${randomUUID()}`;
+  const authenticationMethod =
+    input.role === 'vendor_owner' || input.role === 'vendor_administrator'
+      ? 'administrator_mfa'
+      : 'phone_otp';
+  actorIds.push(userId);
+  await ownerPool.query(
+    `INSERT INTO users (id, display_name, updated_at)
+     VALUES ($1, $2, now())`,
+    [userId, `Vendor ${input.role}`],
+  );
+  await ownerPool.query(
+    `INSERT INTO vendor_memberships
+       (id, vendor_id, user_id, role, status, joined_at, ended_at, deleted_at, updated_at)
+     VALUES ($1, $2, $3, $4, $5, now(), $6, $7, now())`,
+    [
+      randomUUID(),
+      input.vendorId,
+      userId,
+      input.role,
+      input.membershipStatus ?? 'active',
+      input.membershipStatus === 'ended' ? new Date() : null,
+      input.deleted ? new Date() : null,
+    ],
+  );
+  if (authenticationMethod === 'administrator_mfa') {
+    await ownerPool.query(
+      `INSERT INTO mfa_factors (id, user_id, type, encrypted_secret, enabled_at)
+       VALUES ($1, $2, 'totp', 'vendor-profile-fixture', now())`,
+      [randomUUID(), userId],
+    );
+  }
+  await ownerPool.query(
+    `INSERT INTO sessions
+       (id, user_id, access_token_hash, refresh_token_hash, authentication_method,
+        device_id, access_expires_at, expires_at, last_seen_at)
+     VALUES ($1, $2, $3, $4, $5, 'vendor-profile-test',
+             now() + interval '15 minutes', now() + interval '30 days', now())`,
+    [
+      randomUUID(),
+      userId,
+      createHmac('sha256', authKey).update(token).digest('hex'),
+      createHmac('sha256', authKey).update(`${token}-refresh`).digest('hex'),
+      authenticationMethod,
+    ],
+  );
+  return token;
+}
+
+async function insertVendorProfileFixture(
+  status: 'onboarding' | 'trial' | 'active' | 'suspended' | 'closed' = 'active',
+  deleted = false,
+): Promise<string> {
+  const id = randomUUID();
+  vendorIds.push(id);
+  await ownerPool.query(
+    `INSERT INTO vendors
+       (id, code, legal_name, display_name, status, timezone, currency,
+        skip_cutoff_minutes, billing_day, deleted_at, updated_at)
+     VALUES ($1, $2, 'Profile Legal Name', 'Profile Display Name', $3,
+             'Asia/Kolkata', 'INR', 15, 10, $4, now())`,
+    [id, `PROFILE_${id.replaceAll('-', '').slice(0, 20).toUpperCase()}`, status, deleted ? new Date() : null],
+  );
+  return id;
+}
+
 function api(
   path: string,
   token: string,
@@ -112,6 +185,7 @@ async function expectError(
 async function deleteVendors(ids: readonly string[]): Promise<void> {
   if (ids.length === 0) return;
   await ownerPool.query('DELETE FROM audit_events WHERE vendor_id = ANY($1::uuid[])', [ids]);
+  await ownerPool.query('DELETE FROM vendor_memberships WHERE vendor_id = ANY($1::uuid[])', [ids]);
   await ownerPool.query('DELETE FROM vendors WHERE id = ANY($1::uuid[])', [ids]);
 }
 
@@ -232,6 +306,73 @@ void test('platform permissions, DTO mapping, creation, detail, and transitions 
   assert.deepEqual(audits.rows[0]?.new_value, { code, status: 'pending_approval' });
   assert.equal(audits.rows[0]?.reason, null);
   assert.equal(audits.rows[1]?.reason, 'Approved documents');
+});
+
+void test('vendor profiles are tenant-safe, lifecycle-gated, and expose only the vendor DTO', async () => {
+  for (const status of ['onboarding', 'trial', 'active'] as const) {
+    const vendorId = await insertVendorProfileFixture(status);
+    for (const role of ['vendor_owner', 'vendor_administrator'] as const) {
+      const token = await seedVendorActor({ vendorId, role });
+      const response = await api(`/v1/vendors/${vendorId}/profile`, token);
+      assert.equal(response.status, 200);
+      const body = (await response.json()) as Record<string, unknown>;
+      assert.deepEqual(Object.keys(body).sort(), responseKeys);
+      assert.equal(body.id, vendorId);
+      assert.equal(body.status, status);
+      assert.equal(body.displayName, 'Profile Display Name');
+    }
+  }
+
+  const targetVendorId = await insertVendorProfileFixture();
+  const otherVendorId = await insertVendorProfileFixture();
+  await seedVendorActor({ vendorId: targetVendorId, role: 'vendor_owner' });
+  const otherOwner = await seedVendorActor({ vendorId: otherVendorId, role: 'vendor_owner' });
+  await expectError(
+    await api(`/v1/vendors/${targetVendorId}/profile`, otherOwner),
+    403,
+    'FORBIDDEN',
+  );
+  for (const role of ['delivery_agent', 'customer'] as const) {
+    const token = await seedVendorActor({ vendorId: targetVendorId, role });
+    await expectError(
+      await api(`/v1/vendors/${targetVendorId}/profile`, token),
+      403,
+      'FORBIDDEN',
+    );
+  }
+  await expectError(
+    await api(`/v1/vendors/${targetVendorId}/profile`, administratorToken),
+    403,
+    'FORBIDDEN',
+  );
+  for (const input of [
+    { membershipStatus: 'ended' as const },
+    { deleted: true },
+  ]) {
+    const token = await seedVendorActor({
+      vendorId: targetVendorId,
+      role: 'vendor_owner',
+      ...input,
+    });
+    await expectError(
+      await api(`/v1/vendors/${targetVendorId}/profile`, token),
+      401,
+      'UNAUTHENTICATED',
+    );
+  }
+  for (const [status, deleted] of [
+    ['suspended', false],
+    ['closed', false],
+    ['active', true],
+  ] as const) {
+    const vendorId = await insertVendorProfileFixture(status, deleted);
+    const token = await seedVendorActor({ vendorId, role: 'vendor_administrator' });
+    await expectError(
+      await api(`/v1/vendors/${vendorId}/profile`, token),
+      401,
+      'UNAUTHENTICATED',
+    );
+  }
 });
 
 void test('product owners search active vendors by status and page without duplicates', async () => {
@@ -492,6 +633,7 @@ void test('audit failure rolls back create and OpenAPI publishes secured explici
     ['/v1/platform/vendors', 'get'],
     ['/v1/platform/vendors/{id}', 'get'],
     ['/v1/platform/vendors/{id}/transitions', 'post'],
+    ['/v1/vendors/{vendorId}/profile', 'get'],
   ] as const) {
     const operation = document.paths?.[path]?.[method];
     assert.ok(operation?.security);

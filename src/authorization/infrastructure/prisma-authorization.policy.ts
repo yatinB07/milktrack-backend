@@ -41,9 +41,10 @@ export class PrismaAuthorizationPolicy extends AuthorizationPolicy {
     const tx = unwrapPrismaTransaction(context);
     requireVendorOperation(operation, permission);
 
-    // Membership administration is part of vendor onboarding. Other vendor
-    // operations remain unavailable until the vendor becomes active.
-    const permittedVendorStatuses = operation.startsWith('membership.')
+    // Onboarding permits membership administration and a vendor's own profile;
+    // other vendor operations remain unavailable until activation.
+    const permittedVendorStatuses =
+      operation === 'vendor.profile.read' || operation.startsWith('membership.')
       ? (['onboarding', 'trial', 'active'] as const)
       : (['active'] as const);
 
