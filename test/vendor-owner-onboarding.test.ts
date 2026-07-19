@@ -37,6 +37,7 @@ void test('a transient delivery failure retries the persisted enrollment without
     appendAudit: () => Promise.resolve(),
   };
   const store: VendorOwnerOnboardingStore = {
+    status: () => Promise.resolve(null),
     run: async (_vendorId, operation) => operation(unit),
     markDelivery: (_vendorId, _enrollmentId, state) => {
       deliveryState = state;
@@ -104,6 +105,7 @@ void test('persistent delivery failure is reported and remains recoverable throu
     appendAudit: () => Promise.resolve(),
   };
   const store: VendorOwnerOnboardingStore = {
+    status: () => Promise.resolve(null),
     run: async (_vendorId, operation) => operation(unit),
     markDelivery: (_vendorId, _enrollmentId, state) => {
       deliveryState = state;
@@ -176,4 +178,94 @@ void test('persistent delivery failure is reported and remains recoverable throu
   assert.equal(retried.deliveryStatus, 'delivered');
   assert.equal(deliveryState, 'delivered');
   assert.notEqual(deliveredTokens.at(-1), failedRetryToken);
+});
+
+void test('projects the newest initial-owner enrollment state with safe role-specific fields', async () => {
+  const vendorId = randomUUID();
+  const administrator: Actor = {
+    userId: randomUUID(),
+    sessionId: randomUUID(),
+    displayName: 'Platform Administrator',
+    authenticationMethod: 'administrator_mfa',
+    platformRoles: ['platform_administrator'],
+    memberships: [],
+  };
+  const productOwner: Actor = {
+    ...administrator,
+    userId: randomUUID(),
+    platformRoles: ['product_owner'],
+  };
+  const at = new Date('2026-07-19T10:00:00.000Z');
+  const enrollment = {
+    enrollmentId: randomUUID(),
+    membershipId: randomUUID(),
+    ownerDisplayName: 'Initial Owner',
+    ownerEmail: 'owner@example.com',
+    expiresAt: new Date('2026-07-19T11:00:00.000Z'),
+    startedAt: null as Date | null,
+    consumedAt: null as Date | null,
+    retiredAt: null as Date | null,
+    deliveryState: 'delivered',
+  };
+  let current: typeof enrollment | null = null;
+  const store = {
+    status: () => Promise.resolve(current),
+  } as unknown as VendorOwnerOnboardingStore;
+  const service = new DefaultVendorOwnerOnboardingService(store, {
+    send: () => Promise.resolve(),
+  }, { authHmacKey: Buffer.from('0123456789abcdef0123456789abcdef') });
+
+  assert.deepEqual(await service.status(administrator, vendorId), {
+    vendorId,
+    state: 'not_started',
+  });
+
+  const cases = [
+    [{ consumedAt: at, retiredAt: at, startedAt: at, deliveryState: 'failed' }, 'completed'],
+    [{ retiredAt: at, startedAt: at, deliveryState: 'failed' }, 'retired'],
+    [{ expiresAt: new Date('2026-07-19T09:00:00.000Z'), startedAt: at, deliveryState: 'failed' }, 'expired'],
+    [{ startedAt: at, deliveryState: 'failed' }, 'setup_started'],
+    [{ deliveryState: 'failed' }, 'delivery_failed'],
+    [{}, 'invited'],
+  ] as const;
+  for (const [overrides, state] of cases) {
+    current = { ...enrollment, ...overrides };
+    assert.deepEqual(await service.status(administrator, vendorId), {
+      vendorId,
+      state,
+      enrollmentId: enrollment.enrollmentId,
+      membershipId: enrollment.membershipId,
+      ownerDisplayName: enrollment.ownerDisplayName,
+      ownerEmail: enrollment.ownerEmail,
+      expiresAt: current.expiresAt,
+    });
+  }
+  assert.deepEqual(await service.status(productOwner, vendorId), {
+    vendorId,
+    state: 'invited',
+    enrollmentId: enrollment.enrollmentId,
+    membershipId: enrollment.membershipId,
+    ownerDisplayName: enrollment.ownerDisplayName,
+    expiresAt: enrollment.expiresAt,
+  });
+});
+
+void test('requires administrator MFA and platform vendor read permission for onboarding status', async () => {
+  const actor: Actor = {
+    userId: randomUUID(),
+    sessionId: randomUUID(),
+    displayName: 'Untrusted User',
+    authenticationMethod: 'phone_otp',
+    platformRoles: ['product_owner'],
+    memberships: [],
+  };
+  const store = { status: () => Promise.resolve(null) } as unknown as VendorOwnerOnboardingStore;
+  const service = new DefaultVendorOwnerOnboardingService(store, {
+    send: () => Promise.resolve(),
+  }, { authHmacKey: Buffer.from('0123456789abcdef0123456789abcdef') });
+
+  await assert.rejects(
+    () => service.status(actor, randomUUID()),
+    (error: unknown) => error instanceof Error && 'code' in error && error.code === 'FORBIDDEN',
+  );
 });

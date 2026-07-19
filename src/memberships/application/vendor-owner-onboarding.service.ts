@@ -36,6 +36,37 @@ export type RetryOwnerEnrollmentCommand = Readonly<{
   reason: string;
 }>;
 
+export type OwnerOnboardingState =
+  | 'not_started'
+  | 'invited'
+  | 'setup_started'
+  | 'completed'
+  | 'expired'
+  | 'retired'
+  | 'delivery_failed';
+
+export type VendorOwnerOnboardingStatusResult = Readonly<{
+  vendorId: string;
+  state: OwnerOnboardingState;
+  enrollmentId?: string;
+  membershipId?: string;
+  ownerDisplayName?: string;
+  ownerEmail?: string;
+  expiresAt?: Date;
+}>;
+
+export type OwnerOnboardingStatusRecord = Readonly<{
+  enrollmentId: string;
+  membershipId: string;
+  ownerDisplayName: string;
+  ownerEmail: string;
+  expiresAt: Date;
+  startedAt: Date | null;
+  consumedAt: Date | null;
+  retiredAt: Date | null;
+  deliveryState: string;
+}>;
+
 export type OwnerOnboardingUser = Readonly<{
   id: string;
   identityId: string;
@@ -91,6 +122,7 @@ export interface OwnerOnboardingUnitOfWork {
 }
 
 export abstract class VendorOwnerOnboardingStore {
+  abstract status(vendorId: string): Promise<OwnerOnboardingStatusRecord | null>;
   abstract run<T>(
     vendorId: string,
     operation: (unit: OwnerOnboardingUnitOfWork) => Promise<T>,
@@ -116,6 +148,11 @@ export abstract class VendorOwnerOnboardingStore {
 }
 
 export abstract class VendorOwnerOnboardingService {
+  /** Returns a platform-safe enrollment projection; only administrators receive owner email. */
+  abstract status(
+    actor: Actor,
+    vendorId: string,
+  ): Promise<VendorOwnerOnboardingStatusResult>;
   abstract establish(
     actor: Actor,
     command: EstablishVendorOwnerCommand,
@@ -293,6 +330,47 @@ export class DefaultVendorOwnerOnboardingService extends VendorOwnerOnboardingSe
       setupToken,
     );
     return { ...result, deliveryStatus: 'delivered' };
+  }
+
+  async status(
+    actor: Actor,
+    vendorId: string,
+  ): Promise<VendorOwnerOnboardingStatusResult> {
+    if (
+      actor.authenticationMethod !== 'administrator_mfa' ||
+      !actor.platformRoles.some((role) => hasPlatformPermission(role, 'vendor:read'))
+    ) {
+      throw new ApplicationError(
+        'FORBIDDEN',
+        'You are not allowed to perform this action',
+        403,
+      );
+    }
+    const enrollment = await this.store.status(vendorId);
+    if (!enrollment) return { vendorId, state: 'not_started' };
+
+    const state: OwnerOnboardingState = enrollment.consumedAt
+      ? 'completed'
+      : enrollment.retiredAt
+        ? 'retired'
+        : enrollment.expiresAt <= new Date()
+          ? 'expired'
+          : enrollment.startedAt
+            ? 'setup_started'
+            : enrollment.deliveryState === 'failed'
+              ? 'delivery_failed'
+              : 'invited';
+    return {
+      vendorId,
+      state,
+      enrollmentId: enrollment.enrollmentId,
+      membershipId: enrollment.membershipId,
+      ownerDisplayName: enrollment.ownerDisplayName,
+      ...(actor.platformRoles.includes('platform_administrator')
+        ? { ownerEmail: enrollment.ownerEmail }
+        : {}),
+      expiresAt: enrollment.expiresAt,
+    };
   }
 
   async retry(

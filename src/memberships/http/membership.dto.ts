@@ -166,6 +166,47 @@ export class VendorOwnerOnboardingResponseDto {
   deliveryStatus!: 'delivered';
 }
 
+export class VendorOwnerOnboardingStatusResponseDto {
+  @ApiProperty({ type: String, format: 'uuid' })
+  vendorId!: string;
+
+  @ApiProperty({
+    type: String,
+    enum: [
+      'not_started',
+      'invited',
+      'setup_started',
+      'completed',
+      'expired',
+      'retired',
+      'delivery_failed',
+    ],
+  })
+  state!:
+    | 'not_started'
+    | 'invited'
+    | 'setup_started'
+    | 'completed'
+    | 'expired'
+    | 'retired'
+    | 'delivery_failed';
+
+  @ApiPropertyOptional({ type: String, format: 'uuid' })
+  enrollmentId?: string;
+
+  @ApiPropertyOptional({ type: String, format: 'uuid' })
+  membershipId?: string;
+
+  @ApiPropertyOptional({ type: String })
+  ownerDisplayName?: string;
+
+  @ApiPropertyOptional({ type: String, format: 'email' })
+  ownerEmail?: string;
+
+  @ApiPropertyOptional({ type: String, format: 'date-time' })
+  expiresAt?: string;
+}
+
 export class RetryOwnerEnrollmentResponseDto {
   @ApiProperty({ type: String, format: 'uuid' })
   enrollmentId!: string;

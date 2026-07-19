@@ -50,6 +50,7 @@ import {
   UpdateMembershipRoleRequestDto,
   UserResponseDto,
   VendorOwnerOnboardingResponseDto,
+  VendorOwnerOnboardingStatusResponseDto,
 } from './membership.dto.js';
 
 const uuidPipe = new ParseUUIDPipe({ version: '4' });
@@ -274,6 +275,26 @@ export class VendorOwnerOnboardingController {
     private readonly onboarding: VendorOwnerOnboardingService,
   ) {}
 
+  @Get('initial')
+  @ApiOkResponse({ type: VendorOwnerOnboardingStatusResponseDto })
+  async status(
+    @Param('vendorId', uuidPipe) vendorId: string,
+  ): Promise<VendorOwnerOnboardingStatusResponseDto> {
+    const result = await this.onboarding.status(
+      requestContextStore.requireActor(),
+      vendorId,
+    );
+    return {
+      vendorId: result.vendorId,
+      state: result.state,
+      ...(result.enrollmentId ? { enrollmentId: result.enrollmentId } : {}),
+      ...(result.membershipId ? { membershipId: result.membershipId } : {}),
+      ...(result.ownerDisplayName ? { ownerDisplayName: result.ownerDisplayName } : {}),
+      ...(result.ownerEmail ? { ownerEmail: result.ownerEmail } : {}),
+      ...(result.expiresAt ? { expiresAt: result.expiresAt.toISOString() } : {}),
+    };
+  }
+
   @Post('initial')
   @ApiCreatedResponse({ type: VendorOwnerOnboardingResponseDto })
   async establish(
@@ -397,6 +418,12 @@ for (const method of ['softDelete', 'restore', 'deactivate'] as const) {
     method,
   );
 }
+Reflect.defineMetadata(
+  'design:paramtypes',
+  [String],
+  VendorOwnerOnboardingController.prototype,
+  'status',
+);
 Reflect.defineMetadata(
   'design:paramtypes',
   [String, EstablishVendorOwnerRequestDto],

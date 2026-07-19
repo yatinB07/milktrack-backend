@@ -81,6 +81,60 @@ async function platformAdministrator(seed: Seed): Promise<{
   return { id, token };
 }
 
+async function platformProductOwner(seed: Seed): Promise<{
+  id: string;
+  token: string;
+}> {
+  const id = await insertUser(seed, 'Enrollment Product Owner');
+  await ownerPool.query(
+    `INSERT INTO platform_role_assignments (id, user_id, role, granted_by)
+     VALUES ($1, $2, 'product_owner', $2)`,
+    [randomUUID(), id],
+  );
+  await ownerPool.query(
+    `INSERT INTO mfa_factors (id, user_id, type, encrypted_secret, enabled_at)
+     VALUES ($1, $2, 'totp', 'owner-enrollment-product-owner-fixture', now())`,
+    [randomUUID(), id],
+  );
+  const token = randomUUID();
+  await ownerPool.query(
+    `INSERT INTO sessions
+       (id, user_id, access_token_hash, refresh_token_hash,
+        authentication_method, device_id, access_expires_at, expires_at,
+        last_seen_at)
+     VALUES ($1, $2, $3, $4, 'administrator_mfa', 'owner-enrollment-product-owner',
+             now() + interval '1 hour', now() + interval '1 day', now())`,
+    [randomUUID(), id, tokenHash(token), tokenHash(randomUUID())],
+  );
+  return { id, token };
+}
+
+async function vendorAdministrator(seed: Seed, vendorId: string): Promise<string> {
+  const userId = await insertUser(seed, 'Enrollment Vendor Administrator');
+  await ownerPool.query(
+    `INSERT INTO vendor_memberships
+       (id, vendor_id, user_id, role, status, joined_at, updated_at)
+     VALUES ($1, $2, $3, 'vendor_administrator', 'active', now(), now())`,
+    [randomUUID(), vendorId, userId],
+  );
+  await ownerPool.query(
+    `INSERT INTO mfa_factors (id, user_id, type, encrypted_secret, enabled_at)
+     VALUES ($1, $2, 'totp', 'owner-enrollment-vendor-admin-fixture', now())`,
+    [randomUUID(), userId],
+  );
+  const token = randomUUID();
+  await ownerPool.query(
+    `INSERT INTO sessions
+       (id, user_id, access_token_hash, refresh_token_hash,
+        authentication_method, device_id, access_expires_at, expires_at,
+        last_seen_at)
+     VALUES ($1, $2, $3, $4, 'administrator_mfa', 'owner-enrollment-vendor-admin',
+             now() + interval '1 hour', now() + interval '1 day', now())`,
+    [randomUUID(), userId, tokenHash(token), tokenHash(randomUUID())],
+  );
+  return token;
+}
+
 async function insertVendor(
   seed: Seed,
   status: 'pending_approval' | 'onboarding' | 'suspended' = 'onboarding',
@@ -959,6 +1013,80 @@ void describe('vendor owner enrollment', () => {
           state.rows[0]?.membership_status === 'invited' &&
           state.rows[0]?.effective_owners === '0'),
       );
+    } finally {
+      await cleanup(seed);
+    }
+  });
+
+  void it('returns a safe initial-owner onboarding status only to MFA-authenticated platform readers', async () => {
+    const seed: Seed = { vendorIds: [], userIds: [] };
+    const administrator = await platformAdministrator(seed);
+    const productOwner = await platformProductOwner(seed);
+    const vendorId = await insertVendor(seed);
+    const vendorToken = await vendorAdministrator(seed, vendorId);
+    const email = `status-${randomUUID()}@example.com`;
+    try {
+      const notStarted = await fetch(
+        `${baseUrl}/v1/platform/vendors/${vendorId}/owners/initial`,
+        { headers: { authorization: `Bearer ${administrator.token}` } },
+      );
+      assert.deepEqual(await notStarted.json(), { vendorId, state: 'not_started' });
+
+      const invited = await request(
+        baseUrl,
+        `/v1/platform/vendors/${vendorId}/owners/initial`,
+        { email, displayName: 'Status Owner', reason: 'Status projection regression' },
+        administrator.token,
+      );
+      const invitation = (await invited.json()) as {
+        userId: string;
+        membershipId: string;
+        enrollmentId: string;
+      };
+      assert.equal(invited.status, 201, JSON.stringify(invitation));
+      seed.userIds.push(invitation.userId);
+
+      const administratorStatus = await fetch(
+        `${baseUrl}/v1/platform/vendors/${vendorId}/owners/initial`,
+        { headers: { authorization: `Bearer ${administrator.token}` } },
+      );
+      const administratorBody = await administratorStatus.json() as Record<string, unknown>;
+      assert.equal(administratorStatus.status, 200, JSON.stringify(administratorBody));
+      assert.deepEqual(administratorBody, {
+        vendorId,
+        state: 'invited',
+        enrollmentId: invitation.enrollmentId,
+        membershipId: invitation.membershipId,
+        ownerDisplayName: 'Status Owner',
+        ownerEmail: email,
+        expiresAt: administratorBody.expiresAt,
+      });
+      assert.ok(typeof administratorBody.expiresAt === 'string');
+      assert.doesNotMatch(
+        JSON.stringify(administratorBody),
+        /hash|token|password|mfa|provider/i,
+      );
+
+      const productOwnerStatus = await fetch(
+        `${baseUrl}/v1/platform/vendors/${vendorId}/owners/initial`,
+        { headers: { authorization: `Bearer ${productOwner.token}` } },
+      );
+      const productOwnerBody = await productOwnerStatus.json() as Record<string, unknown>;
+      assert.equal(productOwnerStatus.status, 200, JSON.stringify(productOwnerBody));
+      assert.equal(productOwnerBody.ownerDisplayName, 'Status Owner');
+      assert.equal('ownerEmail' in productOwnerBody, false);
+      assert.doesNotMatch(JSON.stringify(productOwnerBody), /hash|token|password|mfa|provider/i);
+
+      const denied = await fetch(
+        `${baseUrl}/v1/platform/vendors/${vendorId}/owners/initial`,
+        { headers: { authorization: `Bearer ${vendorToken}` } },
+      );
+      assert.equal(denied.status, 403);
+      const missing = await fetch(
+        `${baseUrl}/v1/platform/vendors/${randomUUID()}/owners/initial`,
+        { headers: { authorization: `Bearer ${administrator.token}` } },
+      );
+      assert.equal(missing.status, 404);
     } finally {
       await cleanup(seed);
     }
