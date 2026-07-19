@@ -29,6 +29,7 @@ export type ListVendorsQuery = Readonly<{
   cursor?: string;
   limit?: number;
   status?: VendorStatus;
+  search?: string;
 }>;
 
 export type TransitionVendorCommand = Readonly<{
@@ -115,7 +116,13 @@ export class PrismaVendorService extends VendorService {
     this.authorization.requirePlatform(actor, 'vendor:read');
     const limit = this.cursors.parseLimit(query.limit);
     const cursor = query.cursor === undefined ? undefined : this.cursors.decode(query.cursor);
-    const page = await this.vendors.listActive({ limit, cursor, status: query.status });
+    const search = query.search?.trim();
+    const page = await this.vendors.listActive({
+      limit,
+      cursor,
+      status: query.status,
+      search: search || undefined,
+    });
     return {
       items: page.items,
       ...(page.next === undefined ? {} : { nextCursor: this.cursors.encode(page.next) }),

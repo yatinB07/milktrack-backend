@@ -17,6 +17,12 @@ const transitions: Readonly<Record<VendorStatus, readonly VendorStatus[]>> = {
   closed: [],
 };
 
+export function allowedVendorTransitions(
+  status: VendorStatus,
+): readonly VendorStatus[] {
+  return [...transitions[status]];
+}
+
 export function requireVendorTransition(
   from: VendorStatus,
   to: VendorStatus,

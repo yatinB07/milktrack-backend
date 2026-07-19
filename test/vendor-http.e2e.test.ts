@@ -18,6 +18,7 @@ let administratorToken: string;
 let productOwnerToken: string;
 
 const responseKeys = [
+  'allowedTransitions',
   'billingDay',
   'code',
   'createdAt',
@@ -163,6 +164,7 @@ void test('platform permissions, DTO mapping, creation, detail, and transitions 
   assert.deepEqual(Object.keys(created).sort(), responseKeys);
   assert.equal(created.code, code);
   assert.equal(created.status, 'pending_approval');
+  assert.deepEqual(created.allowedTransitions, ['onboarding']);
   assert.equal(created.version, 1);
   assert.equal(new Date(String(created.createdAt)).toISOString(), created.createdAt);
   vendorIds.push(String(created.id));
@@ -201,6 +203,7 @@ void test('platform permissions, DTO mapping, creation, detail, and transitions 
   const transitioned = (await transitionResponse.json()) as Record<string, unknown>;
   assert.deepEqual(Object.keys(transitioned).sort(), responseKeys);
   assert.equal(transitioned.status, 'onboarding');
+  assert.deepEqual(transitioned.allowedTransitions, ['trial', 'active']);
   assert.equal(transitioned.version, 2);
   await expectError(
     await api(`/v1/platform/vendors/${String(created.id)}/transitions`, administratorToken, {
@@ -229,6 +232,67 @@ void test('platform permissions, DTO mapping, creation, detail, and transitions 
   assert.deepEqual(audits.rows[0]?.new_value, { code, status: 'pending_approval' });
   assert.equal(audits.rows[0]?.reason, null);
   assert.equal(audits.rows[1]?.reason, 'Approved documents');
+});
+
+void test('product owners search active vendors by status and page without duplicates', async () => {
+  const search = `SEARCH${randomUUID().replaceAll('-', '').slice(0, 8).toUpperCase()}`;
+  const rows = [
+    { id: randomUUID(), code: `CODE_${search}`, legalName: 'Unrelated legal name', displayName: 'Unrelated display name', status: 'suspended' },
+    { id: randomUUID(), code: `LEGAL_${randomUUID().replaceAll('-', '').slice(0, 8).toUpperCase()}`, legalName: `Legal ${search}`, displayName: 'Unrelated display name', status: 'suspended' },
+    { id: randomUUID(), code: `DISPLAY_${randomUUID().replaceAll('-', '').slice(0, 8).toUpperCase()}`, legalName: 'Unrelated legal name', displayName: `Display ${search}`, status: 'suspended' },
+    { id: randomUUID(), code: `PENDING_${search}`, legalName: 'Unrelated legal name', displayName: 'Unrelated display name', status: 'pending_approval' },
+  ] as const;
+  vendorIds.push(...rows.map(({ id }) => id));
+  for (const [index, row] of rows.entries()) {
+    await ownerPool.query(
+      `INSERT INTO vendors
+         (id, code, legal_name, display_name, status, timezone, currency,
+          skip_cutoff_minutes, billing_day, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, 'Asia/Kolkata', 'INR', 0, 1, $6, $6)`,
+      [
+        row.id,
+        row.code,
+        row.legalName,
+        row.displayName,
+        row.status,
+        new Date(Date.UTC(2098, 6, 18, 12, 0, index)),
+      ],
+    );
+  }
+
+  let cursor: string | undefined;
+  const ids: string[] = [];
+  do {
+    const response = await api(
+      `/v1/platform/vendors?status=suspended&search=${search.toLowerCase()}&limit=1${cursor === undefined ? '' : `&cursor=${encodeURIComponent(cursor)}`}`,
+      productOwnerToken,
+    );
+    assert.equal(response.status, 200);
+    const page = (await response.json()) as {
+      items: Array<{ id: string; allowedTransitions: string[] }>;
+      nextCursor?: string;
+    };
+    assert.equal(page.items.length, 1);
+    const [item] = page.items;
+    assert.ok(item);
+    assert.deepEqual(item.allowedTransitions, ['active', 'closed']);
+    ids.push(item.id);
+    cursor = page.nextCursor;
+  } while (cursor !== undefined);
+
+  assert.deepEqual(new Set(ids), new Set(rows.slice(0, 3).map(({ id }) => id)));
+  assert.equal(ids.length, 3);
+});
+
+void test('vendor search rejects blank and overlong values', async () => {
+  await expectError(
+    await api('/v1/platform/vendors?search=%20%20%20', productOwnerToken),
+    400,
+  );
+  await expectError(
+    await api(`/v1/platform/vendors?search=${'x'.repeat(121)}`, productOwnerToken),
+    400,
+  );
 });
 
 void test('create validation, active-code uniqueness, and soft-delete filtering are stable', async () => {

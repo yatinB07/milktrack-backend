@@ -74,17 +74,31 @@ export class PrismaVendorStore {
     limit: number;
     cursor?: CursorValue;
     status?: VendorStatus;
+    search?: string;
   }>): Promise<Readonly<{ items: readonly VendorRecord[]; next?: CursorValue }>> {
     const rows = await this.prisma.vendor.findMany({
       where: {
         deletedAt: null,
         ...(input.status === undefined ? {} : { status: input.status }),
-        ...(input.cursor === undefined
+        ...(input.search === undefined
           ? {}
           : {
               OR: [
-                { createdAt: { lt: input.cursor.createdAt } },
-                { createdAt: input.cursor.createdAt, id: { lt: input.cursor.id } },
+                { code: { contains: input.search, mode: 'insensitive' } },
+                { legalName: { contains: input.search, mode: 'insensitive' } },
+                { displayName: { contains: input.search, mode: 'insensitive' } },
+              ],
+            }),
+        ...(input.cursor === undefined
+          ? {}
+          : {
+              AND: [
+                {
+                  OR: [
+                    { createdAt: { lt: input.cursor.createdAt } },
+                    { createdAt: input.cursor.createdAt, id: { lt: input.cursor.id } },
+                  ],
+                },
               ],
             }),
       },

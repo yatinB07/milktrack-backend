@@ -69,6 +69,7 @@ export class VendorController {
       cursor: dto.cursor,
       limit: dto.limit,
       status: dto.status,
+      search: dto.search,
     });
     return {
       items: page.items.map(toVendorResponse),

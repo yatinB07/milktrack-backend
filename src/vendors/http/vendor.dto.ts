@@ -11,7 +11,10 @@ import {
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
-import type { VendorStatus } from '../domain/vendor-lifecycle.js';
+import {
+  allowedVendorTransitions,
+  type VendorStatus,
+} from '../domain/vendor-lifecycle.js';
 import type { VendorResult } from '../application/vendor.service.js';
 
 export const VENDOR_STATUSES = [
@@ -73,6 +76,13 @@ export class ListVendorsQueryDto {
   @IsOptional()
   @IsIn(VENDOR_STATUSES)
   status?: VendorStatus;
+
+  @ApiPropertyOptional({ type: String, minLength: 1, maxLength: 120 })
+  @IsOptional()
+  @IsString()
+  @Length(1, 120)
+  @Matches(/\S/)
+  search?: string;
 }
 
 export class TransitionVendorRequestDto {
@@ -99,6 +109,9 @@ export class VendorResponseDto {
 
   @ApiProperty({ enum: VENDOR_STATUSES })
   status!: VendorStatus;
+
+  @ApiProperty({ enum: VENDOR_STATUSES, isArray: true })
+  allowedTransitions!: VendorStatus[];
 
   timezone!: string;
   currency!: string;
@@ -127,6 +140,7 @@ export function toVendorResponse(vendor: VendorResult): VendorResponseDto {
     legalName: vendor.legalName,
     displayName: vendor.displayName,
     status: vendor.status,
+    allowedTransitions: [...allowedVendorTransitions(vendor.status)],
     timezone: vendor.timezone,
     currency: vendor.currency,
     skipCutoffMinutes: vendor.skipCutoffMinutes,
