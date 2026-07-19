@@ -112,9 +112,13 @@ docker compose --env-file .env run --rm \
 unset SEED_ADMIN_EMAIL SEED_ADMIN_PASSWORD SEED_TOTP_SECRET
 ```
 
-The seed creates a platform administrator, a Product Owner, and isolated Vendor
-A and Vendor B owners. It uses production password hashing and TOTP encryption;
+The seed creates a platform administrator, a Product Owner, isolated Vendor A
+and Vendor B owners, and Vendor A delivery-agent and customer accounts for the
+mobile login flows. It uses production password hashing and TOTP encryption;
 the database stores no plaintext password or TOTP secret.
+
+- Delivery agent: `+91 98765 43210`
+- Customer: `+91 98765 43211`
 
 ## Local authentication delivery
 

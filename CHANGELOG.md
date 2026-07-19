@@ -22,7 +22,8 @@ All notable backend changes are recorded here.
 - Added selective soft deletion for Phase 1 master records and append-only audit
   history for privileged and security-sensitive changes.
 - Added the idempotent development/test security seed for a platform
-  administrator, Product Owner, and two isolated test vendors.
+  administrator, Product Owner, two isolated test vendors, and Vendor A mobile
+  delivery-agent and customer accounts.
 - Added the versioned deterministic OpenAPI artifact and contract drift check.
 
 ### Security

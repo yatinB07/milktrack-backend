@@ -18,6 +18,8 @@ const IDS = {
     '10000000-0000-4000-8000-000000000002',
     '10000000-0000-4000-8000-000000000003',
     '10000000-0000-4000-8000-000000000004',
+    '10000000-0000-4000-8000-000000000005',
+    '10000000-0000-4000-8000-000000000006',
   ],
   identities: [
     '20000000-0000-4000-8000-000000000001',
@@ -28,6 +30,10 @@ const IDS = {
     '20000000-0000-4000-8000-000000000006',
     '20000000-0000-4000-8000-000000000007',
     '20000000-0000-4000-8000-000000000008',
+    '20000000-0000-4000-8000-000000000009',
+    '20000000-0000-4000-8000-000000000010',
+    '20000000-0000-4000-8000-000000000011',
+    '20000000-0000-4000-8000-000000000012',
   ],
   vendors: [
     '30000000-0000-4000-8000-000000000001',
@@ -36,6 +42,8 @@ const IDS = {
   memberships: [
     '40000000-0000-4000-8000-000000000001',
     '40000000-0000-4000-8000-000000000002',
+    '40000000-0000-4000-8000-000000000003',
+    '40000000-0000-4000-8000-000000000004',
   ],
   platformRoles: [
     '50000000-0000-4000-8000-000000000001',
@@ -46,6 +54,8 @@ const IDS = {
     '60000000-0000-4000-8000-000000000002',
     '60000000-0000-4000-8000-000000000003',
     '60000000-0000-4000-8000-000000000004',
+    '60000000-0000-4000-8000-000000000005',
+    '60000000-0000-4000-8000-000000000006',
   ],
 } as const;
 
@@ -57,6 +67,8 @@ const EMAILS = [
   'seed-suite+product-owner@example.test',
   'seed-suite+vendor-a-owner@example.test',
   'seed-suite+vendor-b-owner@example.test',
+  'seed-suite+vendor-a-agent@example.test',
+  'seed-suite+vendor-a-customer@example.test',
 ] as const;
 
 type SeedResult = Readonly<{ code: number | null; stdout: string; stderr: string }>;
@@ -86,7 +98,28 @@ function runSeed(overrides: NodeJS.ProcessEnv = {}): Promise<SeedResult> {
 }
 
 async function cleanupSeed(): Promise<void> {
-  await ownerPool.query('DELETE FROM audit_events WHERE actor_user_id = ANY($1::uuid[])', [
+  await ownerPool.query(
+    `DELETE FROM audit_events
+     WHERE actor_user_id = ANY($1::uuid[]) OR vendor_id = ANY($2::uuid[])`,
+    [IDS.users, IDS.vendors],
+  );
+  await ownerPool.query(
+    `DELETE FROM support_access_grants
+     WHERE vendor_id = ANY($1::uuid[])
+       OR grantee_user_id = ANY($2::uuid[])
+       OR requested_by = ANY($2::uuid[])
+       OR approved_by = ANY($2::uuid[])`,
+    [IDS.vendors, IDS.users],
+  );
+  await ownerPool.query('DELETE FROM sessions WHERE user_id = ANY($1::uuid[])', [IDS.users]);
+  await ownerPool.query(
+    'DELETE FROM pending_mfa_authentications WHERE user_id = ANY($1::uuid[])',
+    [IDS.users],
+  );
+  await ownerPool.query('DELETE FROM otp_challenges WHERE identity_id = ANY($1::uuid[])', [
+    IDS.identities,
+  ]);
+  await ownerPool.query('DELETE FROM owner_enrollments WHERE user_id = ANY($1::uuid[])', [
     IDS.users,
   ]);
   await ownerPool.query('DELETE FROM vendor_memberships WHERE id = ANY($1::uuid[])', [
@@ -261,25 +294,44 @@ void test('seed is idempotent, uses production crypto, and creates exact determi
   assert.equal(second.code, 0, second.stderr);
   assert.doesNotMatch(`${second.stdout}${second.stderr}`, new RegExp(`${PASSWORD}|${TOTP_SECRET}`));
 
-  assert.equal(await seedOwnedCount('users', 'id', IDS.users), 4);
-  assert.equal(await seedOwnedCount('user_identities', 'id', IDS.identities), 8);
-  assert.equal(await seedOwnedCount('password_credentials', 'user_id', IDS.users), 4);
-  assert.equal(await seedOwnedCount('mfa_factors', 'id', IDS.mfaFactors), 4);
+  assert.equal(await seedOwnedCount('users', 'id', IDS.users), 6);
+  assert.equal(await seedOwnedCount('user_identities', 'id', IDS.identities), 12);
+  assert.equal(await seedOwnedCount('password_credentials', 'user_id', IDS.users), 6);
+  assert.equal(await seedOwnedCount('mfa_factors', 'id', IDS.mfaFactors), 6);
   assert.equal(await seedOwnedCount('platform_role_assignments', 'id', IDS.platformRoles), 2);
   assert.equal(await seedOwnedCount('vendors', 'id', IDS.vendors), 2);
-  assert.equal(await seedOwnedCount('vendor_memberships', 'id', IDS.memberships), 2);
+  assert.equal(await seedOwnedCount('vendor_memberships', 'id', IDS.memberships), 4);
 
   const identities = await ownerPool.query<{
+    user_id: string;
+    type: string;
     normalized_value: string;
     verified: boolean;
     is_primary: boolean;
   }>(
-    `SELECT normalized_value, verified_at IS NOT NULL AS verified, is_primary
+    `SELECT user_id, type::text, normalized_value,
+            verified_at IS NOT NULL AS verified, is_primary
      FROM user_identities WHERE id = ANY($1::uuid[]) ORDER BY normalized_value`,
     [IDS.identities],
   );
-  assert.equal(identities.rows.length, 8);
+  assert.equal(identities.rows.length, 12);
   assert.ok(EMAILS.every((email) => identities.rows.some((row) => row.normalized_value === email)));
+  assert.ok(
+    identities.rows.some(
+      (row) =>
+        row.user_id === IDS.users[4] &&
+        row.type === 'phone' &&
+        row.normalized_value === '+919876543210',
+    ),
+  );
+  assert.ok(
+    identities.rows.some(
+      (row) =>
+        row.user_id === IDS.users[5] &&
+        row.type === 'phone' &&
+        row.normalized_value === '+919876543211',
+    ),
+  );
   assert.ok(identities.rows.every((row) => row.verified && row.is_primary));
 
   const activeAssignments = await ownerPool.query<{ platform_roles: string; owners: string }>(
@@ -326,6 +378,8 @@ void test('seed is idempotent, uses production crypto, and creates exact determi
   assert.deepEqual(membershipMappings.rows, [
     { vendor_id: IDS.vendors[0], user_id: IDS.users[2], role: 'vendor_owner' },
     { vendor_id: IDS.vendors[1], user_id: IDS.users[3], role: 'vendor_owner' },
+    { vendor_id: IDS.vendors[0], user_id: IDS.users[4], role: 'delivery_agent' },
+    { vendor_id: IDS.vendors[0], user_id: IDS.users[5], role: 'customer' },
   ]);
 
   const credentialsAfter = await ownerPool.query<{

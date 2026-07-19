@@ -43,6 +43,24 @@ const seedUsers = [
     phoneIdentityId: '20000000-0000-4000-8000-000000000008',
     factorId: '60000000-0000-4000-8000-000000000004',
   },
+  {
+    id: '10000000-0000-4000-8000-000000000005',
+    displayName: 'Development Vendor A Delivery Agent',
+    emailTag: 'vendor-a-agent',
+    phone: '+919876543210',
+    emailIdentityId: '20000000-0000-4000-8000-000000000009',
+    phoneIdentityId: '20000000-0000-4000-8000-000000000010',
+    factorId: '60000000-0000-4000-8000-000000000005',
+  },
+  {
+    id: '10000000-0000-4000-8000-000000000006',
+    displayName: 'Development Vendor A Customer',
+    emailTag: 'vendor-a-customer',
+    phone: '+919876543211',
+    emailIdentityId: '20000000-0000-4000-8000-000000000011',
+    phoneIdentityId: '20000000-0000-4000-8000-000000000012',
+    factorId: '60000000-0000-4000-8000-000000000006',
+  },
 ] as const;
 
 const seedVendors = [
@@ -85,6 +103,18 @@ const seedMemberships = [
     vendorId: seedVendors[1].id,
     userId: seedUsers[3].id,
     role: 'vendor_owner' as const,
+  },
+  {
+    id: '40000000-0000-4000-8000-000000000003',
+    vendorId: seedVendors[0].id,
+    userId: seedUsers[4].id,
+    role: 'delivery_agent' as const,
+  },
+  {
+    id: '40000000-0000-4000-8000-000000000004',
+    vendorId: seedVendors[0].id,
+    userId: seedUsers[5].id,
+    role: 'customer' as const,
   },
 ] as const;
 
