@@ -195,13 +195,14 @@ void test('projects the newest initial-owner enrollment state with safe role-spe
     userId: randomUUID(),
     platformRoles: ['product_owner'],
   };
-  const at = new Date('2026-07-19T10:00:00.000Z');
+  const past = new Date(Date.now() - 60 * 60_000);
+  const future = new Date(Date.now() + 60 * 60_000);
   const enrollment = {
     enrollmentId: randomUUID(),
     membershipId: randomUUID(),
     ownerDisplayName: 'Initial Owner',
     ownerEmail: 'owner@example.com',
-    expiresAt: new Date('2026-07-19T11:00:00.000Z'),
+    expiresAt: future,
     startedAt: null as Date | null,
     consumedAt: null as Date | null,
     retiredAt: null as Date | null,
@@ -221,10 +222,10 @@ void test('projects the newest initial-owner enrollment state with safe role-spe
   });
 
   const cases = [
-    [{ consumedAt: at, retiredAt: at, startedAt: at, deliveryState: 'failed' }, 'completed'],
-    [{ retiredAt: at, startedAt: at, deliveryState: 'failed' }, 'retired'],
-    [{ expiresAt: new Date('2026-07-19T09:00:00.000Z'), startedAt: at, deliveryState: 'failed' }, 'expired'],
-    [{ startedAt: at, deliveryState: 'failed' }, 'setup_started'],
+    [{ consumedAt: past, retiredAt: past, startedAt: past, deliveryState: 'failed' }, 'completed'],
+    [{ retiredAt: past, startedAt: past, deliveryState: 'failed' }, 'retired'],
+    [{ expiresAt: past, startedAt: past, deliveryState: 'failed' }, 'expired'],
+    [{ startedAt: past, deliveryState: 'failed' }, 'setup_started'],
     [{ deliveryState: 'failed' }, 'delivery_failed'],
     [{}, 'invited'],
   ] as const;

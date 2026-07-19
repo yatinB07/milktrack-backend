@@ -9,7 +9,6 @@ import {
 } from '../../common/application/transaction-context.js';
 import { ApplicationError } from '../../common/errors/application.error.js';
 import { unwrapPrismaTransaction } from '../../database/infrastructure/prisma-transaction-context.js';
-import { PrismaService } from '../../database/infrastructure/prisma.service.js';
 import { Prisma } from '../../generated/prisma/client.js';
 import {
   type OwnerOnboardingStatusRecord,
@@ -32,21 +31,21 @@ export class PrismaVendorOwnerOnboardingStore extends VendorOwnerOnboardingStore
     @Inject(TenantTransactionRunner)
     private readonly transactions: TenantTransactionRunner,
     @Inject(AuditWriter) private readonly audits: AuditWriter,
-    @Inject(PrismaService) private readonly prisma: PrismaService,
   ) {
     super();
   }
 
   async status(vendorId: string): Promise<OwnerOnboardingStatusRecord | null> {
-    const vendor = await this.prisma.vendor.findFirst({
-      where: { id: vendorId, deletedAt: null },
-      select: { id: true },
-    });
-    if (!vendor) {
-      throw new ApplicationError('VENDOR_NOT_FOUND', 'Vendor was not found', 404);
-    }
     return this.transactions.run(vendorId, async (context) => {
-      const enrollment = await unwrapPrismaTransaction(context).ownerEnrollment.findFirst({
+      const tx = unwrapPrismaTransaction(context);
+      const vendor = await tx.vendor.findFirst({
+        where: { id: vendorId, deletedAt: null },
+        select: { id: true },
+      });
+      if (!vendor) {
+        throw new ApplicationError('VENDOR_NOT_FOUND', 'Vendor was not found', 404);
+      }
+      const enrollment = await tx.ownerEnrollment.findFirst({
         where: { vendorId },
         orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
         select: {
