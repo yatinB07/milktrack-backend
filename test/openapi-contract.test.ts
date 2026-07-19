@@ -334,6 +334,11 @@ void test('publishes the complete Phase 1 HTTP contract without persistence secr
     'vendor profile GET success response',
   );
   assert.equal(vendorProfileSchema.$ref, '#/components/schemas/VendorResponseDto');
+  const vendorProfileUnavailableSchema = responseSchema(
+    vendorProfileResponses['503'],
+    'vendor profile GET audit-unavailable response',
+  );
+  assert.equal(vendorProfileUnavailableSchema.$ref, '#/components/schemas/ApiErrorResponseDto');
 
   for (const [name, responses] of [
     ['owner onboarding GET', ownerStatusResponses],

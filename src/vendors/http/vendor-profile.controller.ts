@@ -33,6 +33,7 @@ export class VendorProfileController {
   @ApiResponse({ status: 401, type: ApiErrorResponseDto })
   @ApiResponse({ status: 403, type: ApiErrorResponseDto })
   @ApiResponse({ status: 404, type: ApiErrorResponseDto })
+  @ApiResponse({ status: 503, type: ApiErrorResponseDto })
   async getProfile(
     @Param('vendorId', new ParseUUIDPipe({ version: '4' })) vendorId: string,
   ): Promise<VendorResponseDto> {

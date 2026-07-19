@@ -432,6 +432,34 @@ void test('product owners search active vendors by status and page without dupli
   assert.equal(ids.length, 3);
 });
 
+void test('vendor search treats PostgreSQL pattern characters literally', async () => {
+  const token = randomUUID().replaceAll('-', '').slice(0, 8).toUpperCase();
+  const searches = [`PERCENT%${token}`, `UNDERSCORE_${token}`, `BACKSLASH\\${token}`];
+
+  for (const search of searches) {
+    const targetId = randomUUID();
+    const unrelatedId = randomUUID();
+    vendorIds.push(targetId, unrelatedId);
+    await ownerPool.query(
+      `INSERT INTO vendors
+         (id, code, legal_name, display_name, status, timezone, currency,
+          skip_cutoff_minutes, billing_day, updated_at)
+       VALUES
+         ($1, $2, 'Literal search target', 'Literal search target', 'suspended', 'Asia/Kolkata', 'INR', 0, 1, now()),
+         ($3, $4, 'Unrelated vendor', 'Unrelated vendor', 'suspended', 'Asia/Kolkata', 'INR', 0, 1, now())`,
+      [targetId, search, unrelatedId, `${search.replaceAll('%', 'X').replaceAll('_', 'X').replaceAll('\\', '')}`],
+    );
+
+    const response = await api(
+      `/v1/platform/vendors?status=suspended&search=${encodeURIComponent(search)}`,
+      productOwnerToken,
+    );
+    assert.equal(response.status, 200);
+    const body = (await response.json()) as { items: Array<{ id: string }> };
+    assert.deepEqual(body.items.map(({ id }) => id), [targetId]);
+  }
+});
+
 void test('vendor search rejects blank and overlong values', async () => {
   await expectError(
     await api('/v1/platform/vendors?search=%20%20%20', productOwnerToken),

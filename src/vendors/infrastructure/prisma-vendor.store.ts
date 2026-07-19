@@ -76,17 +76,18 @@ export class PrismaVendorStore {
     status?: VendorStatus;
     search?: string;
   }>): Promise<Readonly<{ items: readonly VendorRecord[]; next?: CursorValue }>> {
+    const search = input.search?.replace(/[\\%_]/g, '\\$&');
     const rows = await this.prisma.vendor.findMany({
       where: {
         deletedAt: null,
         ...(input.status === undefined ? {} : { status: input.status }),
-        ...(input.search === undefined
+        ...(search === undefined
           ? {}
           : {
               OR: [
-                { code: { contains: input.search, mode: 'insensitive' } },
-                { legalName: { contains: input.search, mode: 'insensitive' } },
-                { displayName: { contains: input.search, mode: 'insensitive' } },
+                { code: { contains: search, mode: 'insensitive' } },
+                { legalName: { contains: search, mode: 'insensitive' } },
+                { displayName: { contains: search, mode: 'insensitive' } },
               ],
             }),
         ...(input.cursor === undefined
