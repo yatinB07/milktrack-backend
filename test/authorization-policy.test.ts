@@ -99,7 +99,15 @@ void test('vendor roles allow exactly the reviewed permission matrix', () => {
     forbidden,
   );
   assert.throws(
+    () => requireVendorPermission('delivery_agent', 'vendor:profile:read'),
+    forbidden,
+  );
+  assert.throws(
     () => requireVendorPermission('customer', 'audit:read'),
+    forbidden,
+  );
+  assert.throws(
+    () => requireVendorPermission('customer', 'vendor:profile:read'),
     forbidden,
   );
 });

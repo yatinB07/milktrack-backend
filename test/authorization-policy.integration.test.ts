@@ -263,8 +263,9 @@ void test('vendor profile access is limited to active owner and administrator me
     randomUUID(),
     randomUUID(),
     randomUUID(),
+    randomUUID(),
   ];
-  const userIds = Array.from({ length: 10 }, randomUUID);
+  const userIds = Array.from({ length: 11 }, randomUUID);
   const prisma = new PrismaService();
   const runner = new PrismaTenantTransactionRunner(prisma);
   const policy = new PrismaAuthorizationPolicy(new PrismaAuditWriter());
@@ -276,6 +277,7 @@ void test('vendor profile access is limited to active owner and administrator me
     insertVendor(vendorIds[3], 'suspended'),
     insertVendor(vendorIds[4], 'closed'),
     insertVendor(vendorIds[5], 'active', true),
+    insertVendor(vendorIds[6], 'pending_approval'),
   ]);
   for (const [index, vendorId] of vendorIds.entries()) {
     await insertMembership({
@@ -312,10 +314,10 @@ void test('vendor profile access is limited to active owner and administrator me
       );
     }
     for (const denied of [
-      { userId: userIds[6], role: 'delivery_agent' as const },
-      { userId: userIds[7], role: 'customer' as const },
-      { userId: userIds[8], role: 'vendor_owner' as const, status: 'ended' as const },
-      { userId: userIds[9], role: 'vendor_owner' as const, deleted: true },
+      { userId: userIds[7], role: 'delivery_agent' as const },
+      { userId: userIds[8], role: 'customer' as const },
+      { userId: userIds[9], role: 'vendor_owner' as const, status: 'ended' as const },
+      { userId: userIds[10], role: 'vendor_owner' as const, deleted: true },
     ]) {
       await insertMembership({
         vendorId: vendorIds[2],

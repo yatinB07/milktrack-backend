@@ -137,7 +137,13 @@ async function seedVendorActor(input: Readonly<{
 }
 
 async function insertVendorProfileFixture(
-  status: 'onboarding' | 'trial' | 'active' | 'suspended' | 'closed' = 'active',
+  status:
+    | 'pending_approval'
+    | 'onboarding'
+    | 'trial'
+    | 'active'
+    | 'suspended'
+    | 'closed' = 'active',
   deleted = false,
 ): Promise<string> {
   const id = randomUUID();
@@ -361,6 +367,7 @@ void test('vendor profiles are tenant-safe, lifecycle-gated, and expose only the
     );
   }
   for (const [status, deleted] of [
+    ['pending_approval', false],
     ['suspended', false],
     ['closed', false],
     ['active', true],
