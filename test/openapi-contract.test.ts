@@ -22,13 +22,14 @@ const phaseOneOperations = {
   '/v1/platform/vendors': ['get', 'post'],
   '/v1/platform/vendors/{id}': ['get'],
   '/v1/platform/vendors/{id}/transitions': ['post'],
-  '/v1/platform/vendors/{vendorId}/owners/initial': ['post'],
+  '/v1/platform/vendors/{vendorId}/owners/initial': ['get', 'post'],
   '/v1/platform/vendors/{vendorId}/owners/enrollments/{enrollmentId}/retry': ['post'],
   '/v1/vendors/{vendorId}/audit-events': ['get'],
   '/v1/vendors/{vendorId}/memberships': ['get', 'post'],
   '/v1/vendors/{vendorId}/memberships/{id}': ['delete', 'patch'],
   '/v1/vendors/{vendorId}/memberships/{id}/end': ['post'],
   '/v1/vendors/{vendorId}/memberships/{id}/restore': ['post'],
+  '/v1/vendors/{vendorId}/profile': ['get'],
 } as const;
 
 const bodyOperations = new Set([
@@ -64,6 +65,7 @@ const protectedOperations = new Set([
   'post /v1/platform/vendors',
   'get /v1/platform/vendors/{id}',
   'post /v1/platform/vendors/{id}/transitions',
+  'get /v1/platform/vendors/{vendorId}/owners/initial',
   'post /v1/platform/vendors/{vendorId}/owners/initial',
   'post /v1/platform/vendors/{vendorId}/owners/enrollments/{enrollmentId}/retry',
   'get /v1/vendors/{vendorId}/audit-events',
@@ -73,6 +75,7 @@ const protectedOperations = new Set([
   'patch /v1/vendors/{vendorId}/memberships/{id}',
   'post /v1/vendors/{vendorId}/memberships/{id}/end',
   'post /v1/vendors/{vendorId}/memberships/{id}/restore',
+  'get /v1/vendors/{vendorId}/profile',
 ]);
 
 const anonymousOperations = new Set([
@@ -94,6 +97,11 @@ function responseHasSchema(response: unknown): boolean {
   const content = object(response, 'response must be an object').content;
   if (content === undefined) return false;
   return object(object(content, 'response content must be an object')['application/json'], 'JSON response must be documented').schema !== undefined;
+}
+
+function responseSchema(response: unknown, message: string): JsonObject {
+  const content = object(object(response, message).content, `${message} content must be documented`);
+  return object(object(content['application/json'], `${message} must document JSON`).schema, `${message} schema must be documented`);
 }
 
 function assertPhaseOneSecurity(document: JsonObject): void {
@@ -186,11 +194,7 @@ void test('publishes the complete Phase 1 HTTP contract without persistence secr
     }
   }
 
-  for (const path of [
-    '/v1/platform/vendors',
-    '/v1/vendors/{vendorId}/audit-events',
-    '/v1/vendors/{vendorId}/memberships',
-  ]) {
+  for (const path of ['/v1/platform/vendors', '/v1/vendors/{vendorId}/audit-events', '/v1/vendors/{vendorId}/memberships']) {
     const operation = object(object(paths[path], `missing ${path}`).get, `missing GET ${path}`);
     const parameters = operation.parameters as JsonObject[];
     assert(Array.isArray(parameters), `GET ${path} must document query parameters`);
@@ -201,6 +205,15 @@ void test('publishes the complete Phase 1 HTTP contract without persistence secr
     assert.equal(schema.minimum, 1);
     assert.equal(schema.maximum, 100);
   }
+
+  const vendorList = object(object(paths['/v1/platform/vendors'], 'vendor list path must exist').get, 'vendor list operation must exist');
+  const vendorSearch = (vendorList.parameters as JsonObject[]).find((parameter) => parameter.name === 'search');
+  assert(vendorSearch, 'GET /v1/platform/vendors must document search');
+  const vendorSearchSchema = object(vendorSearch.schema, 'GET /v1/platform/vendors search must have a schema');
+  assert.equal(vendorSearchSchema.type, 'string');
+  assert.equal(vendorSearchSchema.minLength, 1);
+  assert.equal(vendorSearchSchema.maxLength, 120);
+  assert.equal(vendorSearchSchema.pattern, '\\S');
 
   const components = object(document.components, 'OpenAPI components must be documented');
   const securitySchemes = object(components.securitySchemes, 'security schemes must be documented');
@@ -233,4 +246,85 @@ void test('publishes the complete Phase 1 HTTP contract without persistence secr
   assert.equal(object(vendorProperties.id, 'vendor id must be documented').format, 'uuid');
   assert.equal(object(vendorProperties.createdAt, 'createdAt must be documented').format, 'date-time');
   assert.equal(object(vendorProperties.updatedAt, 'updatedAt must be documented').format, 'date-time');
+  assert.deepEqual(
+    object(vendorProperties.allowedTransitions, 'allowedTransitions must be documented'),
+    {
+      items: {
+        enum: ['pending_approval', 'onboarding', 'trial', 'active', 'suspended', 'closed'],
+        type: 'string',
+      },
+      type: 'array',
+    },
+  );
+  assert.deepEqual(
+    object(schemas.VendorResponseDto, 'VendorResponseDto must be documented').required,
+    [
+      'id',
+      'status',
+      'allowedTransitions',
+      'createdAt',
+      'updatedAt',
+      'code',
+      'legalName',
+      'displayName',
+      'timezone',
+      'currency',
+      'skipCutoffMinutes',
+      'billingDay',
+      'version',
+    ],
+  );
+
+  const ownerOnboardingStatus = object(
+    object(schemas.VendorOwnerOnboardingStatusResponseDto, 'VendorOwnerOnboardingStatusResponseDto must be documented').properties,
+    'VendorOwnerOnboardingStatusResponseDto properties must be documented',
+  );
+  assert.deepEqual(object(ownerOnboardingStatus.state, 'owner onboarding state must be documented').enum, [
+    'not_started',
+    'invited',
+    'setup_started',
+    'completed',
+    'expired',
+    'retired',
+    'delivery_failed',
+  ]);
+  assert.deepEqual(
+    object(
+      schemas.VendorOwnerOnboardingStatusResponseDto,
+      'VendorOwnerOnboardingStatusResponseDto must be documented',
+    ).required,
+    ['vendorId', 'state'],
+  );
+
+  const ownerStatusResponses = object(
+    object(
+      object(paths['/v1/platform/vendors/{vendorId}/owners/initial'], 'owner onboarding path must exist').get,
+      'owner onboarding GET must exist',
+    ).responses,
+    'owner onboarding GET responses must be documented',
+  );
+  const ownerStatusSchema = responseSchema(
+    ownerStatusResponses['200'],
+    'owner onboarding GET success response',
+  );
+  assert.equal(ownerStatusSchema.$ref, '#/components/schemas/VendorOwnerOnboardingStatusResponseDto');
+
+  const vendorProfileResponses = object(
+    object(
+      object(paths['/v1/vendors/{vendorId}/profile'], 'vendor profile path must exist').get,
+      'vendor profile GET must exist',
+    ).responses,
+    'vendor profile GET responses must be documented',
+  );
+  const vendorProfileSchema = responseSchema(
+    vendorProfileResponses['200'],
+    'vendor profile GET success response',
+  );
+  assert.equal(vendorProfileSchema.$ref, '#/components/schemas/VendorResponseDto');
+
+  for (const secretProperty of ['passwordHash', 'codeHash', 'refreshTokenHash', 'encryptedSecret', 'setupTokenHash', 'completionTokenHash', 'totpSecretEncrypted']) {
+    for (const schema of Object.values(schemas)) {
+      assert(!(secretProperty in object(schema, 'OpenAPI schema must be an object')), `OpenAPI must not expose ${secretProperty}`);
+    }
+  }
 });

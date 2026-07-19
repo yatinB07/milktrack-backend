@@ -872,8 +872,66 @@
         ],
         "type": "object"
       },
+      "VendorOwnerOnboardingStatusResponseDto": {
+        "properties": {
+          "enrollmentId": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "expiresAt": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "membershipId": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "ownerDisplayName": {
+            "type": "string"
+          },
+          "ownerEmail": {
+            "format": "email",
+            "type": "string"
+          },
+          "state": {
+            "enum": [
+              "not_started",
+              "invited",
+              "setup_started",
+              "completed",
+              "expired",
+              "retired",
+              "delivery_failed"
+            ],
+            "type": "string"
+          },
+          "vendorId": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "vendorId",
+          "state"
+        ],
+        "type": "object"
+      },
       "VendorResponseDto": {
         "properties": {
+          "allowedTransitions": {
+            "items": {
+              "enum": [
+                "pending_approval",
+                "onboarding",
+                "trial",
+                "active",
+                "suspended",
+                "closed"
+              ],
+              "type": "string"
+            },
+            "type": "array"
+          },
           "billingDay": {
             "type": "number"
           },
@@ -925,6 +983,7 @@
         "required": [
           "id",
           "status",
+          "allowedTransitions",
           "createdAt",
           "updatedAt",
           "code",
@@ -1834,6 +1893,17 @@
           },
           {
             "in": "query",
+            "name": "search",
+            "required": false,
+            "schema": {
+              "maxLength": 120,
+              "minLength": 1,
+              "pattern": "\\S",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
             "name": "cursor",
             "required": false,
             "schema": {
@@ -2255,6 +2325,99 @@
       }
     },
     "/v1/platform/vendors/{vendorId}/owners/initial": {
+      "get": {
+        "operationId": "VendorOwnerOnboardingController_status",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "vendorId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VendorOwnerOnboardingStatusResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "opaqueBearer": []
+          }
+        ],
+        "tags": [
+          "Platform vendor owners"
+        ]
+      },
       "post": {
         "operationId": "VendorOwnerOnboardingController_establish",
         "parameters": [
@@ -3080,6 +3243,82 @@
         ],
         "tags": [
           "Vendor memberships"
+        ]
+      }
+    },
+    "/v1/vendors/{vendorId}/profile": {
+      "get": {
+        "operationId": "VendorProfileController_getProfile",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "vendorId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VendorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "opaqueBearer": []
+          }
+        ],
+        "summary": "Get the current vendor profile",
+        "tags": [
+          "Vendor profile"
         ]
       }
     }
