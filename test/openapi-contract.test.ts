@@ -234,7 +234,16 @@ void test('publishes the complete Phase 1 HTTP contract without persistence secr
   }
 
   const normalized = serialized.replaceAll(/[^a-z0-9]/gi, '').toLowerCase();
-  for (const forbidden of ['passwordHash', 'codeHash', 'refreshTokenHash', 'encryptedSecret', 'Prisma']) {
+  for (const forbidden of [
+    'passwordHash',
+    'codeHash',
+    'refreshTokenHash',
+    'encryptedSecret',
+    'setupTokenHash',
+    'completionTokenHash',
+    'totpSecretEncrypted',
+    'Prisma',
+  ]) {
     assert(!normalized.includes(forbidden.toLowerCase()), `OpenAPI must not expose ${forbidden}`);
   }
 
@@ -296,11 +305,13 @@ void test('publishes the complete Phase 1 HTTP contract without persistence secr
     ['vendorId', 'state'],
   );
 
+  const ownerStatusOperation = object(
+    object(paths['/v1/platform/vendors/{vendorId}/owners/initial'], 'owner onboarding path must exist').get,
+    'owner onboarding GET must exist',
+  );
+  assert.equal(ownerStatusOperation.requestBody, undefined, 'owner onboarding GET must not document a request body');
   const ownerStatusResponses = object(
-    object(
-      object(paths['/v1/platform/vendors/{vendorId}/owners/initial'], 'owner onboarding path must exist').get,
-      'owner onboarding GET must exist',
-    ).responses,
+    ownerStatusOperation.responses,
     'owner onboarding GET responses must be documented',
   );
   const ownerStatusSchema = responseSchema(
@@ -309,11 +320,13 @@ void test('publishes the complete Phase 1 HTTP contract without persistence secr
   );
   assert.equal(ownerStatusSchema.$ref, '#/components/schemas/VendorOwnerOnboardingStatusResponseDto');
 
+  const vendorProfileOperation = object(
+    object(paths['/v1/vendors/{vendorId}/profile'], 'vendor profile path must exist').get,
+    'vendor profile GET must exist',
+  );
+  assert.equal(vendorProfileOperation.requestBody, undefined, 'vendor profile GET must not document a request body');
   const vendorProfileResponses = object(
-    object(
-      object(paths['/v1/vendors/{vendorId}/profile'], 'vendor profile path must exist').get,
-      'vendor profile GET must exist',
-    ).responses,
+    vendorProfileOperation.responses,
     'vendor profile GET responses must be documented',
   );
   const vendorProfileSchema = responseSchema(
@@ -322,9 +335,17 @@ void test('publishes the complete Phase 1 HTTP contract without persistence secr
   );
   assert.equal(vendorProfileSchema.$ref, '#/components/schemas/VendorResponseDto');
 
-  for (const secretProperty of ['passwordHash', 'codeHash', 'refreshTokenHash', 'encryptedSecret', 'setupTokenHash', 'completionTokenHash', 'totpSecretEncrypted']) {
-    for (const schema of Object.values(schemas)) {
-      assert(!(secretProperty in object(schema, 'OpenAPI schema must be an object')), `OpenAPI must not expose ${secretProperty}`);
+  for (const [name, responses] of [
+    ['owner onboarding GET', ownerStatusResponses],
+    ['vendor profile GET', vendorProfileResponses],
+  ] as const) {
+    for (const [status, response] of Object.entries(responses)) {
+      if (/^[45]/.test(status)) {
+        assert.equal(
+          responseSchema(response, `${name} ${status} response`).$ref,
+          '#/components/schemas/ApiErrorResponseDto',
+        );
+      }
     }
   }
 });
