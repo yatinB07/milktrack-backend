@@ -41,7 +41,7 @@ services:
       OTP_PROVIDER: ${OTP_PROVIDER:-local}
       TRUST_PROXY_CIDRS: ${TRUST_PROXY_CIDRS:-}
     ports:
-      - "${BACKEND_PORT:-3000}:3000"
+      - "3000:3000"
     depends_on:
       migrate:
         condition: service_completed_successfully

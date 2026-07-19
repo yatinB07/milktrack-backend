@@ -61,6 +61,11 @@ printf '%s\n' "$migrate" | grep -q '^      postgres:$'
 printf '%s\n' "$migrate" | grep -q 'condition: service_healthy$'
 
 backend="$(service_block backend)"
+printf '%s\n' "$backend" | grep -q 'published: "3000"'
+if grep -q 'BACKEND_PORT' compose.yaml; then
+  echo 'backend port must be fixed at 3000' >&2
+  exit 1
+fi
 printf '%s\n' "$backend" | grep -q '^      migrate:$'
 printf '%s\n' "$backend" | grep -q 'condition: service_completed_successfully$'
 printf '%s\n' "$backend" | grep -q 'http://127.0.0.1:3000/v1/health'
