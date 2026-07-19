@@ -26,6 +26,10 @@ separate production values through the deployment platform. In particular:
   generated, canonical Base64 encoding of exactly 32 bytes.
 - `SESSION_TTL_SECONDS` controls the expiry of each issued refresh session; a
   successful refresh creates a new session with a new expiry.
+- `TRUST_PROXY_CIDRS` is empty for direct local access. Production deployments
+  set a comma-separated list of reviewed proxy or ingress IP addresses/CIDRs;
+  catch-all `/0` networks are rejected. The ingress must strip or overwrite
+  forwarding headers from clients, and topology changes require allowlist review.
 - `OTP_PROVIDER=local` is permitted only when `APP_ENV` is `development` or
   `test`. It serves both phone OTP and owner-enrollment delivery. A real provider
   adapter and injected provider credentials are required before a production

@@ -39,6 +39,7 @@ services:
       SESSION_TTL_SECONDS: ${SESSION_TTL_SECONDS:-2592000}
       APP_ENV: ${APP_ENV:-development}
       OTP_PROVIDER: ${OTP_PROVIDER:-local}
+      TRUST_PROXY_CIDRS: ${TRUST_PROXY_CIDRS:-}
     ports:
       - "${BACKEND_PORT:-3000}:3000"
     depends_on:

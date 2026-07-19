@@ -120,6 +120,7 @@ void test('committed local authentication keys decode to exactly 32 bytes', asyn
 
   assert.equal(Buffer.from(values.AUTH_HMAC_KEY, 'base64').length, 32);
   assert.equal(Buffer.from(values.MFA_ENCRYPTION_KEY, 'base64').length, 32);
+  assert.equal(values.TRUST_PROXY_CIDRS, '');
 });
 
 void test('authentication environment rejects missing, malformed, non-canonical, and wrong-length keys', () => {
@@ -169,6 +170,8 @@ void test('Compose passes authentication configuration to backend and integratio
   const dockerfile = await readFile(new URL('../Dockerfile', import.meta.url), 'utf8');
   const backend = compose.match(/ {2}backend:\n([\s\S]*?)\n {2}integration:/)?.[1] ?? '';
   const integration = compose.match(/ {2}integration:\n([\s\S]*?)\nvolumes:/)?.[1] ?? '';
+  const postgres = compose.match(/ {2}postgres:\n([\s\S]*?)\n {2}migrate:/)?.[1] ?? '';
+  const migrate = compose.match(/ {2}migrate:\n([\s\S]*?)\n {2}backend:/)?.[1] ?? '';
 
   for (const service of [backend, integration]) {
     assert.match(service, /AUTH_HMAC_KEY:/);
@@ -176,6 +179,10 @@ void test('Compose passes authentication configuration to backend and integratio
     assert.match(service, /SESSION_TTL_SECONDS:/);
     assert.match(service, /APP_ENV:/);
     assert.match(service, /OTP_PROVIDER:/);
+  }
+  assert.match(backend, /TRUST_PROXY_CIDRS:/);
+  for (const service of [postgres, migrate, integration]) {
+    assert.doesNotMatch(service, /TRUST_PROXY_CIDRS:/);
   }
   assert.doesNotMatch(dockerfile, /AUTH_HMAC_KEY|MFA_ENCRYPTION_KEY/);
 });

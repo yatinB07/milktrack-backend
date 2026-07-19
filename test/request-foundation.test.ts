@@ -12,7 +12,10 @@ import {
 } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 
-import { configureApp } from '../src/bootstrap/configure-app.js';
+import {
+  configureApp,
+  parseTrustedProxyCidrs,
+} from '../src/bootstrap/configure-app.js';
 import {
   type Actor,
   RequestContextStore,
@@ -37,6 +40,11 @@ class RequestFoundationTestController {
     return { correlationId: context.correlationId, hasActor: Boolean(context.actor) };
   }
 
+  @Get('ip-hash')
+  getIpHash(): { ipHash?: string } {
+    return { ipHash: this.context.require().ipHash };
+  }
+
   @Get('application-error')
   throwApplicationError(): never {
     throw new ApplicationError('EXPECTED_ERROR', 'Expected message', 409, true, 3);
@@ -53,6 +61,42 @@ class RequestFoundationTestController {
   providers: [{ provide: RequestContextStore, useValue: requestContextStore }],
 })
 class RequestFoundationTestModule {}
+
+async function fetchIpHash(baseUrl: string, forwardedFor: string): Promise<string> {
+  const response = await fetch(`${baseUrl}/ip-hash`, {
+    headers: { 'x-forwarded-for': forwardedFor },
+  });
+  const serialized = await response.text();
+  assert.doesNotMatch(serialized, /203\.0\.113\.10|198\.51\.100\.20/);
+  const body = JSON.parse(serialized) as { ipHash?: string };
+  assert.match(body.ipHash ?? '', /^[0-9a-f]{64}$/);
+  return body.ipHash!;
+}
+
+void test('trusted proxy configuration fails closed and accepts only IP CIDRs', () => {
+  assert.deepEqual(parseTrustedProxyCidrs(undefined), []);
+  assert.deepEqual(parseTrustedProxyCidrs('  '), []);
+  assert.deepEqual(
+    parseTrustedProxyCidrs('10.0.0.0/8, 192.0.2.16/28, 2001:db8:1234::/48'),
+    ['10.0.0.0/8', '192.0.2.16/28', '2001:db8:1234::/48'],
+  );
+  assert.deepEqual(parseTrustedProxyCidrs('127.0.0.1, 2001:db8::1'), [
+    '127.0.0.1',
+    '2001:db8::1',
+  ]);
+  for (const value of [
+    '127.0.0.1,',
+    'loopback',
+    '1',
+    '0.0.0.0/0',
+    '::/0',
+    '10.0.0.0/33',
+    '2001:db8::/129',
+    'not-an-address',
+  ]) {
+    assert.throws(() => parseTrustedProxyCidrs(value), /TRUST_PROXY_CIDRS/);
+  }
+});
 
 void test('cursor round-trips timestamp/id and rejects tampering or limit > 100', () => {
   const codec = new CursorCodec();
@@ -184,6 +228,13 @@ void describe('request middleware and application error filter', () => {
     assert.notEqual(correlationId, 'broken');
   });
 
+  void it('ignores forwarded client addresses when the socket peer is untrusted', async () => {
+    const first = await fetchIpHash(baseUrl, '203.0.113.10');
+    const second = await fetchIpHash(baseUrl, '198.51.100.20');
+
+    assert.equal(first, second);
+  });
+
   void it('maps application errors with the request correlation ID', async () => {
     const response = await fetch(`${baseUrl}/application-error`, {
       headers: { 'x-correlation-id': inboundCorrelationId },
@@ -228,4 +279,22 @@ void describe('request middleware and application error filter', () => {
     assert.equal(calls[0]?.length, 1);
     assert.doesNotMatch(JSON.stringify(calls), /sensitive internal detail|stack/i);
   });
+});
+
+void test('trusted proxy CIDRs preserve distinct client rate-limit identities', async () => {
+  const app = await NestFactory.create(RequestFoundationTestModule, { logger: false });
+  configureApp(app, authHmacKey, ['127.0.0.0/8', '::1/128']);
+  await app.listen(0, '127.0.0.1');
+
+  try {
+    const address = (app.getHttpServer() as Server).address();
+    assert.ok(address && typeof address !== 'string');
+    const baseUrl = `http://127.0.0.1:${address.port}/v1/request-foundation-test`;
+    const first = await fetchIpHash(baseUrl, '203.0.113.10');
+    const second = await fetchIpHash(baseUrl, '198.51.100.20');
+
+    assert.notEqual(first, second);
+  } finally {
+    await app.close();
+  }
 });

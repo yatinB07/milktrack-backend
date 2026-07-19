@@ -70,6 +70,13 @@ used through another concurrent challenge. Revoking an active TOTP factor
 atomically revokes the user's administrator-MFA sessions through a database
 trigger, and session authentication also rejects a missing active factor.
 
+Express resolves the request IP from the socket unless the socket peer matches
+an explicitly configured proxy CIDR. Request context HMAC-protects only that
+resolved value before authentication throttling or audit uses it; application
+code never parses forwarding headers. Production ingress must strip or
+overwrite client-supplied forwarding headers, and any proxy-topology change
+requires review of the CIDR allowlist.
+
 An MFA-authenticated platform user with `user:manage` establishes the first
 vendor owner as an invited membership plus a 30-minute `owner_enrollments`
 record. The invited owner follows public one-time setup and completion handles,

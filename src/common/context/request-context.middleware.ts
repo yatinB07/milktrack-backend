@@ -9,7 +9,7 @@ const UUID_PATTERN =
 
 type RequestLike = Readonly<{
   headers: Readonly<Record<string, string | readonly string[] | undefined>>;
-  socket: Readonly<{ remoteAddress?: string }>;
+  ip?: string;
 }>;
 
 type ResponseLike = {
@@ -32,9 +32,8 @@ export class RequestContextMiddleware implements NestMiddleware {
         : randomUUID();
 
     response.setHeader('x-correlation-id', correlationId);
-    const remoteAddress = request.socket.remoteAddress;
-    const ipHash = remoteAddress
-      ? createHmac('sha256', this.authHmacKey).update(remoteAddress).digest('hex')
+    const ipHash = request.ip
+      ? createHmac('sha256', this.authHmacKey).update(request.ip).digest('hex')
       : undefined;
     this.context.run({ correlationId, ipHash }, next);
   }

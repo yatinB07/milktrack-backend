@@ -195,42 +195,28 @@ void test('ActorGuard returns the same stable 401 for missing, malformed, and re
   );
 });
 
-void test('request middleware hashes only the socket address and ignores client IP headers', () => {
+void test('request middleware hashes only the Express-resolved client IP', () => {
   const context = new RequestContextStore();
   const middleware = new RequestContextMiddleware(context, hmacKey);
-  const capture = (
-    remoteAddress: string,
-    headers: Readonly<Record<string, string>>,
-  ): string => {
-    let ipHash: string | undefined;
-    middleware.use(
-      { headers, socket: { remoteAddress } },
-      { setHeader: () => undefined },
-      () => {
-        ipHash = context.require().ipHash;
+  let ipHash: string | undefined;
+  middleware.use(
+    {
+      headers: {
+        'x-forwarded-for': '198.51.100.1',
+        'x-real-ip': '198.51.100.2',
+        'cf-connecting-ip': '198.51.100.3',
       },
-    );
-    assert.ok(ipHash);
-    return ipHash;
-  };
-
-  const first = capture('127.0.0.1', {
-    'x-forwarded-for': '203.0.113.1',
-    'x-real-ip': '203.0.113.2',
-    'cf-connecting-ip': '203.0.113.3',
-  });
-  const sameSocket = capture('127.0.0.1', {
-    'x-forwarded-for': '198.51.100.1',
-  });
-  const anotherSocket = capture('127.0.0.2', {
-    'x-forwarded-for': '203.0.113.1',
-  });
+      ip: '203.0.113.10',
+    },
+    { setHeader: () => undefined },
+    () => {
+      ipHash = context.require().ipHash;
+    },
+  );
 
   assert.equal(
-    first,
-    createHmac('sha256', hmacKey).update('127.0.0.1').digest('hex'),
+    ipHash,
+    createHmac('sha256', hmacKey).update('203.0.113.10').digest('hex'),
   );
-  assert.equal(sameSocket, first);
-  assert.notEqual(anotherSocket, first);
-  assert.doesNotMatch(JSON.stringify({ first, sameSocket, anotherSocket }), /127\.0\.0\./);
+  assert.doesNotMatch(ipHash ?? '', /203\.0\.113\.10|198\.51\.100\./);
 });

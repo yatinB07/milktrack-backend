@@ -33,6 +33,8 @@ All notable backend changes are recorded here.
 - Added administrator account/IP throttling, aggregate MFA attempt limits, TOTP
   counter replay rejection, and automatic administrator-session revocation when
   an MFA factor is revoked.
+- Preserved distinct client throttling identities behind explicitly allowlisted
+  proxies while rejecting spoofed forwarding headers from untrusted peers.
 - Added the restricted exact-handle owner-enrollment resolver; anonymous setup
   establishes tenant context without direct table access or an RLS bypass.
 - Added separate owner and restricted runtime database roles; the runtime role
