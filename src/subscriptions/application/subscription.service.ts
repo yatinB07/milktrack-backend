@@ -12,6 +12,7 @@ import { ApplicationError } from '../../common/errors/application.error.js';
 import { HouseholdService } from '../../customers/application/household.service.js';
 import { VendorService } from '../../vendors/application/vendor.service.js';
 import { ScheduleDateLock } from '../../schedule-coordination/application/schedule-date-lock.js';
+import { ScheduleRegenerationWriter } from '../../schedule-coordination/application/schedule-regeneration-writer.js';
 import { affectedScheduleDates, scheduleHorizon } from '../../schedule-coordination/application/schedule-horizon.js';
 import {
   deriveSubscriptionStatus,
@@ -72,6 +73,7 @@ export class DefaultSubscriptionService extends SubscriptionService {
     @Inject(VendorService) private readonly vendors: VendorService,
     @Inject(AuditWriter) private readonly audits: AuditWriter,
     @Inject(ScheduleDateLock) private readonly scheduleDates: ScheduleDateLock,
+    @Inject(ScheduleRegenerationWriter) private readonly regeneration?: ScheduleRegenerationWriter,
   ) { super(); }
 
   create(actor: Actor, vendorId: string, command: CreateSubscriptionCommand): Promise<SubscriptionResult> {
@@ -80,7 +82,8 @@ export class DefaultSubscriptionService extends SubscriptionService {
     if (!periodContainsServiceDay(period.effectiveFrom, period.effectiveTo, weekdays)) this.invalidDate();
     return this.execute(actor, vendorId, 'subscription:manage', 'subscription.create', async (tx) => {
       const today = await this.today(tx, vendorId); this.requireNotPast(period.effectiveFrom, today);
-      await this.scheduleDates.lock(tx, vendorId, affectedScheduleDates(today, period.effectiveFrom, period.effectiveTo, weekdays));
+      const dates = affectedScheduleDates(today, period.effectiveFrom, period.effectiveTo, weekdays);
+      await this.scheduleDates.lock(tx, vendorId, dates);
       await this.households.requireSubscriptionHousehold(tx, command.householdId);
       const selected = await this.catalog.requireSubscriptionSelection(tx, command.productId, command.unitId, command.deliverySlotId);
       const quantity = parseSubscriptionQuantity(command.quantity, selected.unitDecimalScale);
@@ -89,6 +92,7 @@ export class DefaultSubscriptionService extends SubscriptionService {
         deliverySlotId: command.deliverySlotId, quantity, weekdays, ...period, createdBy: actor.userId,
       });
       await this.audit(tx, actor, vendorId, created.id, 'subscription.created', created, undefined);
+      await this.regenerate(tx, vendorId, today, dates, actor.userId);
       return this.project(created, today);
     });
   }
@@ -123,26 +127,30 @@ export class DefaultSubscriptionService extends SubscriptionService {
     const reason = this.reason(command.reason);
     await this.execute(actor, vendorId, 'subscription:manage', 'subscription.delete', async (tx) => {
       const today = await this.today(tx, vendorId);
-      await this.scheduleDates.lock(tx, vendorId, scheduleHorizon(today));
+      const dates = scheduleHorizon(today);
+      await this.scheduleDates.lock(tx, vendorId, dates);
       const locked = await this.subscriptions.lockRoot(tx, subscriptionId, command.expectedVersion);
       const status = deriveSubscriptionStatus(this.currentPlan(locked), today);
       if (status !== 'cancelled' && status !== 'completed')
         throw new ApplicationError('SUBSCRIPTION_DELETE_REQUIRES_TERMINAL', 'Subscription must be terminal before deletion', 409);
       const deleted = await this.subscriptions.softDelete(tx, subscriptionId, command.expectedVersion, actor.userId, reason);
       await this.audit(tx, actor, vendorId, subscriptionId, 'subscription.deleted', deleted, reason, undefined, locked);
+      await this.regenerate(tx, vendorId, today, dates, actor.userId);
     });
   }
   restore(actor: Actor, vendorId: string, subscriptionId: string, command: SubscriptionVersionReason) {
     const reason = this.reason(command.reason);
     return this.execute(actor, vendorId, 'subscription:manage', 'subscription.restore', async (tx) => {
       const today = await this.today(tx, vendorId);
-      await this.scheduleDates.lock(tx, vendorId, scheduleHorizon(today));
+      const dates = scheduleHorizon(today);
+      await this.scheduleDates.lock(tx, vendorId, dates);
       const locked = await this.subscriptions.lockRoot(tx, subscriptionId, command.expectedVersion, true);
       const status = deriveSubscriptionStatus(this.currentPlan(locked), today);
       if (status !== 'cancelled' && status !== 'completed')
         throw new ApplicationError('SUBSCRIPTION_STATE_CONFLICT', 'Only terminal subscription history can be restored', 409);
       const restored = await this.subscriptions.restore(tx, subscriptionId, command.expectedVersion);
       await this.audit(tx, actor, vendorId, subscriptionId, 'subscription.restored', restored, reason, undefined, locked);
+      await this.regenerate(tx, vendorId, today, dates, actor.userId);
       return this.project(restored, today);
     });
   }
@@ -177,7 +185,8 @@ export class DefaultSubscriptionService extends SubscriptionService {
     const reason = this.reason(command.reason); parseSubscriptionPeriod(command.effectiveDate);
     return this.execute(actor, vendorId, 'subscription:manage', `subscription.${operation}`, async (tx) => {
       const today = await this.today(tx, vendorId); this.requireNotPast(command.effectiveDate, today);
-      await this.scheduleDates.lock(tx, vendorId, affectedScheduleDates(today, command.effectiveDate));
+      const dates = affectedScheduleDates(today, command.effectiveDate);
+      await this.scheduleDates.lock(tx, vendorId, dates);
       const locked = await this.subscriptions.lockForMutation(tx, subscriptionId, command.expectedVersion, command.effectiveDate);
       this.requireTransition(locked.selected.status, operation);
       let config = locked.selected;
@@ -206,6 +215,7 @@ export class DefaultSubscriptionService extends SubscriptionService {
       await this.audit(tx, actor, vendorId, subscriptionId, `subscription.${operation === 'modify' ? 'modified' : operation === 'pause' ? 'paused' : operation === 'resume' ? 'resumed' : 'cancelled'}`, changed, reason, {
         replacementRevisionId: changed.replacementRevisionId, supersededRevisionIds: changed.supersededRevisionIds,
       }, locked);
+      await this.regenerate(tx, vendorId, today, dates, actor.userId);
       return { ...this.project(changed, today), supersededRevisionCount: changed.supersededRevisionCount };
     });
   }
@@ -231,6 +241,9 @@ export class DefaultSubscriptionService extends SubscriptionService {
   }
   private requireNotPast(value: string, today: string) { if (value < today) this.invalidDate(); }
   private invalidDate(): never { throw new ApplicationError('INVALID_SUBSCRIPTION_DATE', 'Subscription date is invalid', 400); }
+  private regenerate(tx: TransactionContext, vendorId: string, today: string, dates: readonly string[], userId: string) {
+    return this.regeneration?.write(tx, vendorId, today, dates, userId);
+  }
   private reason(value: string) { const result = value.trim(); if (result.length < 1 || result.length > 500) throw new ApplicationError('INVALID_REASON', 'Reason must be between 1 and 500 characters', 400); return result; }
   private execute<T>(actor: Actor, vendorId: string, permission: 'subscription:read' | 'subscription:manage' | 'customer:self', operation: string, work: (tx: TransactionContext) => Promise<T>) { return this.authorization.execute({ actor, vendorId, permission, operation }, work); }
   private audit(tx: TransactionContext, actor: Actor, vendorId: string, id: string, action: string, value: SubscriptionAggregateRecord, reason?: string, mutation?: Readonly<{ replacementRevisionId: string; supersededRevisionIds: readonly string[] }>, before?: SubscriptionAggregateRecord) {

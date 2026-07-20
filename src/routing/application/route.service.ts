@@ -13,6 +13,7 @@ import { requestContextStore } from '../../common/context/request-context.js';
 import { ApplicationError } from '../../common/errors/application.error.js';
 import { VendorService } from '../../vendors/application/vendor.service.js';
 import { ScheduleDateLock } from '../../schedule-coordination/application/schedule-date-lock.js';
+import { ScheduleRegenerationWriter } from '../../schedule-coordination/application/schedule-regeneration-writer.js';
 import { affectedScheduleDates, scheduleHorizon } from '../../schedule-coordination/application/schedule-horizon.js';
 import { normalizeRouteCode, normalizeRouteName, normalizeRouteReason } from '../domain/route-rules.js';
 import { normalizeRouteAssignmentMutation, validateRouteAssignmentDate } from '../domain/route-assignment-rules.js';
@@ -57,6 +58,7 @@ export class DefaultRouteService extends RouteService {
     @Inject(VendorService) private readonly vendors: VendorService,
     @Inject(AuditWriter) private readonly audits: AuditWriter,
     @Inject(ScheduleDateLock) private readonly scheduleDates: ScheduleDateLock,
+    @Inject(ScheduleRegenerationWriter) private readonly regeneration?: ScheduleRegenerationWriter,
   ) { super(); }
 
   list(actor: Actor, vendorId: string, query: RoutePageQuery) {
@@ -86,7 +88,8 @@ export class DefaultRouteService extends RouteService {
     const reason = normalizeRouteReason(command.reason);
     await this.execute(actor, vendorId, 'route:manage', 'route.delete', async (tx) => {
       const today = await this.today(tx, vendorId);
-      await this.scheduleDates.lock(tx, vendorId, scheduleHorizon(today));
+      const dates = scheduleHorizon(today);
+      await this.scheduleDates.lock(tx, vendorId, dates);
       const route = await this.routes.lockRoot(tx, routeId, command.expectedVersion);
       if (route.status !== 'inactive')
         throw new ApplicationError('ROUTE_DELETE_REQUIRES_INACTIVE', 'Route must be inactive before deletion', 409);
@@ -96,15 +99,18 @@ export class DefaultRouteService extends RouteService {
         throw new ApplicationError('ROUTE_DELETE_REQUIRES_EMPTY', 'Route must have no current or future assignments before deletion', 409);
       const change = await this.routes.softDelete(tx, routeId, command.expectedVersion, actor.userId, reason);
       await this.audit(tx, actor, vendorId, routeId, 'route.deleted', change.before, change.after, reason);
+      await this.regenerate(tx, vendorId, today, dates, actor.userId);
     });
   }
   restore(actor: Actor, vendorId: string, routeId: string, command: RouteVersionReason) {
     const reason = normalizeRouteReason(command.reason);
     return this.execute(actor, vendorId, 'route:manage', 'route.restore', async (tx) => {
       const today = await this.today(tx, vendorId);
-      await this.scheduleDates.lock(tx, vendorId, scheduleHorizon(today));
+      const dates = scheduleHorizon(today);
+      await this.scheduleDates.lock(tx, vendorId, dates);
       const change = await this.routes.restore(tx, routeId, command.expectedVersion);
-      await this.audit(tx, actor, vendorId, routeId, 'route.restored', change.before, change.after, reason); return change.after;
+      await this.audit(tx, actor, vendorId, routeId, 'route.restored', change.before, change.after, reason);
+      await this.regenerate(tx, vendorId, today, dates, actor.userId); return change.after;
     });
   }
   listStops(actor: Actor, vendorId: string, routeId: string, query: RouteStopPageQuery) {
@@ -116,13 +122,15 @@ export class DefaultRouteService extends RouteService {
     return this.execute(actor, vendorId, 'route:manage', 'route.stops-replace', async (tx) => {
       const today = await this.today(tx, vendorId);
       const normalized = normalizeRouteStopReplacement(command.effectiveDate, command.householdIds, command.reason, today);
-      await this.scheduleDates.lock(tx, vendorId, affectedScheduleDates(today, normalized.effectiveDate));
+      const dates = affectedScheduleDates(today, normalized.effectiveDate);
+      await this.scheduleDates.lock(tx, vendorId, dates);
       const route = await this.routes.lockRoot(tx, routeId, command.expectedVersion);
       if (route.status !== 'active') throw new ApplicationError('ROUTE_STATE_CONFLICT', 'Route state does not allow stop replacement', 409);
       await this.catalog.requireRouteDeliverySlot(tx, route.deliverySlotId);
       if(normalized.householdIds.length>0) await this.households.requireRouteHouseholds(tx,[...normalized.householdIds].sort());
       const {projection,previous}=await this.stopPlans.replace(tx, { route, ...normalized, createdBy: actor.userId });
       await this.auditStops(tx,actor,vendorId,route,normalized.effectiveDate,normalized.householdIds,normalized.reason,previous,projection);
+      await this.regenerate(tx, vendorId, today, dates, actor.userId);
       return projection;
     });
   }
@@ -144,7 +152,7 @@ export class DefaultRouteService extends RouteService {
         command.reason,
         today,
       );
-      await this.lockAssignmentDate(tx, vendorId, normalized.serviceDate, today);
+      const dates = await this.lockAssignmentDate(tx, vendorId, normalized.serviceDate, today);
       const route = await this.routes.lockRoot(tx, routeId, command.expectedVersion);
       if (route.status !== 'active') {
         throw new ApplicationError('ROUTE_STATE_CONFLICT', 'Route state does not allow assignment', 409);
@@ -161,6 +169,7 @@ export class DefaultRouteService extends RouteService {
         ? 'route_assignment.assigned'
         : 'route_assignment.reassigned';
       await this.auditAssignment(tx, actor, vendorId, route, result, action, normalized.reason);
+      await this.regenerate(tx, vendorId, today, dates, actor.userId);
       return result;
     });
   }
@@ -173,7 +182,7 @@ export class DefaultRouteService extends RouteService {
         command.reason,
         today,
       );
-      await this.lockAssignmentDate(tx, vendorId, normalized.serviceDate, today);
+      const dates = await this.lockAssignmentDate(tx, vendorId, normalized.serviceDate, today);
       const route = await this.routes.lockRoot(tx, routeId, command.expectedVersion);
       const result = await this.assignments.cancel(tx, {
         route,
@@ -190,6 +199,7 @@ export class DefaultRouteService extends RouteService {
         'route_assignment.cancelled',
         normalized.reason,
       );
+      await this.regenerate(tx, vendorId, today, dates, actor.userId);
       return result;
     });
   }
@@ -209,12 +219,14 @@ export class DefaultRouteService extends RouteService {
     const reason = normalizeRouteReason(command.reason);
     return this.execute(actor, vendorId, 'route:manage', operation, async (tx) => {
       const today = await this.today(tx, vendorId);
-      await this.scheduleDates.lock(tx, vendorId, scheduleHorizon(today));
+      const dates = scheduleHorizon(today);
+      await this.scheduleDates.lock(tx, vendorId, dates);
       if (status === 'active') {
         const route = await this.routes.lockRoot(tx, routeId, command.expectedVersion); await this.catalog.requireRouteDeliverySlot(tx, route.deliverySlotId);
       }
       const change = await this.routes.changeStatus(tx, routeId, command.expectedVersion, status);
-      await this.audit(tx, actor, vendorId, routeId, action, change.before, change.after, reason); return change.after;
+      await this.audit(tx, actor, vendorId, routeId, action, change.before, change.after, reason);
+      await this.regenerate(tx, vendorId, today, dates, actor.userId); return change.after;
     });
   }
   private execute<T>(actor: Actor, vendorId: string, permission: 'route:read' | 'route:manage' | 'route:self', operation: string, work: (tx: TransactionContext) => Promise<T>) { return this.authorization.execute({ actor, vendorId, permission, operation }, work); }
@@ -226,7 +238,12 @@ export class DefaultRouteService extends RouteService {
   }
   private async lockAssignmentDate(tx: TransactionContext, vendorId: string, serviceDate: string, today: string) {
     const dates = scheduleHorizon(today);
-    if (dates.includes(serviceDate)) await this.scheduleDates.lock(tx, vendorId, [serviceDate]);
+    const affected = dates.includes(serviceDate) ? [serviceDate] : [];
+    if (affected.length > 0) await this.scheduleDates.lock(tx, vendorId, affected);
+    return affected;
+  }
+  private regenerate(tx: TransactionContext, vendorId: string, today: string, dates: readonly string[], userId: string) {
+    return this.regeneration?.write(tx, vendorId, today, dates, userId);
   }
   private auditStops(tx:TransactionContext,actor:Actor,vendorId:string,route:RouteRecord,effectiveDate:string,householdIds:readonly string[],reason:string,previous:RouteStopSnapshot,projection:RouteStopProjection) {
     const safe=(ids:readonly string[],value:RouteStopSnapshot|RouteStopProjection,version:number)=>({householdIds:[...ids],effectiveDate,...(value.startDate?{startDate:value.startDate}:{}),...(value.endDate?{endDate:value.endDate}:{}),deliverySlotId:route.deliverySlotId,routeStatus:route.status,routeVersion:version});
