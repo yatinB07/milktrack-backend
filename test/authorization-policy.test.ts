@@ -37,12 +37,16 @@ const vendor = {
     'membership:manage',
     'audit:read',
     'vendor:profile:read',
+    'household:read',
+    'household:manage',
   ],
   vendor_administrator: [
     'membership:read',
     'membership:manage',
     'audit:read',
     'vendor:profile:read',
+    'household:read',
+    'household:manage',
   ],
   delivery_agent: ['delivery:read', 'delivery:record'],
   customer: ['customer:self'],
@@ -110,6 +114,11 @@ void test('vendor roles allow exactly the reviewed permission matrix', () => {
     () => requireVendorPermission('customer', 'vendor:profile:read'),
     forbidden,
   );
+  assert.doesNotThrow(() => requireVendorPermission('vendor_owner', 'household:manage'));
+  assert.doesNotThrow(() => requireVendorPermission('vendor_administrator', 'household:read'));
+  assert.doesNotThrow(() => requireVendorPermission('customer', 'customer:self'));
+  assert.throws(() => requireVendorPermission('delivery_agent', 'household:read'), forbidden);
+  assert.throws(() => requireVendorPermission('customer', 'household:manage'), forbidden);
 });
 
 void test('vendor policy grants access when any active membership role permits it', async () => {

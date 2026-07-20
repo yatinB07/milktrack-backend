@@ -33,7 +33,24 @@ export type MembershipPage = Readonly<{
   nextCursor?: string;
 }>;
 
+export type CustomerMembershipSummary = Readonly<{
+  membershipId: string;
+  userId: string;
+  displayName?: string;
+  phone?: string;
+}>;
+
 export abstract class MembershipService {
+  abstract requireActiveCustomerMembership(
+    tx: TransactionContext,
+    vendorId: string,
+    membershipId: string,
+  ): Promise<CustomerMembershipSummary>;
+  abstract customerMembershipHistory(
+    tx: TransactionContext,
+    vendorId: string,
+    membershipIds: readonly string[],
+  ): Promise<readonly CustomerMembershipSummary[]>;
   abstract list(
     actor: Actor,
     vendorId: string,
@@ -118,6 +135,22 @@ export class PrismaMembershipService extends MembershipService {
     private readonly audits: AuditWriter,
   ) {
     super();
+  }
+
+  requireActiveCustomerMembership(
+    tx: TransactionContext,
+    vendorId: string,
+    membershipId: string,
+  ): Promise<CustomerMembershipSummary> {
+    return this.memberships.requireActiveCustomerMembership(tx, vendorId, membershipId);
+  }
+
+  customerMembershipHistory(
+    tx: TransactionContext,
+    vendorId: string,
+    membershipIds: readonly string[],
+  ): Promise<readonly CustomerMembershipSummary[]> {
+    return this.memberships.customerMembershipHistory(tx, vendorId, membershipIds);
   }
 
   list(

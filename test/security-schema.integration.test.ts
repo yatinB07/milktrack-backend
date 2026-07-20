@@ -10,7 +10,7 @@ const ownerPool = new pg.Pool({
 });
 test.after(() => Promise.all([pool.end(), ownerPool.end()]));
 
-void test('migrations 003 through 008 safely upgrade legacy data without resetting it', async () => {
+void test('migrations safely upgrade legacy data without resetting it', async () => {
   const schema = `migration_${randomUUID().replaceAll('-', '')}`;
   const migrationDirectories = [
     '202607180001_phase_1_security_foundation',
@@ -21,6 +21,9 @@ void test('migrations 003 through 008 safely upgrade legacy data without resetti
     '202607180006_align_vendor_cursor_precision',
     '202607180007_align_audit_cursor_precision',
     '202607180008_authentication_hardening',
+    '202607180009_align_membership_cursor_precision',
+    '202607180010_owner_enrollment',
+    '202607200001_households',
   ] as const;
   const migrations = await Promise.all(
     migrationDirectories.map((directory) =>
@@ -87,6 +90,9 @@ void test('migrations 003 through 008 safely upgrade legacy data without resetti
     );
     await client.query(migrations[6]);
     await client.query(migrations[7]);
+    await client.query(migrations[8]);
+    await client.query(migrations[9]);
+    await client.query(migrations[10]);
 
     const session = await client.query<{
       authentication_method: string;
@@ -158,6 +164,11 @@ void test('migrations 003 through 008 safely upgrade legacy data without resetti
       [factorId],
     );
     assert.deepEqual(migratedFactor.rows, [{ last_used_counter: '59479201' }]);
+
+    assert.equal(
+      (await client.query('SELECT id FROM vendors WHERE id = $1', [legacyVendorId])).rowCount,
+      1,
+    );
 
     const anonymousChallengeId = randomUUID();
     await client.query(

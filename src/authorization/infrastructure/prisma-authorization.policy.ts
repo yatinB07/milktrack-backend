@@ -44,9 +44,11 @@ export class PrismaAuthorizationPolicy extends AuthorizationPolicy {
     // Onboarding permits membership administration and a vendor's own profile;
     // other vendor operations remain unavailable until activation.
     const permittedVendorStatuses =
-      operation === 'vendor.profile.read' || operation.startsWith('membership.')
-      ? (['onboarding', 'trial', 'active'] as const)
-      : (['active'] as const);
+      operation === 'household.self-list'
+        ? (['trial', 'active'] as const)
+        : operation === 'vendor.profile.read' || operation.startsWith('membership.') || operation.startsWith('household.')
+          ? (['onboarding', 'trial', 'active'] as const)
+          : (['active'] as const);
 
     const [vendor, memberships] = await Promise.all([
       tx.vendor.findFirst({

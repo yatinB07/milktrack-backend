@@ -168,7 +168,16 @@ void test('security contract rejects bearer authentication on an anonymous opera
 void test('publishes the complete Phase 1 HTTP contract without persistence secrets', async () => {
   const { document, serialized } = await readDocument();
   const paths = object(document.paths, 'OpenAPI paths must be documented');
-  assert.deepEqual(Object.keys(paths).sort(), Object.keys(phaseOneOperations).sort());
+  const householdPaths = [
+    '/v1/vendors/{vendorId}/households',
+    '/v1/vendors/{vendorId}/households/{id}',
+    '/v1/vendors/{vendorId}/households/{id}/members',
+    '/v1/vendors/{vendorId}/households/{id}/members/{memberId}/end',
+    '/v1/vendors/{vendorId}/households/{id}/restore',
+    '/v1/customer/vendors/{vendorId}/households',
+  ];
+  for (const path of householdPaths) assert.ok(paths[path], `missing ${path}`);
+  assert.deepEqual(Object.keys(paths).sort(), [...Object.keys(phaseOneOperations), ...householdPaths].sort());
 
   for (const [path, methods] of Object.entries(phaseOneOperations)) {
     const pathItem = object(paths[path], `missing OpenAPI path ${path}`);
@@ -352,5 +361,270 @@ void test('publishes the complete Phase 1 HTTP contract without persistence secr
         );
       }
     }
+  }
+});
+
+void test('publishes the complete additive household contract', async () => {
+  const { document } = await readDocument();
+  const paths = object(document.paths, 'OpenAPI paths must be documented');
+  const operations = [
+    {
+      method: 'get',
+      path: '/v1/vendors/{vendorId}/households',
+      success: '200',
+      response: 'HouseholdListResponseDto',
+      query: true,
+    },
+    {
+      method: 'post',
+      path: '/v1/vendors/{vendorId}/households',
+      success: '201',
+      response: 'HouseholdResponseDto',
+      body: 'CreateHouseholdRequestDto',
+    },
+    {
+      method: 'get',
+      path: '/v1/vendors/{vendorId}/households/{id}',
+      success: '200',
+      response: 'HouseholdResponseDto',
+    },
+    {
+      method: 'patch',
+      path: '/v1/vendors/{vendorId}/households/{id}',
+      success: '200',
+      response: 'HouseholdResponseDto',
+      body: 'UpdateHouseholdRequestDto',
+    },
+    {
+      method: 'delete',
+      path: '/v1/vendors/{vendorId}/households/{id}',
+      success: '204',
+      body: 'VersionedReasonRequestDto',
+    },
+    {
+      method: 'post',
+      path: '/v1/vendors/{vendorId}/households/{id}/restore',
+      success: '200',
+      response: 'HouseholdResponseDto',
+      body: 'VersionedReasonRequestDto',
+    },
+    {
+      method: 'get',
+      path: '/v1/vendors/{vendorId}/households/{id}/members',
+      success: '200',
+      response: 'HouseholdMemberListResponseDto',
+      query: true,
+    },
+    {
+      method: 'post',
+      path: '/v1/vendors/{vendorId}/households/{id}/members',
+      success: '201',
+      response: 'HouseholdMemberResponseDto',
+      body: 'AttachHouseholdMemberRequestDto',
+    },
+    {
+      method: 'post',
+      path: '/v1/vendors/{vendorId}/households/{id}/members/{memberId}/end',
+      success: '200',
+      response: 'HouseholdMemberResponseDto',
+      body: 'EndHouseholdMemberRequestDto',
+    },
+    {
+      method: 'get',
+      path: '/v1/customer/vendors/{vendorId}/households',
+      success: '200',
+      response: 'CustomerHouseholdListResponseDto',
+      query: true,
+    },
+  ] as const;
+
+  for (const expected of operations) {
+    const label = `${expected.method.toUpperCase()} ${expected.path}`;
+    const operation = object(
+      object(paths[expected.path], `missing ${expected.path}`)[expected.method],
+      `missing ${label}`,
+    );
+    assert.deepEqual(
+      operation.security,
+      [{ opaqueBearer: [] }],
+      `${label} must require bearer authentication`,
+    );
+    const responses = object(
+      operation.responses,
+      `${label} must document responses`,
+    );
+    const success = object(
+      responses[expected.success],
+      `${label} must document ${expected.success}`,
+    );
+    if ('response' in expected) {
+      assert.equal(
+        responseSchema(success, `${label} success response`).$ref,
+        `#/components/schemas/${expected.response}`,
+      );
+    } else {
+      assert.equal(
+        success.content,
+        undefined,
+        `${label} 204 must not document a response body`,
+      );
+    }
+    for (const status of ['400', '401', '403', '404', '409', '503']) {
+      assert.equal(
+        responseSchema(responses[status], `${label} ${status} response`).$ref,
+        '#/components/schemas/ApiErrorResponseDto',
+      );
+    }
+    if ('body' in expected) {
+      const requestBody = object(
+        operation.requestBody,
+        `${label} must document its request body`,
+      );
+      const content = object(
+        requestBody.content,
+        `${label} request body must have content`,
+      );
+      assert.equal(
+        object(
+          object(content['application/json'], `${label} must accept JSON`)
+            .schema,
+          `${label} JSON body must have a schema`,
+        ).$ref,
+        `#/components/schemas/${expected.body}`,
+      );
+    } else {
+      assert.equal(
+        operation.requestBody,
+        undefined,
+        `${label} must not document a request body`,
+      );
+    }
+    if ('query' in expected) {
+      const parameters = operation.parameters as JsonObject[];
+      assert(
+        Array.isArray(parameters),
+        `${label} must document query parameters`,
+      );
+      const cursor = parameters.find(
+        (parameter) => parameter.name === 'cursor',
+      );
+      assert.equal(object(cursor, `${label} must document cursor`).in, 'query');
+      assert.equal(
+        object(
+          object(cursor, `${label} cursor`).schema,
+          `${label} cursor schema`,
+        ).type,
+        'string',
+      );
+      const limit = parameters.find((parameter) => parameter.name === 'limit');
+      const limitSchema = object(
+        object(limit, `${label} must document limit`).schema,
+        `${label} limit schema`,
+      );
+      assert.equal(limitSchema.default, 25);
+      assert.equal(limitSchema.minimum, 1);
+      assert.equal(limitSchema.maximum, 100);
+    }
+  }
+
+  const approvedMethods = new Map<string, string[]>();
+  for (const { method, path } of operations) {
+    approvedMethods.set(path, [...(approvedMethods.get(path) ?? []), method]);
+  }
+  for (const [path, methods] of approvedMethods) {
+    assert.deepEqual(
+      Object.keys(object(paths[path], `missing ${path}`)).sort(),
+      methods.sort(),
+    );
+  }
+
+  const schemas = object(
+    object(document.components, 'components must exist').schemas,
+    'schemas must exist',
+  );
+  const properties = (name: string) =>
+    object(
+      object(schemas[name], `${name} must be documented`).properties,
+      `${name} properties must be documented`,
+    );
+  const vendorHousehold = properties('HouseholdResponseDto');
+  const customerHousehold = properties('CustomerHouseholdResponseDto');
+  const member = properties('HouseholdMemberResponseDto');
+  assert.deepEqual(Object.keys(vendorHousehold).sort(), [
+    'accountNumber', 'addressLine1', 'addressLine2', 'city', 'countryCode',
+    'createdAt', 'id', 'latitude', 'locality', 'longitude', 'name', 'notes',
+    'postalCode', 'region', 'status', 'updatedAt', 'vendorId', 'version',
+  ]);
+  assert.deepEqual(Object.keys(customerHousehold).sort(), [
+    'accountNumber', 'addressLine1', 'addressLine2', 'city', 'countryCode',
+    'createdAt', 'id', 'latitude', 'locality', 'longitude', 'name',
+    'postalCode', 'region', 'status', 'updatedAt', 'vendorId', 'version',
+  ]);
+  assert.deepEqual(Object.keys(member).sort(), [
+    'createdAt', 'customerMembershipId', 'displayName', 'endedAt',
+    'householdId', 'id', 'joinedAt', 'phone', 'status', 'updatedAt', 'userId',
+  ]);
+  for (const field of ['id', 'vendorId']) {
+    assert.equal(object(vendorHousehold[field], `vendor household ${field}`).format, 'uuid');
+    assert.equal(object(customerHousehold[field], `customer household ${field}`).format, 'uuid');
+  }
+  for (const field of ['id', 'householdId', 'customerMembershipId', 'userId'])
+    assert.equal(object(member[field], `household member ${field}`).format, 'uuid');
+  for (const field of ['joinedAt', 'endedAt', 'createdAt', 'updatedAt'])
+    assert.equal(object(member[field], `household member ${field}`).format, 'date-time');
+  assert.deepEqual(object(vendorHousehold.status, 'vendor household status').enum, ['active', 'inactive']);
+  assert.deepEqual(object(customerHousehold.status, 'customer household status').enum, ['active', 'inactive']);
+  assert.deepEqual(object(member.status, 'household member status').enum, ['active', 'ended']);
+  assert.deepEqual(Object.keys(properties('HouseholdListResponseDto')).sort(), [
+    'items',
+    'nextCursor',
+  ]);
+  assert.deepEqual(
+    Object.keys(properties('CustomerHouseholdListResponseDto')).sort(),
+    ['items', 'nextCursor'],
+  );
+  assert.deepEqual(
+    Object.keys(properties('HouseholdMemberListResponseDto')).sort(),
+    ['items', 'nextCursor'],
+  );
+  assert.equal(
+    object(
+      object(
+        properties('HouseholdListResponseDto').items,
+        'vendor household items',
+      ).items,
+      'vendor household item schema',
+    ).$ref,
+    '#/components/schemas/HouseholdResponseDto',
+  );
+  assert.equal(
+    object(
+      object(
+        properties('CustomerHouseholdListResponseDto').items,
+        'customer household items',
+      ).items,
+      'customer household item schema',
+    ).$ref,
+    '#/components/schemas/CustomerHouseholdResponseDto',
+  );
+  for (const schemaName of [
+    'HouseholdResponseDto',
+    'CustomerHouseholdResponseDto',
+    'HouseholdMemberResponseDto',
+  ]) {
+    const fields = properties(schemaName);
+    for (const forbidden of [
+      'deletedAt',
+      'deletedBy',
+      'deletionReason',
+      'vendorMembership',
+      'identities',
+      'passwordHash',
+      'refreshTokenHash',
+    ])
+      assert(
+        !(forbidden in fields),
+        `${schemaName} must not expose ${forbidden}`,
+      );
   }
 });

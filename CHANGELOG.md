@@ -6,6 +6,9 @@ All notable backend changes are recorded here.
 
 ### Added
 
+- Added tenant-safe household and customer-membership management with forced RLS,
+  soft deletion, cursor pagination, optimistic versions, and audited mutations.
+
 - Added the production backend bootstrap, global DTO validation, stable error
   envelope, request correlation context, and versioned health contract.
 - Added phone OTP and administrator password/TOTP MFA sign-in, opaque access and

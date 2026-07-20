@@ -5,6 +5,7 @@ import { CursorCodec } from '../../common/cursor/cursor.js';
 import type { VendorRole } from '../../common/context/request-context.js';
 import { ApplicationError } from '../../common/errors/application.error.js';
 import { unwrapPrismaTransaction } from '../../database/infrastructure/prisma-transaction-context.js';
+import type { CustomerMembershipSummary } from '../application/membership.service.js';
 
 export type MembershipRecord = Readonly<{
   id: string;
@@ -55,6 +56,50 @@ function conflict(): ApplicationError {
 @Injectable()
 export class PrismaMembershipStore {
   private readonly cursors = new CursorCodec();
+
+  async requireActiveCustomerMembership(
+    context: TransactionContext,
+    vendorId: string,
+    membershipId: string,
+  ): Promise<CustomerMembershipSummary> {
+    const tx = unwrapPrismaTransaction(context);
+    const locked = await tx.$queryRaw<{ id: string }[]>`
+      SELECT id FROM vendor_memberships
+      WHERE id = ${membershipId}::uuid AND vendor_id = ${vendorId}::uuid
+      FOR UPDATE`;
+    if (locked.length === 0) {
+      throw new ApplicationError('CUSTOMER_MEMBERSHIP_NOT_FOUND', 'Customer membership was not found', 404);
+    }
+    const membership = await tx.vendorMembership.findFirst({
+      where: {
+        id: membershipId, vendorId, role: 'customer', status: 'active', endedAt: null, deletedAt: null,
+        user: { status: 'active', deletedAt: null, identities: { some: { type: 'phone', isPrimary: true, verifiedAt: { not: null } } } },
+      },
+      select: { id: true, userId: true, user: { select: { displayName: true, identities: { where: { type: 'phone', isPrimary: true, verifiedAt: { not: null } }, select: { normalizedValue: true }, take: 1 } } } },
+    });
+    if (!membership) {
+      throw new ApplicationError('CUSTOMER_MEMBERSHIP_NOT_FOUND', 'Customer membership was not found', 404);
+    }
+    const phone = membership.user.identities[0]?.normalizedValue;
+    return { membershipId: membership.id, userId: membership.userId, displayName: membership.user.displayName, ...(phone ? { phone } : {}) };
+  }
+
+  async customerMembershipHistory(
+    context: TransactionContext,
+    vendorId: string,
+    membershipIds: readonly string[],
+  ): Promise<readonly CustomerMembershipSummary[]> {
+    if (membershipIds.length === 0) return [];
+    const tx = unwrapPrismaTransaction(context);
+    const memberships = await tx.vendorMembership.findMany({
+      where: { vendorId, id: { in: [...membershipIds] } },
+      select: { id: true, userId: true, user: { select: { displayName: true, identities: { where: { type: 'phone', isPrimary: true, verifiedAt: { not: null } }, select: { normalizedValue: true }, take: 1 } } } },
+    });
+    return memberships.map((membership) => {
+      const phone = membership.user.identities[0]?.normalizedValue;
+      return { membershipId: membership.id, userId: membership.userId, ...(membership.user.displayName ? { displayName: membership.user.displayName } : {}), ...(phone ? { phone } : {}) };
+    });
+  }
 
   async listActive(
     context: TransactionContext,

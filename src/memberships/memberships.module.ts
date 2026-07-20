@@ -84,5 +84,6 @@ import {
     PrismaMembershipService,
     { provide: MembershipService, useExisting: PrismaMembershipService },
   ],
+  exports: [MembershipService],
 })
 export class MembershipsModule {}

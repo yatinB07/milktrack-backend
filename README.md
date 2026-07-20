@@ -195,6 +195,11 @@ dependency change, not an unversioned production pull.
 
 ## OpenAPI contract
 
+Household management is available under `/v1/vendors/{vendorId}/households`,
+with customer self reads under `/v1/customer/vendors/{vendorId}/households`.
+Use the existing Compose migration and integration commands after applying
+`202607200001_households`.
+
 The committed contract is `openapi/v1.json`. Regenerate it from the same Nest
 application and Swagger configuration used at runtime, then check for drift:
 

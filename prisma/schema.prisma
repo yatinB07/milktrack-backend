@@ -45,6 +45,16 @@ enum MembershipStatus {
   ended
 }
 
+enum HouseholdStatus {
+  active
+  inactive
+}
+
+enum HouseholdMemberStatus {
+  active
+  ended
+}
+
 enum PlatformRole {
   product_owner
   platform_administrator
@@ -221,6 +231,7 @@ model Vendor {
   supportGrants     SupportAccessGrant[]
   auditEvents       AuditEvent[]
   ownerEnrollments  OwnerEnrollment[]
+  households        Household[]
 
   @@map("vendors")
 }
@@ -241,10 +252,59 @@ model VendorMembership {
   vendor          Vendor           @relation(fields: [vendorId], references: [id])
   user            User             @relation(fields: [userId], references: [id])
   ownerEnrollment OwnerEnrollment?
+  householdMembers HouseholdMember[]
 
   @@unique([vendorId, id])
   @@index([vendorId, status, id])
   @@map("vendor_memberships")
+}
+
+model Household {
+  id             String          @id @db.Uuid
+  vendorId       String          @map("vendor_id") @db.Uuid
+  accountNumber  String          @map("account_number")
+  name           String
+  addressLine1   String          @map("address_line_1")
+  addressLine2   String?         @map("address_line_2")
+  locality       String?
+  city           String
+  region         String
+  postalCode     String          @map("postal_code")
+  countryCode    String          @map("country_code") @db.Char(2)
+  latitude       Decimal?        @db.Decimal(9, 6)
+  longitude      Decimal?        @db.Decimal(10, 6)
+  status         HouseholdStatus @default(active)
+  notes          String?
+  version        Int             @default(1)
+  deletedAt      DateTime?       @map("deleted_at") @db.Timestamptz(6)
+  deletedBy      String?         @map("deleted_by") @db.Uuid
+  deletionReason String?         @map("deletion_reason")
+  createdAt      DateTime        @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime        @updatedAt @map("updated_at") @db.Timestamptz(6)
+  vendor         Vendor          @relation(fields: [vendorId], references: [id])
+  members        HouseholdMember[]
+
+  @@unique([vendorId, id])
+  @@index([vendorId, createdAt, id])
+  @@map("households")
+}
+
+model HouseholdMember {
+  id                   String                @id @db.Uuid
+  vendorId             String                @map("vendor_id") @db.Uuid
+  householdId          String                @map("household_id") @db.Uuid
+  customerMembershipId String                @map("customer_membership_id") @db.Uuid
+  status               HouseholdMemberStatus @default(active)
+  joinedAt             DateTime              @map("joined_at") @db.Timestamptz(6)
+  endedAt              DateTime?             @map("ended_at") @db.Timestamptz(6)
+  createdAt            DateTime              @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt            DateTime              @updatedAt @map("updated_at") @db.Timestamptz(6)
+  household            Household             @relation(fields: [vendorId, householdId], references: [vendorId, id])
+  customerMembership   VendorMembership      @relation(fields: [vendorId, customerMembershipId], references: [vendorId, id])
+
+  @@unique([vendorId, id])
+  @@index([vendorId, householdId, createdAt, id])
+  @@map("household_members")
 }
 
 model OwnerEnrollment {

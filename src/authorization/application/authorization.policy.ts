@@ -13,6 +13,8 @@ export type VendorPermission =
   | 'vendor:profile:read'
   | 'membership:read'
   | 'membership:manage'
+  | 'household:read'
+  | 'household:manage'
   | 'audit:read'
   | 'delivery:read'
   | 'delivery:record'
@@ -36,12 +38,16 @@ const vendorPermissions: Readonly<Record<VendorRole, ReadonlySet<VendorPermissio
     'membership:read',
     'membership:manage',
     'audit:read',
+    'household:read',
+    'household:manage',
   ]),
   vendor_administrator: new Set([
     'vendor:profile:read',
     'membership:read',
     'membership:manage',
     'audit:read',
+    'household:read',
+    'household:manage',
   ]),
   delivery_agent: new Set(['delivery:read', 'delivery:record']),
   customer: new Set(['customer:self']),
@@ -56,6 +62,16 @@ const activeVendorOperations: Readonly<Record<string, VendorPermission>> = {
   'membership.delete': 'membership:manage',
   'membership.restore': 'membership:manage',
   'audit.list': 'audit:read',
+  'household.list': 'household:read',
+  'household.get': 'household:read',
+  'household.create': 'household:manage',
+  'household.update': 'household:manage',
+  'household.delete': 'household:manage',
+  'household.restore': 'household:manage',
+  'household.member-list': 'household:read',
+  'household.member-attach': 'household:manage',
+  'household.member-end': 'household:manage',
+  'household.self-list': 'customer:self',
 };
 
 export const hasPlatformPermission = (

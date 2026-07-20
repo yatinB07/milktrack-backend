@@ -212,6 +212,15 @@ or role-name changes therefore require a reviewed migration/operations change.
 
 ## OpenAPI boundary
 
+## Customers ownership
+
+`CustomersModule` owns tenant-scoped households and household-member links. Its
+application service consumes the Memberships boundary for customer eligibility,
+uses the tenant transaction executor for every operation, and writes audits in
+the same transaction. `households` is soft deleted and normal reads exclude
+deleted rows; `household_members` retains ended link history. Both tables use
+forced RLS and composite tenant foreign keys.
+
 All application API routes start at `/v1`; Swagger UI and JSON are served at
 `/openapi` and `/openapi.json`. Nest class DTOs validate structured input with
 transformation, whitelisting, and unknown-field rejection; explicit response
