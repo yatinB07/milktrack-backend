@@ -4,11 +4,11 @@ import { scheduleWorkerOptionsFromEnvironment } from './bootstrap/schedule-worke
 import { DatabaseModule } from './database/database.module.js';
 import { DefaultScheduleWorker } from './scheduling/application/default-schedule-worker.js';
 import { SCHEDULE_WORKER_OPTIONS, ScheduleWorker } from './scheduling/application/schedule-worker.js';
-import { SchedulingModule } from './scheduling/scheduling.module.js';
-import { VendorsModule } from './vendors/vendors.module.js';
+import { ScheduleGenerationModule } from './scheduling/schedule-generation.module.js';
+import { SchedulingVendorModule } from './vendors/scheduling-vendor.module.js';
 
 @Module({
-  imports: [DatabaseModule, SchedulingModule, VendorsModule],
+  imports: [DatabaseModule, ScheduleGenerationModule, SchedulingVendorModule],
   providers: [
     {
       provide: SCHEDULE_WORKER_OPTIONS,

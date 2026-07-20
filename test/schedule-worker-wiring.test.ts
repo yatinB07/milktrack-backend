@@ -24,11 +24,14 @@ const applicationEnvironment = {
 };
 
 async function withEnvironment<T>(
-  values: Readonly<Record<string, string>>,
+  values: Readonly<Record<string, string | undefined>>,
   operation: () => Promise<T>,
 ): Promise<T> {
   const previous = new Map(Object.keys(values).map((name) => [name, process.env[name]]));
-  Object.assign(process.env, values);
+  for (const [name, value] of Object.entries(values)) {
+    if (value === undefined) delete process.env[name];
+    else process.env[name] = value;
+  }
   try {
     return await operation();
   } finally {
@@ -41,7 +44,12 @@ async function withEnvironment<T>(
 
 void test('application context resolves the worker graph with parsed options and no HTTP server', async () => {
   await withEnvironment({
-    ...applicationEnvironment,
+    DATABASE_URL: applicationEnvironment.DATABASE_URL,
+    APP_ENV: undefined,
+    OTP_PROVIDER: undefined,
+    SESSION_TTL_SECONDS: undefined,
+    AUTH_HMAC_KEY: undefined,
+    MFA_ENCRYPTION_KEY: undefined,
     POLL_INTERVAL_MS: '750',
     CONCURRENCY: '7',
     HEARTBEAT_INTERVAL_MS: '20000',
@@ -70,7 +78,7 @@ void test('application context resolves the worker graph with parsed options and
 });
 
 void test('application context rejects invalid worker provider configuration', async () => {
-  await withEnvironment({ ...applicationEnvironment, CONCURRENCY: '0' }, () => assert.rejects(
+  await withEnvironment({ DATABASE_URL: applicationEnvironment.DATABASE_URL, CONCURRENCY: '0' }, () => assert.rejects(
     NestFactory.createApplicationContext(ScheduleWorkerModule, { abortOnError: false, logger: false }),
     /CONCURRENCY must be an integer between 1 and 32/,
   ));
