@@ -73,7 +73,7 @@ export class DefaultSubscriptionService extends SubscriptionService {
     @Inject(VendorService) private readonly vendors: VendorService,
     @Inject(AuditWriter) private readonly audits: AuditWriter,
     @Inject(ScheduleDateLock) private readonly scheduleDates: ScheduleDateLock,
-    @Inject(ScheduleRegenerationWriter) private readonly regeneration?: ScheduleRegenerationWriter,
+    @Inject(ScheduleRegenerationWriter) private readonly regeneration: ScheduleRegenerationWriter,
   ) { super(); }
 
   create(actor: Actor, vendorId: string, command: CreateSubscriptionCommand): Promise<SubscriptionResult> {
@@ -242,7 +242,7 @@ export class DefaultSubscriptionService extends SubscriptionService {
   private requireNotPast(value: string, today: string) { if (value < today) this.invalidDate(); }
   private invalidDate(): never { throw new ApplicationError('INVALID_SUBSCRIPTION_DATE', 'Subscription date is invalid', 400); }
   private regenerate(tx: TransactionContext, vendorId: string, today: string, dates: readonly string[], userId: string) {
-    return this.regeneration?.write(tx, vendorId, today, dates, userId);
+    return this.regeneration.write(tx, vendorId, today, dates, userId);
   }
   private reason(value: string) { const result = value.trim(); if (result.length < 1 || result.length > 500) throw new ApplicationError('INVALID_REASON', 'Reason must be between 1 and 500 characters', 400); return result; }
   private execute<T>(actor: Actor, vendorId: string, permission: 'subscription:read' | 'subscription:manage' | 'customer:self', operation: string, work: (tx: TransactionContext) => Promise<T>) { return this.authorization.execute({ actor, vendorId, permission, operation }, work); }

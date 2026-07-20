@@ -58,7 +58,7 @@ export class DefaultRouteService extends RouteService {
     @Inject(VendorService) private readonly vendors: VendorService,
     @Inject(AuditWriter) private readonly audits: AuditWriter,
     @Inject(ScheduleDateLock) private readonly scheduleDates: ScheduleDateLock,
-    @Inject(ScheduleRegenerationWriter) private readonly regeneration?: ScheduleRegenerationWriter,
+    @Inject(ScheduleRegenerationWriter) private readonly regeneration: ScheduleRegenerationWriter,
   ) { super(); }
 
   list(actor: Actor, vendorId: string, query: RoutePageQuery) {
@@ -243,7 +243,7 @@ export class DefaultRouteService extends RouteService {
     return affected;
   }
   private regenerate(tx: TransactionContext, vendorId: string, today: string, dates: readonly string[], userId: string) {
-    return this.regeneration?.write(tx, vendorId, today, dates, userId);
+    return this.regeneration.write(tx, vendorId, today, dates, userId);
   }
   private auditStops(tx:TransactionContext,actor:Actor,vendorId:string,route:RouteRecord,effectiveDate:string,householdIds:readonly string[],reason:string,previous:RouteStopSnapshot,projection:RouteStopProjection) {
     const safe=(ids:readonly string[],value:RouteStopSnapshot|RouteStopProjection,version:number)=>({householdIds:[...ids],effectiveDate,...(value.startDate?{startDate:value.startDate}:{}),...(value.endDate?{endDate:value.endDate}:{}),deliverySlotId:route.deliverySlotId,routeStatus:route.status,routeVersion:version});
