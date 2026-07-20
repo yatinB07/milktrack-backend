@@ -4,6 +4,7 @@ import test from 'node:test';
 import { NestFactory } from '@nestjs/core';
 
 import { AppModule } from '../src/app.module.js';
+import { ScheduleWorkerModule } from '../src/schedule-worker.module.js';
 import { DefaultScheduleWorker } from '../src/scheduling/application/default-schedule-worker.js';
 import {
   SCHEDULE_WORKER_OPTIONS,
@@ -46,7 +47,7 @@ void test('application context resolves the worker graph with parsed options and
     HEARTBEAT_INTERVAL_MS: '20000',
     SHUTDOWN_TIMEOUT_MS: '45000',
   }, async () => {
-    const app = await NestFactory.createApplicationContext(AppModule, {
+    const app = await NestFactory.createApplicationContext(ScheduleWorkerModule, {
       abortOnError: false,
       logger: false,
     });
@@ -70,7 +71,22 @@ void test('application context resolves the worker graph with parsed options and
 
 void test('application context rejects invalid worker provider configuration', async () => {
   await withEnvironment({ ...applicationEnvironment, CONCURRENCY: '0' }, () => assert.rejects(
-    NestFactory.createApplicationContext(AppModule, { abortOnError: false, logger: false }),
+    NestFactory.createApplicationContext(ScheduleWorkerModule, { abortOnError: false, logger: false }),
     /CONCURRENCY must be an integer between 1 and 32/,
   ));
+});
+
+void test('HTTP application context neither parses worker options nor instantiates the worker', async () => {
+  await withEnvironment({ ...applicationEnvironment, CONCURRENCY: '0' }, async () => {
+    const app = await NestFactory.createApplicationContext(AppModule, {
+      abortOnError: false,
+      logger: false,
+    });
+    try {
+      assert.throws(() => app.get(ScheduleWorker));
+      assert.throws(() => app.get(SCHEDULE_WORKER_OPTIONS));
+    } finally {
+      await app.close();
+    }
+  });
 });

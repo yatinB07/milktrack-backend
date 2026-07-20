@@ -5,7 +5,7 @@ import { pathToFileURL } from 'node:url';
 import type { INestApplicationContext } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 
-import { scheduleWorkerOptionsFromEnvironment } from './bootstrap/schedule-worker-environment.js';
+import { ScheduleWorkerModule } from './schedule-worker.module.js';
 import { ScheduleWorker } from './scheduling/application/schedule-worker.js';
 
 type WorkerApplicationContext = Pick<INestApplicationContext, 'close'> & {
@@ -40,9 +40,7 @@ export async function runScheduleWorkerContext(
 }
 
 export async function startScheduleWorker(): Promise<void> {
-  scheduleWorkerOptionsFromEnvironment(process.env);
-  const { AppModule } = await import('./app.module.js');
-  const app = await NestFactory.createApplicationContext(AppModule);
+  const app = await NestFactory.createApplicationContext(ScheduleWorkerModule);
   await runScheduleWorkerContext(app);
 }
 

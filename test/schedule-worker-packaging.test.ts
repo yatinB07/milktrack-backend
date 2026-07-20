@@ -112,6 +112,7 @@ void test('package exposes development and production worker commands', async ()
   );
 
   const entrypoint = await readFile('src/worker.ts', 'utf8');
-  assert.match(entrypoint, /NestFactory\.createApplicationContext\(AppModule\)/);
+  assert.match(entrypoint, /NestFactory\.createApplicationContext\(ScheduleWorkerModule\)/);
+  assert.doesNotMatch(entrypoint, /AppModule/);
   assert.doesNotMatch(entrypoint, /NestFactory\.create\(|\.listen\(|Swagger/);
 });
