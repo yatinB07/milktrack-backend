@@ -143,3 +143,72 @@ void test('retryable failures persist bounded backoff and exhaust at max attempt
     })), null);
   } finally { await cleanup(vendorId); }
 });
+
+void test('an expired final attempt becomes terminal before other work is claimed', async () => {
+  const vendorId = await fixture('expired-final-attempt');
+  const userId = randomUUID();
+  const expiredId = randomUUID();
+  const expiredLeaseToken = randomUUID();
+  const otherId = await queued(vendorId, '2030-01-03');
+  const now = new Date('2030-01-01T00:02:00.000Z');
+  await owner.query('INSERT INTO users(id,display_name,updated_at) VALUES($1,$2,now())', [
+    userId,
+    'Expired run requester',
+  ]);
+  await owner.query(
+    `INSERT INTO schedule_generation_runs (
+       id,vendor_id,trigger,trigger_local_date,service_date,status,attempt_count,max_attempts,
+       lease_token,claimed_at,lease_expires_at,started_at,requested_by_user_id,updated_at
+     ) VALUES (
+       $1,$2,'configuration_change','2030-01-01','2030-01-02','running',5,5,
+       $3,'2030-01-01T00:00:00Z','2030-01-01T00:01:00Z','2030-01-01T00:00:00Z',$4,now()
+     )`,
+    [expiredId, vendorId, expiredLeaseToken, userId],
+  );
+  try {
+    const claimed = await transactions.run(vendorId, (transaction) => store.claimNext(transaction, {
+      vendorId,
+      leaseToken: randomUUID(),
+      now,
+    }));
+    assert.equal(claimed?.id, otherId);
+    assert.deepEqual((await owner.query(
+      `SELECT status,failure_code,failure_message,finished_at,lease_token,claimed_at,lease_expires_at
+       FROM schedule_generation_runs WHERE id=$1`,
+      [expiredId],
+    )).rows, [{
+      status: 'failed',
+      failure_code: 'LEASE_EXPIRED',
+      failure_message: 'Schedule generation lease expired after final attempt',
+      finished_at: now,
+      lease_token: null,
+      claimed_at: null,
+      lease_expires_at: null,
+    }]);
+    assert.equal(await transactions.run(vendorId, (transaction) => store.renew(transaction, {
+      fence: { id: expiredId, leaseToken: expiredLeaseToken, attempt: 5 },
+      now,
+    })), false);
+    assert.equal(await transactions.run(vendorId, (transaction) => store.succeed(transaction, {
+      fence: { id: expiredId, leaseToken: expiredLeaseToken, attempt: 5 },
+      counts: { created: 0, existing: 0, updated: 0, cancelled: 0, missingPrice: 0 },
+      finishedAt: now,
+    })), null);
+
+    const nextId = randomUUID();
+    await owner.query(
+      `INSERT INTO schedule_generation_runs
+         (id,vendor_id,trigger,trigger_local_date,service_date,requested_by_user_id,updated_at)
+       VALUES($1,$2,'configuration_change','2030-01-01','2030-01-02',$3,now())`,
+      [nextId, vendorId, userId],
+    );
+    assert.equal((await transactions.run(vendorId, (transaction) => store.claimNext(transaction, {
+      vendorId,
+      leaseToken: randomUUID(),
+      now,
+    })))?.id, nextId);
+  } finally {
+    await cleanup(vendorId);
+    await owner.query('DELETE FROM users WHERE id=$1', [userId]);
+  }
+});

@@ -94,6 +94,19 @@ export class PrismaScheduleGenerationRunStore extends ScheduleGenerationRunStore
   ): Promise<ScheduleGenerationRunClaim | null> {
     const tx = unwrapPrismaTransaction(context);
     const leaseExpiresAt = this.leaseExpiry(input.now);
+    await tx.$executeRaw(Prisma.sql`
+      WITH exhausted AS (
+        SELECT id AS exhausted_id FROM schedule_generation_runs
+        WHERE vendor_id=${input.vendorId}::uuid AND status='running'
+          AND attempt_count=max_attempts AND lease_expires_at<=${input.now}
+        ORDER BY lease_expires_at,created_at,id
+        FOR UPDATE SKIP LOCKED
+      )
+      UPDATE schedule_generation_runs r SET
+        status='failed',lease_token=NULL,claimed_at=NULL,lease_expires_at=NULL,
+        finished_at=${input.now},failure_code='LEASE_EXPIRED',
+        failure_message='Schedule generation lease expired after final attempt',updated_at=${input.now}
+      FROM exhausted WHERE r.id=exhausted.exhausted_id`);
     const rows = await tx.$queryRaw<RunRow[]>(Prisma.sql`
       WITH candidate AS (
         SELECT id AS candidate_id FROM schedule_generation_runs
