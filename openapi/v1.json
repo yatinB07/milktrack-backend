@@ -484,8 +484,8 @@
         },
         "required": [
           "code",
-          "deliverySlotId",
-          "name"
+          "name",
+          "deliverySlotId"
         ],
         "type": "object"
       },
@@ -1984,8 +1984,8 @@
           }
         },
         "required": [
-          "expectedVersion",
-          "reason"
+          "reason",
+          "expectedVersion"
         ],
         "type": "object"
       },

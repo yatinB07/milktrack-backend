@@ -1,6 +1,6 @@
 import { Type } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsIn, IsInt, IsOptional, IsString, IsUUID, Length, Matches, Max, Min } from 'class-validator';
+import { IsIn, IsInt, IsOptional, IsString, IsUUID, Length, Max, Min } from 'class-validator';
 import type { RouteRecord } from '../application/route.store.js';
 
 const code = /^[A-Za-z0-9_-]{2,32}$/;
@@ -12,12 +12,12 @@ export class RoutePageQueryDto {
   @IsOptional() @IsString() @Length(1, 100) search?: string;
 }
 export class CreateRouteRequestDto {
-  @ApiProperty({ type: String, pattern: code.source }) @IsString() @Matches(code) code!: string;
-  @IsString() @Length(1, 100) name!: string;
+  @ApiProperty({ type: String, pattern: code.source }) @IsString() code!: string;
+  @ApiProperty({ type: String, minLength: 1, maxLength: 100 }) @IsString() name!: string;
   @ApiProperty({ type: String, format: 'uuid' }) @IsUUID() deliverySlotId!: string;
 }
-export class RenameRouteRequestDto { @IsString() @Length(1, 100) name!: string; @Type(() => Number) @IsInt() @Min(1) expectedVersion!: number; }
-export class RouteVersionReasonRequestDto { @Type(() => Number) @IsInt() @Min(1) expectedVersion!: number; @IsString() @Length(3, 500) reason!: string; }
+export class RenameRouteRequestDto { @ApiProperty({ type: String, minLength: 1, maxLength: 100 }) @IsString() name!: string; @Type(() => Number) @IsInt() @Min(1) expectedVersion!: number; }
+export class RouteVersionReasonRequestDto { @Type(() => Number) @IsInt() @Min(1) expectedVersion!: number; @ApiProperty({ type: String, minLength: 3, maxLength: 500 }) @IsString() reason!: string; }
 export class RouteResponseDto {
   @ApiProperty({ type: String, format: 'uuid' }) id!: string;
   @ApiProperty({ type: String, format: 'uuid' }) vendorId!: string;
