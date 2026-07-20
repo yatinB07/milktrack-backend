@@ -24,7 +24,7 @@ export function normalizeRouteStopReplacement(
   const effective = date(effectiveDate);
   if (effective < date(today))
     throw error('INVALID_ROUTE_DATE', 'Route date cannot be in the past');
-  if (new Set(householdIds).size !== householdIds.length)
+  if (new Set(householdIds.map((householdId) => householdId.toLowerCase())).size !== householdIds.length)
     throw error('INVALID_STOP_ORDER', 'A household can appear only once in a route stop plan');
   const normalizedReason = reason.trim();
   if (normalizedReason.length < 3 || normalizedReason.length > 500)

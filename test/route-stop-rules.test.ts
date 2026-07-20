@@ -16,5 +16,11 @@ void test('route stop replacement rejects invalid or past dates, duplicate house
     assert.throws(() => normalizeRouteStopReplacement(value, [], 'Valid reason', '2026-07-20'), { code: 'INVALID_ROUTE_DATE' });
   assert.throws(() => normalizeRouteStopReplacement('2026-07-19', [], 'Valid reason', '2026-07-20'), { code: 'INVALID_ROUTE_DATE' });
   assert.throws(() => normalizeRouteStopReplacement('2026-07-20', ['a', 'a'], 'Valid reason', '2026-07-20'), { code: 'INVALID_STOP_ORDER' });
+  assert.throws(() => normalizeRouteStopReplacement(
+    '2026-07-20',
+    ['550e8400-e29b-41d4-a716-446655440000', '550E8400-E29B-41D4-A716-446655440000'],
+    'Valid reason',
+    '2026-07-20',
+  ), { code: 'INVALID_STOP_ORDER' });
   assert.throws(() => normalizeRouteStopReplacement('2026-07-20', [], 'x', '2026-07-20'), { code: 'INVALID_REASON' });
 });
