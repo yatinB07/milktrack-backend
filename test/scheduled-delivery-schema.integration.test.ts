@@ -1,9 +1,12 @@
 import assert from 'node:assert/strict';
 import { createHmac, randomUUID } from 'node:crypto';
 import type { Server } from 'node:http';
+import { setTimeout as delay } from 'node:timers/promises';
 import test from 'node:test';
 import pg from 'pg';
 import type { INestApplication } from '@nestjs/common';
+import { DateTime } from 'luxon';
+import { SchedulingPriceService } from '../src/pricing/application/scheduling-price.service.js';
 import { PrismaService } from '../src/database/infrastructure/prisma.service.js';
 import { PrismaTenantTransactionRunner } from '../src/database/infrastructure/prisma-tenant-transaction.runner.js';
 import { PrismaScheduledDeliveryStore } from '../src/scheduling/infrastructure/prisma-scheduled-delivery.store.js';
@@ -81,7 +84,7 @@ async function cleanup(values: Fixture[]) {
   const client = await owner.connect();
   try {
     await client.query('BEGIN'); await client.query('SET CONSTRAINTS ALL DEFERRED');
-    for (const table of ['audit_events','scheduled_deliveries','route_stops','route_stop_plans','route_assignments','routes','subscription_revision_weekdays','subscription_revisions','subscriptions','global_prices','vendor_memberships','delivery_slots','products','units','households']) await client.query(`DELETE FROM ${table} WHERE vendor_id=ANY($1::uuid[])`, [vendors]);
+    for (const table of ['audit_events','scheduled_deliveries','route_stops','route_stop_plans','route_assignments','routes','subscription_revision_weekdays','subscription_revisions','subscriptions','customer_price_overrides','global_prices','vendor_memberships','delivery_slots','products','units','households']) await client.query(`DELETE FROM ${table} WHERE vendor_id=ANY($1::uuid[])`, [vendors]);
     await client.query('DELETE FROM sessions WHERE user_id=ANY($1::uuid[])', [users]); await client.query('DELETE FROM mfa_factors WHERE user_id=ANY($1::uuid[])', [users]);
     await client.query('DELETE FROM vendors WHERE id=ANY($1::uuid[])', [vendors]); await client.query('DELETE FROM users WHERE id=ANY($1::uuid[])', [users]);
     await client.query('COMMIT');
@@ -90,6 +93,72 @@ async function cleanup(values: Fixture[]) {
 
 async function asTenant(vendorId: string, work: (client: pg.PoolClient) => Promise<void>) {
   const client = await runtime.connect(); try { await client.query('BEGIN'); await client.query("SELECT set_config('app.vendor_id',$1,true)", [vendorId]); await work(client); } finally { await client.query('ROLLBACK'); client.release(); }
+}
+
+async function waitForAdvisoryWaiters(lockKey: string, expected: number) {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    // PostgreSQL exposes a one-key bigint advisory lock as unsigned high/low halves.
+    const result = await owner.query<{ count: number }>(`WITH target AS (SELECT hashtextextended($1,0) value)
+      SELECT count(*)::int count FROM pg_locks,target WHERE locktype='advisory' AND NOT granted
+        AND classid::bigint=((value >> 32) & 4294967295) AND objid::bigint=(value & 4294967295)`, [lockKey]);
+    if ((result.rows[0]?.count ?? 0) >= expected) return;
+    await delay(20);
+  }
+  throw new Error(`Timed out waiting for ${expected} advisory lock waiter(s)`);
+}
+
+async function within<T>(promise: Promise<T>, milliseconds = 5000): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([promise, new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error(`Timed out after ${milliseconds}ms`)), milliseconds);
+    })]);
+  } finally { if (timer) clearTimeout(timer); }
+}
+
+async function moveFixtureToDate(value: Fixture, serviceDate: string) {
+  const nextDate = DateTime.fromISO(serviceDate, { zone: 'UTC' }).plus({ days: 1 }).toISODate()!;
+  const weekday = DateTime.fromISO(serviceDate, { zone: 'UTC' }).weekday;
+  await owner.query('UPDATE subscription_revisions SET effective_from=$2,effective_to=$3,updated_at=now() WHERE id=$1', [value.revisionId, serviceDate, nextDate]);
+  await owner.query('UPDATE subscription_revision_weekdays SET weekday=$2 WHERE subscription_revision_id=$1', [value.revisionId, weekday]);
+  await owner.query('UPDATE route_assignments SET service_date=$2,updated_at=now() WHERE id=$1', [value.assignmentId, serviceDate]);
+  await owner.query('UPDATE route_stop_plans SET effective_from=$2,updated_at=now() WHERE id=$1', [value.planId, serviceDate]);
+  return { weekday };
+}
+
+async function generateAfterQueuedMutation(
+  value: Fixture,
+  serviceDate: string,
+  startMutation: () => Promise<Response>,
+) {
+  const lockKey = `scheduling-vendor-date:${value.vendorId}:${serviceDate}`;
+  const blocker = await owner.connect();
+  let mutationSettled = false; let generationSettled = false;
+  let mutation: Promise<void> | undefined; let generation: Promise<unknown> | undefined;
+  let lockReleased = false;
+  try {
+    await blocker.query('BEGIN');
+    await blocker.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [lockKey]);
+    mutation = startMutation().then(async (response) => {
+      mutationSettled = true;
+      assert.equal(response.status, 200, await response.text());
+    });
+    await waitForAdvisoryWaiters(lockKey, 1);
+    const mutationWasPending = !mutationSettled;
+    generation = transactions.run(value.vendorId, (tx) => app.get(ScheduleGenerator).generate(tx, value.vendorId, serviceDate))
+      .finally(() => { generationSettled = true; });
+    await waitForAdvisoryWaiters(lockKey, 2);
+    const generationWasPending = !generationSettled;
+    await blocker.query('ROLLBACK');
+    lockReleased = true;
+    await within(Promise.all([mutation, generation]));
+    assert.equal(mutationWasPending, true);
+    assert.equal(generationWasPending, true);
+  } finally {
+    if (!lockReleased) await blocker.query('ROLLBACK').catch(() => undefined);
+    await Promise.allSettled([mutation, generation].filter((promise): promise is Promise<unknown> => promise !== undefined));
+    blocker.release();
+  }
 }
 
 void test('scheduled delivery schema has exact composite references, forced RLS, narrow grants, and no delete', async () => {
@@ -160,6 +229,70 @@ void test('agent HTTP is exact-self scoped and returns only the safe scheduled-s
     const ownerDenied = await fetch(`${baseUrl}${path}`, { headers: { authorization: `Bearer ${own.ownerToken}` } });
     assert.equal(ownerDenied.status, 403);
   } finally { await cleanup([own, other]); }
+});
+
+void test('batch schedule pricing applies vendor-local slot boundaries, override scope, global fallback, and missing status', async () => {
+  const value = await fixture('pricing-batch');
+  const pricing = app.get(SchedulingPriceService);
+  const candidate = {
+    subscriptionId: value.subscriptionId,
+    householdId: value.householdId,
+    productId: value.productId,
+    unitId: value.unitId,
+    deliverySlotId: value.slotId,
+  };
+  const resolve = (householdId = value.householdId) => transactions.run(value.vendorId, (tx) =>
+    pricing.resolveMany(tx, value.vendorId, '2030-01-01', [{ ...candidate, householdId }]));
+  try {
+    assert.equal((await resolve())[0]?.status, 'resolved');
+    await owner.query('DELETE FROM global_prices WHERE vendor_id=$1', [value.vendorId]);
+    assert.equal((await resolve())[0]?.status, 'missing');
+    const overrideId = randomUUID();
+    // The fixture's 06:00 Asia/Kolkata slot starts at 00:30 UTC; price periods are half-open.
+    await owner.query(
+      "INSERT INTO customer_price_overrides(id,vendor_id,household_id,product_id,unit_id,amount_minor,currency,effective_from,reason,created_by,updated_at) VALUES($1,$2,$3,$4,$5,90,'INR','2030-01-01T00:30:00Z','Schedule boundary',$6,now())",
+      [overrideId, value.vendorId, value.householdId, value.productId, value.unitId, value.userId],
+    );
+    const batch = await transactions.run(value.vendorId, (tx) => pricing.resolveMany(tx, value.vendorId, '2030-01-01', [
+      candidate, { ...candidate, subscriptionId: randomUUID(), householdId: value.otherHouseholdId },
+    ]));
+    assert.equal(batch.length, 2);
+    assert.equal(batch.find(({ householdId }) => householdId === value.householdId)?.status, 'resolved');
+    assert.equal(batch.find(({ householdId }) => householdId === value.otherHouseholdId)?.status, 'missing');
+    await owner.query(
+      "UPDATE customer_price_overrides SET effective_from='2029-12-31T00:30:00Z',effective_to='2030-01-01T00:30:00Z',updated_at=now() WHERE id=$1",
+      [overrideId],
+    );
+    assert.equal((await resolve())[0]?.status, 'missing');
+  } finally { await cleanup([value]); }
+});
+
+void test('generator waits for a concurrent subscription mutation and persists its committed projection', { timeout: 10000 }, async () => {
+  const value = await fixture('subscription-race');
+  const serviceDate = DateTime.now().setZone('Asia/Kolkata').plus({ days: 1 }).toISODate()!;
+  const { weekday } = await moveFixtureToDate(value, serviceDate);
+  try {
+    await generateAfterQueuedMutation(value, serviceDate, () => fetch(`${baseUrl}/v1/vendors/${value.vendorId}/subscriptions/${value.subscriptionId}/modify`, {
+      method: 'POST', headers: { authorization: `Bearer ${value.ownerToken}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ productId: value.productId, unitId: value.unitId, deliverySlotId: value.slotId, quantity: '2', weekdays: [weekday], effectiveDate: serviceDate, expectedVersion: 1, reason: 'Concurrent quantity change' }),
+    }));
+    const persisted = await owner.query<{ quantity: string }>('SELECT planned_quantity::text quantity FROM scheduled_deliveries WHERE vendor_id=$1 AND service_date=$2', [value.vendorId, serviceDate]);
+    assert.deepEqual(persisted.rows, [{ quantity: '2.000' }]);
+  } finally { await cleanup([value]); }
+});
+
+void test('generator waits for a concurrent routing mutation and persists its committed projection', { timeout: 10000 }, async () => {
+  const value = await fixture('routing-race');
+  const serviceDate = DateTime.now().setZone('Asia/Kolkata').plus({ days: 1 }).toISODate()!;
+  await moveFixtureToDate(value, serviceDate);
+  try {
+    await generateAfterQueuedMutation(value, serviceDate, () => fetch(`${baseUrl}/v1/vendors/${value.vendorId}/routes/${value.routeId}/assignments/${serviceDate}/cancel`, {
+      method: 'POST', headers: { authorization: `Bearer ${value.ownerToken}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ expectedVersion: 1, reason: 'Concurrent route cancellation' }),
+    }));
+    const persisted = await owner.query<{ routeAssignmentId: string | null }>('SELECT route_assignment_id AS "routeAssignmentId" FROM scheduled_deliveries WHERE vendor_id=$1 AND service_date=$2', [value.vendorId, serviceDate]);
+    assert.deepEqual(persisted.rows, [{ routeAssignmentId: null }]);
+  } finally { await cleanup([value]); }
 });
 
 void test('generator/store counts first run, rerun, update, unassignment, cancellation, reactivation, and finalized immutability', async () => {
