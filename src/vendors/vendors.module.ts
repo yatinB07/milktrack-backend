@@ -9,8 +9,10 @@ import {
   PrismaVendorService,
   VendorService,
 } from './application/vendor.service.js';
+import { SchedulingVendorService } from './application/scheduling-vendor.service.js';
 import { VendorController } from './http/vendor.controller.js';
 import { VendorProfileController } from './http/vendor-profile.controller.js';
+import { PrismaSchedulingVendorService } from './infrastructure/prisma-scheduling-vendor.service.js';
 import { PrismaVendorStore } from './infrastructure/prisma-vendor.store.js';
 
 @Module({
@@ -21,7 +23,9 @@ import { PrismaVendorStore } from './infrastructure/prisma-vendor.store.js';
     TransitionVendor,
     PrismaVendorService,
     { provide: VendorService, useExisting: PrismaVendorService },
+    PrismaSchedulingVendorService,
+    { provide: SchedulingVendorService, useExisting: PrismaSchedulingVendorService },
   ],
-  exports: [TransitionVendor, VendorService],
+  exports: [TransitionVendor, VendorService, SchedulingVendorService],
 })
 export class VendorsModule {}
