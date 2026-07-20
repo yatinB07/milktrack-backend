@@ -50,7 +50,7 @@ export function scheduleWorkerOptionsFromEnvironment(
       environment.SHUTDOWN_TIMEOUT_MS,
       60_000,
       1_000,
-      300_000,
+      60_000,
     ),
   };
 }

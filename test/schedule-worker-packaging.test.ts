@@ -19,13 +19,13 @@ void test('worker environment uses bounded defaults and the fixed heartbeat', ()
     scheduleWorkerOptionsFromEnvironment({
       POLL_INTERVAL_MS: '250',
       CONCURRENCY: '32',
-      SHUTDOWN_TIMEOUT_MS: '300000',
+      SHUTDOWN_TIMEOUT_MS: '60000',
     }),
     {
       pollIntervalMs: 250,
       concurrency: 32,
       heartbeatIntervalMs: 20_000,
-      shutdownTimeoutMs: 300_000,
+      shutdownTimeoutMs: 60_000,
     },
   );
 });
@@ -39,7 +39,7 @@ void test('worker environment rejects malformed and out-of-range integers', () =
     ['CONCURRENCY', '33'],
     ['CONCURRENCY', 'four'],
     ['SHUTDOWN_TIMEOUT_MS', '999'],
-    ['SHUTDOWN_TIMEOUT_MS', '300001'],
+    ['SHUTDOWN_TIMEOUT_MS', '60001'],
     ['SHUTDOWN_TIMEOUT_MS', ''],
   ];
 
