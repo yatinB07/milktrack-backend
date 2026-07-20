@@ -125,6 +125,53 @@ async function runningConfiguration(
     requestedByUserId: userId };
 }
 
+void test('automatic seeding inserts queued attempt-zero rows once and returns the inserted count', async () => {
+  const vendorId = await fixture('automatic-seed');
+  const now = new Date('2030-01-01T00:00:00.000Z');
+  const input = {
+    vendorId,
+    triggerLocalDate: '2030-01-01',
+    serviceDates: ['2030-01-01', '2030-01-02'],
+    now,
+  };
+  try {
+    assert.equal(await transactions.run(vendorId, (transaction) => store.seedAutomatic(
+      transaction,
+      input,
+    )), 2);
+    assert.equal(await transactions.run(vendorId, (transaction) => store.seedAutomatic(
+      transaction,
+      input,
+    )), 0);
+    assert.deepEqual((await owner.query<{
+      trigger: string;
+      trigger_local_date: string;
+      service_date: string;
+      status: string;
+      attempt_count: number;
+      max_attempts: number;
+      requested_by_user_id: string | null;
+      available_at: Date;
+    }>(
+      `SELECT trigger,trigger_local_date::text,service_date::text,status,attempt_count,
+         max_attempts,requested_by_user_id,available_at
+       FROM schedule_generation_runs WHERE vendor_id=$1 ORDER BY service_date`,
+      [vendorId],
+    )).rows, input.serviceDates.map((serviceDate) => ({
+      trigger: 'automatic',
+      trigger_local_date: input.triggerLocalDate,
+      service_date: serviceDate,
+      status: 'queued',
+      attempt_count: 0,
+      max_attempts: 5,
+      requested_by_user_id: null,
+      available_at: now,
+    })));
+  } finally {
+    await cleanup(vendorId);
+  }
+});
+
 void test('claimNext skips a row locked by another worker', async () => {
   const vendorId = await fixture('skip-locked');
   await queued(vendorId);

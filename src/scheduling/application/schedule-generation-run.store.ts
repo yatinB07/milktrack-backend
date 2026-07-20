@@ -24,6 +24,13 @@ export type ClaimNextScheduleRun = Readonly<{
   now: Date;
 }>;
 
+export type SeedAutomaticScheduleRuns = Readonly<{
+  vendorId: string;
+  triggerLocalDate: string;
+  serviceDates: readonly string[];
+  now: Date;
+}>;
+
 export type RenewScheduleRun = Readonly<{
   fence: ScheduleGenerationRunFence;
   now: Date;
@@ -57,6 +64,11 @@ export type ScheduleGenerationRunPage = Readonly<{
 }>;
 
 export abstract class ScheduleGenerationRunStore {
+  abstract seedAutomatic(
+    transaction: TransactionContext,
+    input: SeedAutomaticScheduleRuns,
+  ): Promise<number>;
+
   abstract createAndClaimManual(
     transaction: TransactionContext,
     input: CreateAndClaimManualScheduleRun,

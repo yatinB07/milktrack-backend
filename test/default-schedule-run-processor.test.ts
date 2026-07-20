@@ -61,6 +61,7 @@ function completed(status: 'succeeded' | 'failed' | 'retry_wait'): ScheduleGener
 
 function runStore(overrides: Partial<ScheduleGenerationRunStore>): ScheduleGenerationRunStore {
   return {
+    seedAutomatic: () => Promise.reject(new Error('unused')),
     createAndClaimManual: () => Promise.reject(new Error('unused')),
     claimNext: () => Promise.reject(new Error('unused')),
     renew: () => Promise.reject(new Error('unused')),

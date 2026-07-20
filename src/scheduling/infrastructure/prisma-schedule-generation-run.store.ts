@@ -13,6 +13,7 @@ import {
   type RenewScheduleRun,
   ScheduleGenerationRunStore,
   type ScheduleGenerationRunQuery,
+  type SeedAutomaticScheduleRuns,
   type SucceedScheduleRun,
 } from '../application/schedule-generation-run.store.js';
 import {
@@ -80,6 +81,26 @@ const runColumns = Prisma.sql`
 @Injectable()
 export class PrismaScheduleGenerationRunStore extends ScheduleGenerationRunStore {
   private readonly cursors = new CursorCodec();
+
+  async seedAutomatic(
+    context: TransactionContext,
+    input: SeedAutomaticScheduleRuns,
+  ): Promise<number> {
+    const tx = unwrapPrismaTransaction(context);
+    let inserted = 0;
+    for (const serviceDate of input.serviceDates) {
+      inserted += await tx.$executeRaw(Prisma.sql`
+        INSERT INTO schedule_generation_runs (
+          id,vendor_id,trigger,trigger_local_date,service_date,status,attempt_count,
+          max_attempts,available_at,requested_by_user_id,updated_at
+        ) VALUES (
+          ${randomUUID()}::uuid,${input.vendorId}::uuid,'automatic',${input.triggerLocalDate}::date,
+          ${serviceDate}::date,'queued',0,${SCHEDULE_GENERATION_MAX_ATTEMPTS},${input.now},NULL,${input.now}
+        ) ON CONFLICT (vendor_id,trigger_local_date,service_date)
+          WHERE trigger='automatic' DO NOTHING`);
+    }
+    return inserted;
+  }
 
   async createAndClaimManual(
     context: TransactionContext,
