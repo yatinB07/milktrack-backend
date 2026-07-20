@@ -98,6 +98,7 @@ model User {
   priceOverridesCreated CustomerPriceOverride[] @relation("CustomerPriceOverrideCreator")
   subscriptionRevisionsCreated SubscriptionRevision[] @relation("SubscriptionRevisionCreator")
   subscriptionsDeleted Subscription[] @relation("SubscriptionDeleter")
+  routesDeleted Route[] @relation("RouteDeleter")
 
   @@map("users")
 }
@@ -248,6 +249,7 @@ model Vendor {
   priceOverrides    CustomerPriceOverride[]
   subscriptions     Subscription[]
   subscriptionRevisions SubscriptionRevision[]
+  routes Route[]
 
   @@map("vendors")
 }
@@ -379,6 +381,7 @@ model DeliverySlot {
   updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
   vendor         Vendor   @relation(fields: [vendorId], references: [id])
   subscriptionRevisions SubscriptionRevision[]
+  routes Route[]
 
   @@unique([vendorId, id])
   @@unique([vendorId, code])
@@ -495,6 +498,30 @@ model SubscriptionRevisionWeekday {
 
   @@id([vendorId, subscriptionRevisionId, weekday])
   @@map("subscription_revision_weekdays")
+}
+
+model Route {
+  id             String        @id @db.Uuid
+  vendorId       String        @map("vendor_id") @db.Uuid
+  code           String
+  name           String
+  deliverySlotId String        @map("delivery_slot_id") @db.Uuid
+  status         CatalogStatus @default(active)
+  version        Int           @default(1)
+  deletedAt      DateTime?     @map("deleted_at") @db.Timestamptz(6)
+  deletedBy      String?       @map("deleted_by") @db.Uuid
+  deletionReason String?       @map("deletion_reason")
+  createdAt      DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime      @updatedAt @map("updated_at") @db.Timestamptz(6)
+  vendor         Vendor        @relation(fields: [vendorId], references: [id])
+  deliverySlot   DeliverySlot  @relation(fields: [vendorId, deliverySlotId], references: [vendorId, id])
+  deleter        User?         @relation("RouteDeleter", fields: [deletedBy], references: [id])
+
+  @@unique([vendorId, id])
+  @@unique([vendorId, id, deliverySlotId])
+  @@index([vendorId, status, createdAt(sort: Desc), id(sort: Desc)])
+  @@index([vendorId, deliverySlotId, status])
+  @@map("routes")
 }
 
 model OwnerEnrollment {

@@ -211,6 +211,21 @@ void test('subscription operations map to explicit read, manage, and customer-se
   assert.throws(() => requireVendorPermission('delivery_agent', 'subscription:read'), forbidden);
 });
 
+void test('route definition operations map only to explicit read and manage permissions', () => {
+  for (const operation of ['route.list', 'route.get']) {
+    assert.doesNotThrow(() => requireVendorOperation(operation, 'route:read'));
+    assert.throws(() => requireVendorOperation(operation, 'route:manage'), forbidden);
+  }
+  for (const operation of ['route.create', 'route.rename', 'route.deactivate', 'route.reactivate', 'route.delete', 'route.restore']) {
+    assert.doesNotThrow(() => requireVendorOperation(operation, 'route:manage'));
+    assert.throws(() => requireVendorOperation(operation, 'route:read'), forbidden);
+  }
+  assert.doesNotThrow(() => requireVendorPermission('vendor_owner', 'route:manage'));
+  assert.doesNotThrow(() => requireVendorPermission('vendor_administrator', 'route:read'));
+  assert.throws(() => requireVendorPermission('delivery_agent', 'route:read'), forbidden);
+  assert.throws(() => requireVendorPermission('customer', 'route:read'), forbidden);
+});
+
 void test('catalog vendor operations accept onboarding, trial, and active vendors', async () => {
   const statuses: string[][] = [];
   const audits: AuditWriter = { append: () => Promise.resolve() };

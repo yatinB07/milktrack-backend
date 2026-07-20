@@ -28,6 +28,7 @@ void test('migrations safely upgrade legacy data without resetting it', async ()
     '202607200003_delivery_slots',
     '202607200004_effective_pricing',
     '202607200005_subscriptions',
+    '202607200006_routes',
   ] as const;
   const migrations = await Promise.all(
     migrationDirectories.map((directory) =>
@@ -141,6 +142,7 @@ void test('migrations safely upgrade legacy data without resetting it', async ()
       [legacyOverrideId, legacyVendorId, legacyHouseholdId, legacyProductId, legacyUnitId, userId],
     );
     await client.query(migrations[14]);
+    await client.query(migrations[15]);
 
     const session = await client.query<{
       authentication_method: string;

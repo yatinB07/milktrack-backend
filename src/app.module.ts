@@ -15,6 +15,7 @@ import { CustomersModule } from './customers/customers.module.js';
 import { CatalogModule } from './catalog/catalog.module.js';
 import { PricingModule } from './pricing/pricing.module.js';
 import { SubscriptionsModule } from './subscriptions/subscriptions.module.js';
+import { RoutingModule } from './routing/routing.module.js';
 
 @Module({
   imports: [
@@ -29,6 +30,7 @@ import { SubscriptionsModule } from './subscriptions/subscriptions.module.js';
     CatalogModule,
     PricingModule,
     SubscriptionsModule,
+    RoutingModule,
   ],
   providers: [{ provide: RequestContextStore, useValue: requestContextStore }],
 })

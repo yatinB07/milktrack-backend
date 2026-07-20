@@ -25,6 +25,13 @@ const error = (code: string, message: string, status: number) => new Application
 export class PrismaCatalogStore {
   private readonly cursors = new CursorCodec();
 
+  async requireRouteDeliverySlot(context: TransactionContext, deliverySlotId: string) {
+    const rows = await unwrapPrismaTransaction(context).$queryRaw<Array<{ id: string }>>(Prisma.sql`
+      SELECT id FROM delivery_slots WHERE id=${deliverySlotId}::uuid AND active=true FOR UPDATE`);
+    if (!rows[0]) throw error('ROUTE_SLOT_NOT_AVAILABLE', 'Delivery slot is not available', 409);
+    return { deliverySlotId };
+  }
+
   async requireSubscriptionSelection(context: TransactionContext, productId: string, unitId: string, deliverySlotId: string) {
     const tx = unwrapPrismaTransaction(context);
     const product = await tx.product.findFirst({

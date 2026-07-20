@@ -212,11 +212,13 @@ void test('publishes the complete Phase 1 HTTP contract without persistence secr
     '/v1/customer/vendors/{vendorId}/households/{householdId}/subscriptions/{subscriptionId}',
     '/v1/customer/vendors/{vendorId}/households/{householdId}/subscriptions/{subscriptionId}/revisions',
   ];
+  const routePaths = ['/v1/vendors/{vendorId}/routes','/v1/vendors/{vendorId}/routes/{routeId}','/v1/vendors/{vendorId}/routes/{routeId}/deactivate','/v1/vendors/{vendorId}/routes/{routeId}/reactivate','/v1/vendors/{vendorId}/routes/{routeId}/restore'];
   for (const path of householdPaths) assert.ok(paths[path], `missing ${path}`);
   for (const path of catalogPaths) assert.ok(paths[path], `missing ${path}`);
   for (const path of pricingPaths) assert.ok(paths[path], `missing ${path}`);
   for (const path of subscriptionPaths) assert.ok(paths[path], `missing ${path}`);
-  assert.deepEqual(Object.keys(paths).sort(), [...Object.keys(phaseOneOperations), ...householdPaths, ...catalogPaths, ...pricingPaths, ...subscriptionPaths].sort());
+  for (const path of routePaths) assert.ok(paths[path], `missing ${path}`);
+  assert.deepEqual(Object.keys(paths).sort(), [...Object.keys(phaseOneOperations), ...householdPaths, ...catalogPaths, ...pricingPaths, ...subscriptionPaths, ...routePaths].sort());
 
   for (const [path, methods] of Object.entries(phaseOneOperations)) {
     const pathItem = object(paths[path], `missing OpenAPI path ${path}`);
@@ -488,6 +490,27 @@ void test('publishes the effective-dated subscription contract with customer-saf
   const customerList = object(object(paths['/v1/customer/vendors/{vendorId}/households/{householdId}/subscriptions'], 'customer subscriptions').get, 'customer subscriptions get');
   const customerParameters = customerList.parameters as JsonObject[];
   assert.equal(customerParameters.some(({ name, in: location }) => name === 'householdId' && location === 'query'), false);
+});
+
+void test('publishes secured explicit route-definition contracts without later routing endpoints', async () => {
+  const { document } = await readDocument(); const paths = object(document.paths, 'paths');
+  const operations = [
+    ['get','/v1/vendors/{vendorId}/routes','200','RouteListResponseDto',undefined],
+    ['post','/v1/vendors/{vendorId}/routes','201','RouteResponseDto','CreateRouteRequestDto'],
+    ['get','/v1/vendors/{vendorId}/routes/{routeId}','200','RouteResponseDto',undefined],
+    ['patch','/v1/vendors/{vendorId}/routes/{routeId}','200','RouteResponseDto','RenameRouteRequestDto'],
+    ['delete','/v1/vendors/{vendorId}/routes/{routeId}','204',undefined,'RouteVersionReasonRequestDto'],
+    ['post','/v1/vendors/{vendorId}/routes/{routeId}/deactivate','200','RouteResponseDto','RouteVersionReasonRequestDto'],
+    ['post','/v1/vendors/{vendorId}/routes/{routeId}/reactivate','200','RouteResponseDto','RouteVersionReasonRequestDto'],
+    ['post','/v1/vendors/{vendorId}/routes/{routeId}/restore','200','RouteResponseDto','RouteVersionReasonRequestDto'],
+  ] as const;
+  for (const [method,path,status,responseName,bodyName] of operations) {
+    const operation = object(object(paths[path], path)[method], `${method} ${path}`); assert.deepEqual(operation.security, [{ opaqueBearer: [] }]); const responses = object(operation.responses, 'responses');
+    if (responseName) assert.equal(responseSchema(responses[status], `${path} ${status}`).$ref, `#/components/schemas/${responseName}`); else assert.equal(object(responses[status], 'response').content, undefined);
+    for (const errorStatus of ['400','401','403','404','409','503']) assert.equal(responseSchema(responses[errorStatus], `${path} ${errorStatus}`).$ref, '#/components/schemas/ApiErrorResponseDto');
+    if (bodyName) { const content = object(object(operation.requestBody, 'body').content, 'content'); assert.equal(object(object(content['application/json'], 'json').schema, 'schema').$ref, `#/components/schemas/${bodyName}`); }
+  }
+  assert.equal(paths['/v1/vendors/{vendorId}/routes/{routeId}/stops'], undefined); assert.equal(paths['/v1/vendors/{vendorId}/routes/{routeId}/assignments'], undefined);
 });
 
 void test('publishes the additive vendor catalog contract', async () => {

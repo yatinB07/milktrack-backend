@@ -665,6 +665,21 @@ void test('executor permits exact subscription read support only and denies mana
   }
 });
 
+void test('executor permits exact route reads to scoped support and denies route management and unrelated actors', async () => {
+  const vendorId = randomUUID(); const userIds = Array.from({ length: 4 }, randomUUID); const prisma = new PrismaService();
+  const executor = new PrismaTenantAuthorizationExecutor(new PrismaTenantTransactionRunner(prisma), new PrismaAuthorizationPolicy(new PrismaAuditWriter()), new PrismaSecurityDenialRecorder(prisma));
+  await Promise.all(userIds.map(insertUser)); await insertVendor(vendorId);
+  await insertGrant({ vendorId, userId: userIds[0], scope: ['route:read'] }); await insertGrant({ vendorId, userId: userIds[1], scope: ['catalog:read'] }); await insertMembership({ vendorId, userId: userIds[2], role: 'delivery_agent' });
+  const execute = (currentActor: Actor, permission: 'route:read' | 'route:manage', operation: string) => requestContextStore.run({ correlationId: randomUUID(), actor: currentActor }, () => executor.execute({ actor: currentActor, vendorId, permission, operation }, () => Promise.resolve(operation)));
+  try {
+    const support = actor(userIds[0], ['support_operations']); for (const operation of ['route.list','route.get']) assert.equal(await execute(support, 'route:read', operation), operation);
+    await assert.rejects(execute(support, 'route:manage', 'route.create'), forbidden);
+    await assert.rejects(execute(actor(userIds[1], ['support_operations']), 'route:read', 'route.list'), forbidden);
+    await assert.rejects(execute(actor(userIds[2]), 'route:read', 'route.get'), forbidden);
+    await assert.rejects(execute(actor(userIds[3], ['product_owner']), 'route:read', 'route.list'), forbidden);
+  } finally { await prisma.$disconnect(); await cleanup({ vendorIds: [vendorId], userIds }); }
+});
+
 void test('every tenant denial rolls back and leaves exactly one minimal global denial audit', async () => {
   const vendorIds = [randomUUID(), randomUUID(), randomUUID(), randomUUID()];
   const missingVendorId = randomUUID();

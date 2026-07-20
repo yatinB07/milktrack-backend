@@ -21,6 +21,9 @@ export type VendorPermission =
   | 'pricing:manage'
   | 'subscription:read'
   | 'subscription:manage'
+  | 'route:read'
+  | 'route:manage'
+  | 'route:self'
   | 'audit:read'
   | 'delivery:read'
   | 'delivery:record'
@@ -52,6 +55,8 @@ const vendorPermissions: Readonly<Record<VendorRole, ReadonlySet<VendorPermissio
     'pricing:manage',
     'subscription:read',
     'subscription:manage',
+    'route:read',
+    'route:manage',
   ]),
   vendor_administrator: new Set([
     'vendor:profile:read',
@@ -66,6 +71,8 @@ const vendorPermissions: Readonly<Record<VendorRole, ReadonlySet<VendorPermissio
     'pricing:manage',
     'subscription:read',
     'subscription:manage',
+    'route:read',
+    'route:manage',
   ]),
   delivery_agent: new Set(['delivery:read', 'delivery:record']),
   customer: new Set(['customer:self']),
@@ -131,6 +138,14 @@ const activeVendorOperations: Readonly<Record<string, VendorPermission>> = {
   'subscription.self-list': 'customer:self',
   'subscription.self-get': 'customer:self',
   'subscription.self-history': 'customer:self',
+  'route.list': 'route:read',
+  'route.get': 'route:read',
+  'route.create': 'route:manage',
+  'route.rename': 'route:manage',
+  'route.deactivate': 'route:manage',
+  'route.reactivate': 'route:manage',
+  'route.delete': 'route:manage',
+  'route.restore': 'route:manage',
 };
 
 export const hasPlatformPermission = (
