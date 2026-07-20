@@ -17,6 +17,8 @@ export type VendorPermission =
   | 'household:manage'
   | 'catalog:read'
   | 'catalog:manage'
+  | 'pricing:read'
+  | 'pricing:manage'
   | 'audit:read'
   | 'delivery:read'
   | 'delivery:record'
@@ -44,6 +46,8 @@ const vendorPermissions: Readonly<Record<VendorRole, ReadonlySet<VendorPermissio
     'household:manage',
     'catalog:read',
     'catalog:manage',
+    'pricing:read',
+    'pricing:manage',
   ]),
   vendor_administrator: new Set([
     'vendor:profile:read',
@@ -54,6 +58,8 @@ const vendorPermissions: Readonly<Record<VendorRole, ReadonlySet<VendorPermissio
     'household:manage',
     'catalog:read',
     'catalog:manage',
+    'pricing:read',
+    'pricing:manage',
   ]),
   delivery_agent: new Set(['delivery:read', 'delivery:record']),
   customer: new Set(['customer:self']),
@@ -96,6 +102,16 @@ const activeVendorOperations: Readonly<Record<string, VendorPermission>> = {
   'catalog.delivery-slot-rename': 'catalog:manage',
   'catalog.delivery-slot-deactivate': 'catalog:manage',
   'catalog.delivery-slot-reactivate': 'catalog:manage',
+  'pricing.global-list': 'pricing:read',
+  'pricing.global-get': 'pricing:read',
+  'pricing.global-create': 'pricing:manage',
+  'pricing.global-close': 'pricing:manage',
+  'pricing.override-list': 'pricing:read',
+  'pricing.override-get': 'pricing:read',
+  'pricing.override-create': 'pricing:manage',
+  'pricing.override-close': 'pricing:manage',
+  'pricing.resolve': 'pricing:read',
+  'pricing.self-resolve': 'customer:self',
 };
 
 export const hasPlatformPermission = (

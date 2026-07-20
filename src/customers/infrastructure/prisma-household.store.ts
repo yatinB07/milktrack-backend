@@ -127,6 +127,24 @@ function toMember(row: HouseholdMemberRow): HouseholdMemberRecord {
 
 @Injectable()
 export class PrismaHouseholdStore {
+  async requirePricingHousehold(context: TransactionContext, householdId: string) {
+    const row = await unwrapPrismaTransaction(context).household.findFirst({
+      where: { id: householdId }, select: { id: true, status: true, deletedAt: true },
+    });
+    if (!row || row.deletedAt) throw error("PRICE_HOUSEHOLD_NOT_FOUND", "Price household was not found", 404);
+    if (row.status !== "active") throw error("PRICE_HOUSEHOLD_NOT_AVAILABLE", "Price household is not available", 409);
+    return { householdId: row.id };
+  }
+
+  async requireCustomerPricingHousehold(context: TransactionContext, householdId: string, membershipIds: readonly string[]) {
+    const member = await unwrapPrismaTransaction(context).householdMember.findFirst({
+      where: { householdId, customerMembershipId: { in: [...membershipIds] }, status: "active" },
+      select: { id: true },
+    });
+    if (!member) throw error("FORBIDDEN", "You are not allowed to perform this action", 403);
+    await this.requirePricingHousehold(context, householdId);
+    return { householdId };
+  }
   private readonly cursors = new CursorCodec();
   async list(context: TransactionContext, query: PageQuery) {
     const tx = unwrapPrismaTransaction(context);

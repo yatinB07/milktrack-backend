@@ -603,6 +603,36 @@ void test('executor permits only exact catalog read grants to support operations
   }
 });
 
+void test('executor permits exact pricing read support only and denies manage or unrelated actors', async () => {
+  const vendorId = randomUUID();
+  const userIds = [randomUUID(), randomUUID(), randomUUID(), randomUUID()];
+  const prisma = new PrismaService();
+  const executor = new PrismaTenantAuthorizationExecutor(
+    new PrismaTenantTransactionRunner(prisma),
+    new PrismaAuthorizationPolicy(new PrismaAuditWriter()),
+    new PrismaSecurityDenialRecorder(prisma),
+  );
+  await Promise.all(userIds.map(insertUser)); await insertVendor(vendorId);
+  await insertGrant({ vendorId, userId: userIds[0], scope: ['pricing:read'] });
+  await insertGrant({ vendorId, userId: userIds[1], scope: ['catalog:read'] });
+  await insertMembership({ vendorId, userId: userIds[2], role: 'delivery_agent' });
+  const execute = (currentActor: Actor, permission: 'pricing:read' | 'pricing:manage', operation: string) =>
+    requestContextStore.run({ correlationId: randomUUID(), actor: currentActor }, () =>
+      executor.execute({ actor: currentActor, vendorId, permission, operation }, () => Promise.resolve('pricing')),
+    );
+  try {
+    const support = actor(userIds[0], ['support_operations']);
+    assert.equal(await execute(support, 'pricing:read', 'pricing.global-list'), 'pricing');
+    assert.equal(await execute(support, 'pricing:read', 'pricing.resolve'), 'pricing');
+    await assert.rejects(execute(support, 'pricing:manage', 'pricing.global-create'), forbidden);
+    await assert.rejects(execute(actor(userIds[1], ['support_operations']), 'pricing:read', 'pricing.override-list'), forbidden);
+    await assert.rejects(execute(actor(userIds[2]), 'pricing:read', 'pricing.resolve'), forbidden);
+    await assert.rejects(execute(actor(userIds[3], ['product_owner']), 'pricing:read', 'pricing.global-list'), forbidden);
+  } finally {
+    await prisma.$disconnect(); await cleanup({ vendorIds: [vendorId], userIds });
+  }
+});
+
 void test('every tenant denial rolls back and leaves exactly one minimal global denial audit', async () => {
   const vendorIds = [randomUUID(), randomUUID(), randomUUID(), randomUUID()];
   const missingVendorId = randomUUID();

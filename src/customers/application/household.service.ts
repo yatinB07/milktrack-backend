@@ -65,6 +65,8 @@ export type HouseholdMemberPage = Readonly<{
   nextCursor?: string;
 }>;
 export abstract class HouseholdService {
+  abstract requirePricingHousehold(tx: TransactionContext, householdId: string): Promise<Readonly<{ householdId: string }>>;
+  abstract requireCustomerPricingHousehold(tx: TransactionContext, actor: Actor, vendorId: string, householdId: string): Promise<Readonly<{ householdId: string }>>;
   abstract list(
     actor: Actor,
     vendorId: string,
@@ -168,6 +170,23 @@ export class PrismaHouseholdService extends HouseholdService {
     @Inject(AuditWriter) private readonly audits: AuditWriter,
   ) {
     super();
+  }
+  requirePricingHousehold(tx: TransactionContext, householdId: string) {
+    return this.households.requirePricingHousehold(tx, householdId);
+  }
+  async requireCustomerPricingHousehold(tx: TransactionContext, actor: Actor, vendorId: string, householdId: string) {
+    const membershipIds = actor.memberships
+      .filter(({ vendorId: currentVendorId, role, status }) => currentVendorId === vendorId && role === "customer" && status === "active")
+      .map(({ id }) => id);
+    if (membershipIds.length !== 1)
+      throw new ApplicationError("FORBIDDEN", "You are not allowed to perform this action", 403);
+    try {
+      await this.memberships.requireActiveCustomerMembership(tx, vendorId, membershipIds[0]);
+    } catch (cause) {
+      if (!(cause instanceof ApplicationError)) throw cause;
+      throw new ApplicationError("FORBIDDEN", "You are not allowed to perform this action", 403);
+    }
+    return this.households.requireCustomerPricingHousehold(tx, householdId, membershipIds);
   }
   list(actor: Actor, vendorId: string, query: PageQuery) {
     return this.authorize(

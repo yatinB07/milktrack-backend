@@ -27,5 +27,6 @@ import { PrismaHouseholdStore } from "./infrastructure/prisma-household.store.js
     PrismaHouseholdService,
     { provide: HouseholdService, useExisting: PrismaHouseholdService },
   ],
+  exports: [HouseholdService],
 })
 export class CustomersModule {}

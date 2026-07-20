@@ -94,6 +94,8 @@ model User {
   memberships      VendorMembership[]
   platformRoles    PlatformRoleAssignment[]
   ownerEnrollments OwnerEnrollment[]
+  globalPricesCreated GlobalPrice[]             @relation("GlobalPriceCreator")
+  priceOverridesCreated CustomerPriceOverride[] @relation("CustomerPriceOverrideCreator")
 
   @@map("users")
 }
@@ -240,6 +242,8 @@ model Vendor {
   units             Unit[]
   products          Product[]
   deliverySlots     DeliverySlot[]
+  globalPrices      GlobalPrice[]
+  priceOverrides    CustomerPriceOverride[]
 
   @@map("vendors")
 }
@@ -291,6 +295,7 @@ model Household {
   updatedAt      DateTime        @updatedAt @map("updated_at") @db.Timestamptz(6)
   vendor         Vendor          @relation(fields: [vendorId], references: [id])
   members        HouseholdMember[]
+  priceOverrides CustomerPriceOverride[]
 
   @@unique([vendorId, id])
   @@index([vendorId, createdAt, id])
@@ -348,8 +353,11 @@ model Product {
   updatedAt      DateTime      @updatedAt @map("updated_at") @db.Timestamptz(6)
   vendor         Vendor        @relation(fields: [vendorId], references: [id])
   defaultUnit    Unit          @relation(fields: [vendorId, defaultUnitId], references: [vendorId, id])
+  globalPrices   GlobalPrice[] @relation("GlobalPriceProduct")
+  priceOverrides CustomerPriceOverride[] @relation("CustomerPriceOverrideProduct")
 
   @@unique([vendorId, id])
+  @@unique([vendorId, id, defaultUnitId])
   @@map("products")
 }
 
@@ -369,6 +377,53 @@ model DeliverySlot {
   @@unique([vendorId, code])
   @@index([vendorId, active, createdAt(sort: Desc), id(sort: Desc)])
   @@map("delivery_slots")
+}
+
+model GlobalPrice {
+  id            String   @id @db.Uuid
+  vendorId      String   @map("vendor_id") @db.Uuid
+  productId     String   @map("product_id") @db.Uuid
+  unitId        String   @map("unit_id") @db.Uuid
+  amountMinor   BigInt   @map("amount_minor") @db.BigInt
+  currency      String   @db.Char(3)
+  effectiveFrom DateTime @map("effective_from") @db.Timestamptz(6)
+  effectiveTo   DateTime? @map("effective_to") @db.Timestamptz(6)
+  createdBy     String   @map("created_by") @db.Uuid
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt     DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  vendor        Vendor   @relation(fields: [vendorId], references: [id])
+  product       Product  @relation("GlobalPriceProduct", fields: [vendorId, productId, unitId], references: [vendorId, id, defaultUnitId])
+  creator       User     @relation("GlobalPriceCreator", fields: [createdBy], references: [id])
+
+  @@unique([vendorId, id])
+  @@index([vendorId, createdAt(sort: Desc), id(sort: Desc)])
+  @@index([vendorId, productId, unitId, effectiveFrom(sort: Desc), effectiveTo])
+  @@map("global_prices")
+}
+
+model CustomerPriceOverride {
+  id            String   @id @db.Uuid
+  vendorId      String   @map("vendor_id") @db.Uuid
+  householdId   String   @map("household_id") @db.Uuid
+  productId     String   @map("product_id") @db.Uuid
+  unitId        String   @map("unit_id") @db.Uuid
+  amountMinor   BigInt   @map("amount_minor") @db.BigInt
+  currency      String   @db.Char(3)
+  effectiveFrom DateTime @map("effective_from") @db.Timestamptz(6)
+  effectiveTo   DateTime? @map("effective_to") @db.Timestamptz(6)
+  reason        String
+  createdBy     String   @map("created_by") @db.Uuid
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt     DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  vendor        Vendor   @relation(fields: [vendorId], references: [id])
+  household     Household @relation(fields: [vendorId, householdId], references: [vendorId, id])
+  product       Product  @relation("CustomerPriceOverrideProduct", fields: [vendorId, productId, unitId], references: [vendorId, id, defaultUnitId])
+  creator       User     @relation("CustomerPriceOverrideCreator", fields: [createdBy], references: [id])
+
+  @@unique([vendorId, id])
+  @@index([vendorId, householdId, createdAt(sort: Desc), id(sort: Desc)])
+  @@index([vendorId, householdId, productId, unitId, effectiveFrom(sort: Desc), effectiveTo])
+  @@map("customer_price_overrides")
 }
 
 model OwnerEnrollment {

@@ -42,6 +42,8 @@ const vendor = {
     'household:manage',
     'catalog:read',
     'catalog:manage',
+    'pricing:read',
+    'pricing:manage',
   ],
   vendor_administrator: [
     'membership:read',
@@ -52,6 +54,8 @@ const vendor = {
     'household:manage',
     'catalog:read',
     'catalog:manage',
+    'pricing:read',
+    'pricing:manage',
   ],
   delivery_agent: ['delivery:read', 'delivery:record'],
   customer: ['customer:self'],
@@ -126,6 +130,8 @@ void test('vendor roles allow exactly the reviewed permission matrix', () => {
   assert.throws(() => requireVendorPermission('customer', 'household:manage'), forbidden);
   assert.throws(() => requireVendorPermission('delivery_agent', 'catalog:read'), forbidden);
   assert.throws(() => requireVendorPermission('customer', 'catalog:manage'), forbidden);
+  assert.throws(() => requireVendorPermission('customer', 'pricing:read'), forbidden);
+  assert.throws(() => requireVendorPermission('customer', 'pricing:manage'), forbidden);
 });
 
 void test('catalog operations map only to the reviewed read and manage permissions', () => {
@@ -158,6 +164,27 @@ void test('catalog operations map only to the reviewed read and manage permissio
     assert.throws(() => requireVendorOperation(operation, 'catalog:read'), forbidden);
   }
   assert.throws(() => requireVendorOperation('catalog.product-status', 'catalog:manage'), forbidden);
+});
+
+void test('pricing operations map only to explicit read, manage, and customer-self permissions', () => {
+  for (const operation of [
+    'pricing.global-list', 'pricing.global-get',
+    'pricing.override-list', 'pricing.override-get', 'pricing.resolve',
+  ]) {
+    assert.doesNotThrow(() => requireVendorOperation(operation, 'pricing:read'));
+    assert.throws(() => requireVendorOperation(operation, 'pricing:manage'), forbidden);
+    assert.throws(() => requireVendorOperation(operation, 'customer:self'), forbidden);
+  }
+  for (const operation of [
+    'pricing.global-create', 'pricing.global-close',
+    'pricing.override-create', 'pricing.override-close',
+  ]) {
+    assert.doesNotThrow(() => requireVendorOperation(operation, 'pricing:manage'));
+    assert.throws(() => requireVendorOperation(operation, 'pricing:read'), forbidden);
+  }
+  assert.doesNotThrow(() => requireVendorOperation('pricing.self-resolve', 'customer:self'));
+  assert.throws(() => requireVendorOperation('pricing.self-resolve', 'pricing:read'), forbidden);
+  assert.throws(() => requireVendorOperation('pricing.global-update', 'pricing:manage'), forbidden);
 });
 
 void test('catalog vendor operations accept onboarding, trial, and active vendors', async () => {

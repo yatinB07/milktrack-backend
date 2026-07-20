@@ -13,5 +13,6 @@ import { PrismaCatalogStore } from './infrastructure/prisma-catalog.store.js';
   imports: [AuditModule, AuthorizationModule, DatabaseModule, IdentityModule],
   controllers: [UnitController, ProductController, DeliverySlotController],
   providers: [PrismaCatalogStore, PrismaCatalogService, { provide: CatalogService, useExisting: PrismaCatalogService }],
+  exports: [CatalogService],
 })
 export class CatalogModule {}

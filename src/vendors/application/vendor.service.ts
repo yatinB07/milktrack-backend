@@ -11,7 +11,7 @@ import {
 } from '../../common/context/request-context.js';
 import { CursorCodec } from '../../common/cursor/cursor.js';
 import { ApplicationError } from '../../common/errors/application.error.js';
-import { TenantTransactionRunner } from '../../common/application/transaction-context.js';
+import { TenantTransactionRunner, type TransactionContext } from '../../common/application/transaction-context.js';
 import type { VendorStatus } from '../domain/vendor-lifecycle.js';
 import { PrismaVendorStore } from '../infrastructure/prisma-vendor.store.js';
 import { TransitionVendor } from './transition-vendor.js';
@@ -56,6 +56,7 @@ export type VendorResult = Readonly<{
 }>;
 
 export abstract class VendorService {
+  abstract getPricingSettings(tx: TransactionContext, vendorId: string): Promise<Readonly<{ timezone: string; currency: string }>>;
   abstract create(actor: Actor, command: CreateVendorCommand): Promise<VendorResult>;
   abstract list(
     actor: Actor,
@@ -88,6 +89,10 @@ export class PrismaVendorService extends VendorService {
     private readonly lifecycle: TransitionVendor,
   ) {
     super();
+  }
+
+  getPricingSettings(tx: TransactionContext, vendorId: string) {
+    return this.vendors.getPricingSettings(tx, vendorId);
   }
 
   async create(actor: Actor, command: CreateVendorCommand): Promise<VendorResult> {

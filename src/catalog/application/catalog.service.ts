@@ -40,6 +40,8 @@ export type RenameDeliverySlot = Readonly<{ name: string }>;
 export type CatalogPage<T> = Readonly<{ items: readonly T[]; nextCursor?: string }>;
 
 export abstract class CatalogService {
+  abstract requirePricingProduct(tx: TransactionContext, productId: string, unitId: string): Promise<Readonly<{ productId: string; unitId: string }>>;
+  abstract getPricingDeliverySlotStart(tx: TransactionContext, slotId: string): Promise<string>;
   abstract listUnits(actor: Actor, vendorId: string, query: CatalogPageQuery): Promise<CatalogPage<UnitRecord>>;
   abstract getUnit(actor: Actor, vendorId: string, unitId: string): Promise<UnitRecord>;
   abstract createUnit(actor: Actor, vendorId: string, command: CreateUnit): Promise<UnitRecord>;
@@ -81,6 +83,13 @@ export class PrismaCatalogService extends CatalogService {
     @Inject(PrismaCatalogStore) private readonly catalog: PrismaCatalogStore,
     @Inject(AuditWriter) private readonly audits: AuditWriter,
   ) { super(); }
+
+  requirePricingProduct(tx: TransactionContext, productId: string, unitId: string) {
+    return this.catalog.requirePricingProduct(tx, productId, unitId);
+  }
+  getPricingDeliverySlotStart(tx: TransactionContext, slotId: string) {
+    return this.catalog.getPricingDeliverySlotStart(tx, slotId);
+  }
 
   listUnits(actor: Actor, vendorId: string, query: CatalogPageQuery) {
     return this.execute(actor, vendorId, 'catalog:read', 'catalog.unit-list', (tx) => this.catalog.listUnits(tx, this.normalizeQuery(query)));

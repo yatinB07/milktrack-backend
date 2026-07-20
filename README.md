@@ -206,8 +206,19 @@ product creation intentionally does not accept `expectedVersion`. Delivery-slot
 codes and `HH:mm` local time windows are immutable; only names can be changed,
 and deactivate/reactivate requires a reason.
 
+Effective-dated global prices and household final-price overrides are available
+under the vendor pricing routes. Amounts cross JSON as non-negative decimal
+integer strings, while currency is derived from the vendor. Price periods are
+half-open and append-only: an open row can be closed once with a reason, and a
+new row records a price change. Resolution uses the vendor timezone, service
+date, and delivery-slot start; household overrides take precedence over global
+prices, and no match returns an explicit `missing` result. Customer resolution
+requires active membership in the routed household and never exposes raw price
+history or source row IDs.
+
 Use the existing Compose migration and integration commands after applying the
-additive household, vendor-catalog, and delivery-slot migrations.
+additive household, vendor-catalog, delivery-slot, and effective-pricing
+migrations.
 
 The committed contract is `openapi/v1.json`. Regenerate it from the same Nest
 application and Swagger configuration used at runtime, then check for drift:

@@ -189,9 +189,20 @@ void test('publishes the complete Phase 1 HTTP contract without persistence secr
     '/v1/vendors/{vendorId}/delivery-slots/{slotId}/deactivate',
     '/v1/vendors/{vendorId}/delivery-slots/{slotId}/reactivate',
   ];
+  const pricingPaths = [
+    '/v1/vendors/{vendorId}/global-prices',
+    '/v1/vendors/{vendorId}/global-prices/{priceId}',
+    '/v1/vendors/{vendorId}/global-prices/{priceId}/close',
+    '/v1/vendors/{vendorId}/households/{householdId}/price-overrides',
+    '/v1/vendors/{vendorId}/households/{householdId}/price-overrides/{overrideId}',
+    '/v1/vendors/{vendorId}/households/{householdId}/price-overrides/{overrideId}/close',
+    '/v1/vendors/{vendorId}/prices/resolved',
+    '/v1/customer/vendors/{vendorId}/households/{householdId}/prices/resolved',
+  ];
   for (const path of householdPaths) assert.ok(paths[path], `missing ${path}`);
   for (const path of catalogPaths) assert.ok(paths[path], `missing ${path}`);
-  assert.deepEqual(Object.keys(paths).sort(), [...Object.keys(phaseOneOperations), ...householdPaths, ...catalogPaths].sort());
+  for (const path of pricingPaths) assert.ok(paths[path], `missing ${path}`);
+  assert.deepEqual(Object.keys(paths).sort(), [...Object.keys(phaseOneOperations), ...householdPaths, ...catalogPaths, ...pricingPaths].sort());
 
   for (const [path, methods] of Object.entries(phaseOneOperations)) {
     const pathItem = object(paths[path], `missing OpenAPI path ${path}`);
@@ -375,6 +386,43 @@ void test('publishes the complete Phase 1 HTTP contract without persistence secr
         );
       }
     }
+  }
+});
+
+void test('publishes the additive effective-pricing contract without leaking customer source IDs', async () => {
+  const { document } = await readDocument();
+  const paths = object(document.paths, 'OpenAPI paths must be documented');
+  const operations = [
+    ['get', '/v1/vendors/{vendorId}/global-prices', '200', 'PriceListResponseDto'],
+    ['post', '/v1/vendors/{vendorId}/global-prices', '201', 'PriceResponseDto'],
+    ['get', '/v1/vendors/{vendorId}/global-prices/{priceId}', '200', 'PriceResponseDto'],
+    ['post', '/v1/vendors/{vendorId}/global-prices/{priceId}/close', '200', 'PriceResponseDto'],
+    ['get', '/v1/vendors/{vendorId}/households/{householdId}/price-overrides', '200', 'OverrideListResponseDto'],
+    ['post', '/v1/vendors/{vendorId}/households/{householdId}/price-overrides', '201', 'OverrideResponseDto'],
+    ['get', '/v1/vendors/{vendorId}/households/{householdId}/price-overrides/{overrideId}', '200', 'OverrideResponseDto'],
+    ['post', '/v1/vendors/{vendorId}/households/{householdId}/price-overrides/{overrideId}/close', '200', 'OverrideResponseDto'],
+    ['get', '/v1/vendors/{vendorId}/prices/resolved', '200', 'ResolvedPriceResponseDto'],
+    ['get', '/v1/customer/vendors/{vendorId}/households/{householdId}/prices/resolved', '200', 'CustomerResolvedPriceResponseDto'],
+  ] as const;
+  for (const [method, path, status, schemaName] of operations) {
+    const operation = object(object(paths[path], `missing ${path}`)[method], `missing ${method.toUpperCase()} ${path}`);
+    assert.deepEqual(operation.security, [{ opaqueBearer: [] }]);
+    assert.equal(responseSchema(object(object(operation.responses, `${path} responses`)['409'], `${path} 409`), `${path} 409 response`).$ref, '#/components/schemas/ApiErrorResponseDto');
+    assert.equal(responseSchema(object(object(operation.responses, `${path} responses`)['503'], `${path} 503`), `${path} 503 response`).$ref, '#/components/schemas/ApiErrorResponseDto');
+    assert.equal(responseSchema(object(object(operation.responses, `${path} responses`)[status], `${path} ${status}`), `${path} response`).$ref, `#/components/schemas/${schemaName}`);
+  }
+  const schemas = object(object(document.components, 'components').schemas, 'schemas');
+  const properties = (name: string) => object(object(schemas[name], name).properties, `${name} properties`);
+  assert.deepEqual(Object.keys(properties('PriceResponseDto')).sort(), ['amountMinor', 'createdAt', 'currency', 'effectiveFrom', 'effectiveTo', 'id', 'productId', 'unitId', 'updatedAt', 'vendorId']);
+  assert.equal(object(properties('PriceResponseDto').amountMinor, 'price amount').type, 'string');
+  assert.equal(object(properties('PriceResponseDto').effectiveTo, 'price end').nullable, true);
+  assert.ok('sourcePriceId' in properties('ResolvedPriceResponseDto'));
+  assert.equal('sourcePriceId' in properties('CustomerResolvedPriceResponseDto'), false);
+  assert.equal('currency' in properties('CreatePriceRequestDto'), false);
+  for (const path of ['/v1/vendors/{vendorId}/global-prices', '/v1/vendors/{vendorId}/households/{householdId}/price-overrides']) {
+    const parameters = object(paths[path], path).get as JsonObject;
+    const names = (parameters.parameters as JsonObject[]).map(({ name }) => name);
+    for (const name of ['cursor', 'limit', 'productId', 'unitId']) assert.ok(names.includes(name));
   }
 });
 

@@ -25,6 +25,25 @@ const error = (code: string, message: string, status: number) => new Application
 export class PrismaCatalogStore {
   private readonly cursors = new CursorCodec();
 
+  async requirePricingProduct(context: TransactionContext, productId: string, unitId: string) {
+    const row = await unwrapPrismaTransaction(context).product.findFirst({
+      where: { id: productId },
+      select: { defaultUnitId: true, status: true, deletedAt: true, defaultUnit: { select: { status: true } } },
+    });
+    if (!row || row.deletedAt) throw error('PRICE_PRODUCT_NOT_FOUND', 'Price product was not found', 404);
+    if (row.defaultUnitId !== unitId) throw error('PRICE_UNIT_MISMATCH', 'Unit does not match the product default unit', 409);
+    if (row.status !== 'active' || row.defaultUnit.status !== 'active')
+      throw error('PRICE_PRODUCT_NOT_AVAILABLE', 'Price product is not available', 409);
+    return { productId, unitId };
+  }
+  async getPricingDeliverySlotStart(context: TransactionContext, slotId: string) {
+    const row = await unwrapPrismaTransaction(context).deliverySlot.findFirst({
+      where: { id: slotId }, select: { startLocalTime: true },
+    });
+    if (!row) throw error('DELIVERY_SLOT_NOT_FOUND', 'Delivery slot was not found', 404);
+    return this.formatLocalTime(row.startLocalTime);
+  }
+
   async listUnits(context: TransactionContext, query: CatalogPageQuery) {
     const tx = unwrapPrismaTransaction(context);
     const limit = this.cursors.parseLimit(query.limit);
