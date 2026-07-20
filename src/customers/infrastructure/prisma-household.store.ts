@@ -127,6 +127,25 @@ function toMember(row: HouseholdMemberRow): HouseholdMemberRecord {
 
 @Injectable()
 export class PrismaHouseholdStore {
+  async requireSubscriptionHousehold(context: TransactionContext, householdId: string) {
+    const row = await unwrapPrismaTransaction(context).household.findFirst({
+      where: { id: householdId }, select: { id: true, status: true, deletedAt: true },
+    });
+    if (!row || row.deletedAt)
+      throw error("SUBSCRIPTION_HOUSEHOLD_NOT_FOUND", "Subscription household was not found", 404);
+    if (row.status !== "active")
+      throw error("SUBSCRIPTION_HOUSEHOLD_NOT_AVAILABLE", "Subscription household is not available", 409);
+    return { householdId: row.id };
+  }
+
+  async requireCustomerSubscriptionHousehold(context: TransactionContext, householdId: string, membershipIds: readonly string[]) {
+    const member = await unwrapPrismaTransaction(context).householdMember.findFirst({
+      where: { householdId, customerMembershipId: { in: [...membershipIds] }, status: "active" },
+      select: { id: true },
+    });
+    if (!member) throw error("FORBIDDEN", "You are not allowed to perform this action", 403);
+    return this.requireSubscriptionHousehold(context, householdId);
+  }
   async requirePricingHousehold(context: TransactionContext, householdId: string) {
     const row = await unwrapPrismaTransaction(context).household.findFirst({
       where: { id: householdId }, select: { id: true, status: true, deletedAt: true },

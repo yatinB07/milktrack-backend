@@ -27,6 +27,7 @@ void test('migrations safely upgrade legacy data without resetting it', async ()
     '202607200002_vendor_catalog',
     '202607200003_delivery_slots',
     '202607200004_effective_pricing',
+    '202607200005_subscriptions',
   ] as const;
   const migrations = await Promise.all(
     migrationDirectories.map((directory) =>
@@ -126,6 +127,20 @@ void test('migrations safely upgrade legacy data without resetting it', async ()
       [legacySlotId, legacyVendorId],
     );
     await client.query(migrations[13]);
+    const legacyGlobalPriceId = randomUUID(); const legacyOverrideId = randomUUID();
+    await client.query(
+      `INSERT INTO global_prices
+         (id,vendor_id,product_id,unit_id,amount_minor,currency,effective_from,created_by,updated_at)
+       VALUES ($1,$2,$3,$4,6500,'INR','2026-07-20T00:00:00Z',$5,now())`,
+      [legacyGlobalPriceId, legacyVendorId, legacyProductId, legacyUnitId, userId],
+    );
+    await client.query(
+      `INSERT INTO customer_price_overrides
+         (id,vendor_id,household_id,product_id,unit_id,amount_minor,currency,effective_from,reason,created_by,updated_at)
+       VALUES ($1,$2,$3,$4,$5,6250,'INR','2026-07-20T00:00:00Z','Legacy negotiated price',$6,now())`,
+      [legacyOverrideId, legacyVendorId, legacyHouseholdId, legacyProductId, legacyUnitId, userId],
+    );
+    await client.query(migrations[14]);
 
     const session = await client.query<{
       authentication_method: string;
@@ -209,6 +224,8 @@ void test('migrations safely upgrade legacy data without resetting it', async ()
     assert.equal((await client.query('SELECT id FROM units WHERE id=$1', [legacyUnitId])).rowCount, 1);
     assert.equal((await client.query('SELECT id FROM products WHERE id=$1', [legacyProductId])).rowCount, 1);
     assert.equal((await client.query('SELECT id FROM delivery_slots WHERE id=$1', [legacySlotId])).rowCount, 1);
+    assert.equal((await client.query('SELECT id FROM global_prices WHERE id=$1', [legacyGlobalPriceId])).rowCount, 1);
+    assert.equal((await client.query('SELECT id FROM customer_price_overrides WHERE id=$1', [legacyOverrideId])).rowCount, 1);
 
     const anonymousChallengeId = randomUUID();
     await client.query(

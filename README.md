@@ -216,9 +216,22 @@ prices, and no match returns an explicit `missing` result. Customer resolution
 requires active membership in the routed household and never exposes raw price
 history or source row IDs.
 
+Effective-dated milk subscriptions are available under
+`/v1/vendors/{vendorId}/subscriptions`, with household-scoped customer reads
+under `/v1/customer/vendors/{vendorId}/households/{householdId}/subscriptions`.
+Quantities cross JSON as canonical decimal strings. Weekdays use unique ISO
+values `1` through `7`, API end dates are inclusive, and lifecycle changes use
+vendor-local effective dates plus optimistic root versions. Modify, pause,
+resume, and cancel retain superseded revision history; pause and cancel remain
+available when retained household or catalog references later become inactive.
+Only cancelled or completed roots can be soft-deleted, and restore exposes the
+same terminal history without resuming service. Customer responses require an
+active household membership and omit creator IDs and internal supersession
+reasons.
+
 Use the existing Compose migration and integration commands after applying the
-additive household, vendor-catalog, delivery-slot, and effective-pricing
-migrations.
+additive household, vendor-catalog, delivery-slot, effective-pricing, and
+subscription migrations.
 
 The committed contract is `openapi/v1.json`. Regenerate it from the same Nest
 application and Swagger configuration used at runtime, then check for drift:

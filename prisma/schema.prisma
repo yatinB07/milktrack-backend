@@ -96,6 +96,8 @@ model User {
   ownerEnrollments OwnerEnrollment[]
   globalPricesCreated GlobalPrice[]             @relation("GlobalPriceCreator")
   priceOverridesCreated CustomerPriceOverride[] @relation("CustomerPriceOverrideCreator")
+  subscriptionRevisionsCreated SubscriptionRevision[] @relation("SubscriptionRevisionCreator")
+  subscriptionsDeleted Subscription[] @relation("SubscriptionDeleter")
 
   @@map("users")
 }
@@ -244,6 +246,8 @@ model Vendor {
   deliverySlots     DeliverySlot[]
   globalPrices      GlobalPrice[]
   priceOverrides    CustomerPriceOverride[]
+  subscriptions     Subscription[]
+  subscriptionRevisions SubscriptionRevision[]
 
   @@map("vendors")
 }
@@ -296,6 +300,7 @@ model Household {
   vendor         Vendor          @relation(fields: [vendorId], references: [id])
   members        HouseholdMember[]
   priceOverrides CustomerPriceOverride[]
+  subscriptions Subscription[]
 
   @@unique([vendorId, id])
   @@index([vendorId, createdAt, id])
@@ -355,6 +360,7 @@ model Product {
   defaultUnit    Unit          @relation(fields: [vendorId, defaultUnitId], references: [vendorId, id])
   globalPrices   GlobalPrice[] @relation("GlobalPriceProduct")
   priceOverrides CustomerPriceOverride[] @relation("CustomerPriceOverrideProduct")
+  subscriptionRevisions SubscriptionRevision[]
 
   @@unique([vendorId, id])
   @@unique([vendorId, id, defaultUnitId])
@@ -372,6 +378,7 @@ model DeliverySlot {
   createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
   vendor         Vendor   @relation(fields: [vendorId], references: [id])
+  subscriptionRevisions SubscriptionRevision[]
 
   @@unique([vendorId, id])
   @@unique([vendorId, code])
@@ -424,6 +431,70 @@ model CustomerPriceOverride {
   @@index([vendorId, householdId, createdAt(sort: Desc), id(sort: Desc)])
   @@index([vendorId, householdId, productId, unitId, effectiveFrom(sort: Desc), effectiveTo])
   @@map("customer_price_overrides")
+}
+
+model Subscription {
+  id             String    @id @db.Uuid
+  vendorId       String    @map("vendor_id") @db.Uuid
+  householdId    String    @map("household_id") @db.Uuid
+  version        Int       @default(1)
+  deletedAt      DateTime? @map("deleted_at") @db.Timestamptz(6)
+  deletedBy      String?   @map("deleted_by") @db.Uuid
+  deletionReason String?   @map("deletion_reason")
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  vendor         Vendor    @relation(fields: [vendorId], references: [id])
+  household      Household @relation(fields: [vendorId, householdId], references: [vendorId, id])
+  deleter        User?     @relation("SubscriptionDeleter", fields: [deletedBy], references: [id])
+  revisions      SubscriptionRevision[]
+
+  @@unique([vendorId, id])
+  @@index([vendorId, createdAt(sort: Desc), id(sort: Desc)])
+  @@index([vendorId, householdId, createdAt(sort: Desc), id(sort: Desc)])
+  @@map("subscriptions")
+}
+
+model SubscriptionRevision {
+  id                     String    @id @db.Uuid
+  vendorId               String    @map("vendor_id") @db.Uuid
+  subscriptionId         String    @map("subscription_id") @db.Uuid
+  productId              String    @map("product_id") @db.Uuid
+  unitId                 String    @map("unit_id") @db.Uuid
+  deliverySlotId         String    @map("delivery_slot_id") @db.Uuid
+  quantity               Decimal   @db.Decimal(18, 3)
+  status                 String
+  effectiveFrom          DateTime  @map("effective_from") @db.Date
+  effectiveTo            DateTime? @map("effective_to") @db.Date
+  createdBy              String    @map("created_by") @db.Uuid
+  supersededAt           DateTime? @map("superseded_at") @db.Timestamptz(6)
+  supersededByRevisionId String?   @map("superseded_by_revision_id") @db.Uuid
+  supersessionReason     String?   @map("supersession_reason")
+  createdAt              DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt              DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  vendor                 Vendor    @relation(fields: [vendorId], references: [id])
+  subscription           Subscription @relation(fields: [vendorId, subscriptionId], references: [vendorId, id])
+  product                Product   @relation(fields: [vendorId, productId, unitId], references: [vendorId, id, defaultUnitId])
+  deliverySlot           DeliverySlot @relation(fields: [vendorId, deliverySlotId], references: [vendorId, id])
+  creator                User      @relation("SubscriptionRevisionCreator", fields: [createdBy], references: [id])
+  supersededBy           SubscriptionRevision? @relation("RevisionSupersession", fields: [vendorId, subscriptionId, supersededByRevisionId], references: [vendorId, subscriptionId, id])
+  supersededRevisions    SubscriptionRevision[] @relation("RevisionSupersession")
+  weekdays               SubscriptionRevisionWeekday[]
+
+  @@unique([vendorId, id])
+  @@unique([vendorId, subscriptionId, id])
+  @@index([vendorId, subscriptionId, effectiveFrom, id])
+  @@index([vendorId, subscriptionId, createdAt(sort: Desc), id(sort: Desc)])
+  @@map("subscription_revisions")
+}
+
+model SubscriptionRevisionWeekday {
+  vendorId               String @map("vendor_id") @db.Uuid
+  subscriptionRevisionId String @map("subscription_revision_id") @db.Uuid
+  weekday                Int    @db.SmallInt
+  revision               SubscriptionRevision @relation(fields: [vendorId, subscriptionRevisionId], references: [vendorId, id])
+
+  @@id([vendorId, subscriptionRevisionId, weekday])
+  @@map("subscription_revision_weekdays")
 }
 
 model OwnerEnrollment {

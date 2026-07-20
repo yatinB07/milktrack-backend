@@ -42,6 +42,14 @@ const resultFields = {
 export class PrismaVendorStore {
   constructor(@Inject(PrismaService) private readonly prisma: PrismaService) {}
 
+  async getSubscriptionTimezone(context: TransactionContext, vendorId: string) {
+    const vendor = await unwrapPrismaTransaction(context).vendor.findFirst({
+      where: { id: vendorId, deletedAt: null }, select: { timezone: true },
+    });
+    if (!vendor) throw new ApplicationError('VENDOR_NOT_FOUND', 'Vendor was not found', 404);
+    return vendor;
+  }
+
   async getPricingSettings(context: TransactionContext, vendorId: string) {
     const vendor = await unwrapPrismaTransaction(context).vendor.findFirst({
       where: { id: vendorId, deletedAt: null }, select: { timezone: true, currency: true },

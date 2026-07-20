@@ -25,6 +25,26 @@ const error = (code: string, message: string, status: number) => new Application
 export class PrismaCatalogStore {
   private readonly cursors = new CursorCodec();
 
+  async requireSubscriptionSelection(context: TransactionContext, productId: string, unitId: string, deliverySlotId: string) {
+    const tx = unwrapPrismaTransaction(context);
+    const product = await tx.product.findFirst({
+      where: { id: productId },
+      select: { defaultUnitId: true, status: true, deletedAt: true, defaultUnit: { select: { status: true, decimalScale: true } } },
+    });
+    if (!product || product.deletedAt)
+      throw error('SUBSCRIPTION_PRODUCT_NOT_FOUND', 'Subscription product was not found', 404);
+    if (product.defaultUnitId !== unitId)
+      throw error('SUBSCRIPTION_UNIT_MISMATCH', 'Unit does not match the product default unit', 409);
+    if (product.status !== 'active' || product.defaultUnit.status !== 'active')
+      throw error('SUBSCRIPTION_PRODUCT_NOT_AVAILABLE', 'Subscription product is not available', 409);
+    const slot = await tx.deliverySlot.findFirst({ where: { id: deliverySlotId }, select: { active: true } });
+    if (!slot)
+      throw error('SUBSCRIPTION_DELIVERY_SLOT_NOT_FOUND', 'Subscription delivery slot was not found', 404);
+    if (!slot.active)
+      throw error('SUBSCRIPTION_DELIVERY_SLOT_NOT_AVAILABLE', 'Subscription delivery slot is not available', 409);
+    return { productId, unitId, deliverySlotId, unitDecimalScale: product.defaultUnit.decimalScale };
+  }
+
   async requirePricingProduct(context: TransactionContext, productId: string, unitId: string) {
     const row = await unwrapPrismaTransaction(context).product.findFirst({
       where: { id: productId },

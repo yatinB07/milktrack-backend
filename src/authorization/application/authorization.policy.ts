@@ -19,6 +19,8 @@ export type VendorPermission =
   | 'catalog:manage'
   | 'pricing:read'
   | 'pricing:manage'
+  | 'subscription:read'
+  | 'subscription:manage'
   | 'audit:read'
   | 'delivery:read'
   | 'delivery:record'
@@ -48,6 +50,8 @@ const vendorPermissions: Readonly<Record<VendorRole, ReadonlySet<VendorPermissio
     'catalog:manage',
     'pricing:read',
     'pricing:manage',
+    'subscription:read',
+    'subscription:manage',
   ]),
   vendor_administrator: new Set([
     'vendor:profile:read',
@@ -60,6 +64,8 @@ const vendorPermissions: Readonly<Record<VendorRole, ReadonlySet<VendorPermissio
     'catalog:manage',
     'pricing:read',
     'pricing:manage',
+    'subscription:read',
+    'subscription:manage',
   ]),
   delivery_agent: new Set(['delivery:read', 'delivery:record']),
   customer: new Set(['customer:self']),
@@ -112,6 +118,19 @@ const activeVendorOperations: Readonly<Record<string, VendorPermission>> = {
   'pricing.override-close': 'pricing:manage',
   'pricing.resolve': 'pricing:read',
   'pricing.self-resolve': 'customer:self',
+  'subscription.list': 'subscription:read',
+  'subscription.get': 'subscription:read',
+  'subscription.history': 'subscription:read',
+  'subscription.create': 'subscription:manage',
+  'subscription.modify': 'subscription:manage',
+  'subscription.pause': 'subscription:manage',
+  'subscription.resume': 'subscription:manage',
+  'subscription.cancel': 'subscription:manage',
+  'subscription.delete': 'subscription:manage',
+  'subscription.restore': 'subscription:manage',
+  'subscription.self-list': 'customer:self',
+  'subscription.self-get': 'customer:self',
+  'subscription.self-history': 'customer:self',
 };
 
 export const hasPlatformPermission = (

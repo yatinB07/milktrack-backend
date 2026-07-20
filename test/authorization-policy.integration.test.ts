@@ -633,6 +633,38 @@ void test('executor permits exact pricing read support only and denies manage or
   }
 });
 
+void test('executor permits exact subscription read support only and denies manage, invalid grants, and unrelated actors', async () => {
+  const vendorId = randomUUID();
+  const userIds = Array.from({ length: 5 }, randomUUID);
+  const prisma = new PrismaService();
+  const executor = new PrismaTenantAuthorizationExecutor(
+    new PrismaTenantTransactionRunner(prisma),
+    new PrismaAuthorizationPolicy(new PrismaAuditWriter()),
+    new PrismaSecurityDenialRecorder(prisma),
+  );
+  await Promise.all(userIds.map(insertUser)); await insertVendor(vendorId);
+  await insertGrant({ vendorId, userId: userIds[0], scope: ['subscription:read'] });
+  await insertGrant({ vendorId, userId: userIds[1], scope: ['catalog:read'] });
+  await insertGrant({ vendorId, userId: userIds[2], scope: ['subscription:read'], expiresAt: new Date(Date.now() - 60_000) });
+  await insertMembership({ vendorId, userId: userIds[3], role: 'delivery_agent' });
+  const execute = (currentActor: Actor, permission: 'subscription:read' | 'subscription:manage', operation: string) =>
+    requestContextStore.run({ correlationId: randomUUID(), actor: currentActor }, () =>
+      executor.execute({ actor: currentActor, vendorId, permission, operation }, () => Promise.resolve(operation)),
+    );
+  try {
+    const support = actor(userIds[0], ['support_operations']);
+    for (const operation of ['subscription.list', 'subscription.get', 'subscription.history'])
+      assert.equal(await execute(support, 'subscription:read', operation), operation);
+    await assert.rejects(execute(support, 'subscription:manage', 'subscription.modify'), forbidden);
+    await assert.rejects(execute(actor(userIds[1], ['support_operations']), 'subscription:read', 'subscription.list'), forbidden);
+    await assert.rejects(execute(actor(userIds[2], ['support_operations']), 'subscription:read', 'subscription.get'), forbidden);
+    await assert.rejects(execute(actor(userIds[3]), 'subscription:read', 'subscription.history'), forbidden);
+    await assert.rejects(execute(actor(userIds[4], ['product_owner']), 'subscription:read', 'subscription.list'), forbidden);
+  } finally {
+    await prisma.$disconnect(); await cleanup({ vendorIds: [vendorId], userIds });
+  }
+});
+
 void test('every tenant denial rolls back and leaves exactly one minimal global denial audit', async () => {
   const vendorIds = [randomUUID(), randomUUID(), randomUUID(), randomUUID()];
   const missingVendorId = randomUUID();

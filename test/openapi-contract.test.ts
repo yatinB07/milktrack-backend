@@ -199,10 +199,24 @@ void test('publishes the complete Phase 1 HTTP contract without persistence secr
     '/v1/vendors/{vendorId}/prices/resolved',
     '/v1/customer/vendors/{vendorId}/households/{householdId}/prices/resolved',
   ];
+  const subscriptionPaths = [
+    '/v1/vendors/{vendorId}/subscriptions',
+    '/v1/vendors/{vendorId}/subscriptions/{subscriptionId}',
+    '/v1/vendors/{vendorId}/subscriptions/{subscriptionId}/revisions',
+    '/v1/vendors/{vendorId}/subscriptions/{subscriptionId}/modify',
+    '/v1/vendors/{vendorId}/subscriptions/{subscriptionId}/pause',
+    '/v1/vendors/{vendorId}/subscriptions/{subscriptionId}/resume',
+    '/v1/vendors/{vendorId}/subscriptions/{subscriptionId}/cancel',
+    '/v1/vendors/{vendorId}/subscriptions/{subscriptionId}/restore',
+    '/v1/customer/vendors/{vendorId}/households/{householdId}/subscriptions',
+    '/v1/customer/vendors/{vendorId}/households/{householdId}/subscriptions/{subscriptionId}',
+    '/v1/customer/vendors/{vendorId}/households/{householdId}/subscriptions/{subscriptionId}/revisions',
+  ];
   for (const path of householdPaths) assert.ok(paths[path], `missing ${path}`);
   for (const path of catalogPaths) assert.ok(paths[path], `missing ${path}`);
   for (const path of pricingPaths) assert.ok(paths[path], `missing ${path}`);
-  assert.deepEqual(Object.keys(paths).sort(), [...Object.keys(phaseOneOperations), ...householdPaths, ...catalogPaths, ...pricingPaths].sort());
+  for (const path of subscriptionPaths) assert.ok(paths[path], `missing ${path}`);
+  assert.deepEqual(Object.keys(paths).sort(), [...Object.keys(phaseOneOperations), ...householdPaths, ...catalogPaths, ...pricingPaths, ...subscriptionPaths].sort());
 
   for (const [path, methods] of Object.entries(phaseOneOperations)) {
     const pathItem = object(paths[path], `missing OpenAPI path ${path}`);
@@ -424,6 +438,56 @@ void test('publishes the additive effective-pricing contract without leaking cus
     const names = (parameters.parameters as JsonObject[]).map(({ name }) => name);
     for (const name of ['cursor', 'limit', 'productId', 'unitId']) assert.ok(names.includes(name));
   }
+});
+
+void test('publishes the effective-dated subscription contract with customer-safe schemas', async () => {
+  const { document } = await readDocument(); const paths = object(document.paths, 'OpenAPI paths');
+  const operations = [
+    ['get', '/v1/vendors/{vendorId}/subscriptions', '200', 'SubscriptionListResponseDto', undefined],
+    ['post', '/v1/vendors/{vendorId}/subscriptions', '201', 'SubscriptionResponseDto', 'CreateSubscriptionRequestDto'],
+    ['get', '/v1/vendors/{vendorId}/subscriptions/{subscriptionId}', '200', 'SubscriptionResponseDto', undefined],
+    ['delete', '/v1/vendors/{vendorId}/subscriptions/{subscriptionId}', '204', undefined, 'SubscriptionVersionReasonRequestDto'],
+    ['get', '/v1/vendors/{vendorId}/subscriptions/{subscriptionId}/revisions', '200', 'SubscriptionHistoryResponseDto', undefined],
+    ['post', '/v1/vendors/{vendorId}/subscriptions/{subscriptionId}/modify', '200', 'SubscriptionResponseDto', 'ModifySubscriptionRequestDto'],
+    ['post', '/v1/vendors/{vendorId}/subscriptions/{subscriptionId}/pause', '200', 'SubscriptionResponseDto', 'SubscriptionTransitionRequestDto'],
+    ['post', '/v1/vendors/{vendorId}/subscriptions/{subscriptionId}/resume', '200', 'SubscriptionResponseDto', 'SubscriptionTransitionRequestDto'],
+    ['post', '/v1/vendors/{vendorId}/subscriptions/{subscriptionId}/cancel', '200', 'SubscriptionResponseDto', 'SubscriptionTransitionRequestDto'],
+    ['post', '/v1/vendors/{vendorId}/subscriptions/{subscriptionId}/restore', '200', 'SubscriptionResponseDto', 'SubscriptionVersionReasonRequestDto'],
+    ['get', '/v1/customer/vendors/{vendorId}/households/{householdId}/subscriptions', '200', 'CustomerSubscriptionListResponseDto', undefined],
+    ['get', '/v1/customer/vendors/{vendorId}/households/{householdId}/subscriptions/{subscriptionId}', '200', 'CustomerSubscriptionResponseDto', undefined],
+    ['get', '/v1/customer/vendors/{vendorId}/households/{householdId}/subscriptions/{subscriptionId}/revisions', '200', 'CustomerSubscriptionHistoryResponseDto', undefined],
+  ] as const;
+  for (const [method, path, status, responseName, bodyName] of operations) {
+    const operation = object(object(paths[path], `missing ${path}`)[method], `missing ${method} ${path}`);
+    assert.deepEqual(operation.security, [{ opaqueBearer: [] }]);
+    const responses = object(operation.responses, `${path} responses`);
+    if (responseName) assert.equal(responseSchema(responses[status], `${path} ${status}`).$ref, `#/components/schemas/${responseName}`);
+    else assert.equal(object(responses[status], `${path} ${status}`).content, undefined);
+    for (const errorStatus of ['400', '401', '403', '404', '409', '503'])
+      assert.equal(responseSchema(responses[errorStatus], `${path} ${errorStatus}`).$ref, '#/components/schemas/ApiErrorResponseDto');
+    if (bodyName) {
+      const request = object(operation.requestBody, `${path} request body`); const content = object(request.content, `${path} content`);
+      assert.equal(object(object(content['application/json'], `${path} JSON`).schema, `${path} schema`).$ref, `#/components/schemas/${bodyName}`);
+    }
+  }
+  const schemas = object(object(document.components, 'components').schemas, 'schemas');
+  const properties = (name: string) => object(object(schemas[name], name).properties, `${name} properties`);
+  assert.equal(object(properties('CreateSubscriptionRequestDto').quantity, 'quantity').type, 'string');
+  assert.equal(object(properties('CreateSubscriptionRequestDto').startDate, 'start date').format, 'date');
+  for (const name of ['SubscriptionRevisionResponseDto', 'CustomerSubscriptionRevisionResponseDto']) {
+    const revision = properties(name);
+    assert.equal(object(revision.startDate, `${name} start date`).format, 'date');
+    assert.equal(object(revision.endDate, `${name} end date`).format, 'date');
+    assert.equal('effectiveFrom' in revision, false);
+    assert.equal('effectiveTo' in revision, false);
+  }
+  assert.ok('createdBy' in properties('SubscriptionRevisionResponseDto'));
+  assert.ok('supersessionReason' in properties('SubscriptionRevisionResponseDto'));
+  assert.equal('createdBy' in properties('CustomerSubscriptionRevisionResponseDto'), false);
+  assert.equal('supersessionReason' in properties('CustomerSubscriptionRevisionResponseDto'), false);
+  const customerList = object(object(paths['/v1/customer/vendors/{vendorId}/households/{householdId}/subscriptions'], 'customer subscriptions').get, 'customer subscriptions get');
+  const customerParameters = customerList.parameters as JsonObject[];
+  assert.equal(customerParameters.some(({ name, in: location }) => name === 'householdId' && location === 'query'), false);
 });
 
 void test('publishes the additive vendor catalog contract', async () => {

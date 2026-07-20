@@ -44,6 +44,8 @@ const vendor = {
     'catalog:manage',
     'pricing:read',
     'pricing:manage',
+    'subscription:read',
+    'subscription:manage',
   ],
   vendor_administrator: [
     'membership:read',
@@ -56,6 +58,8 @@ const vendor = {
     'catalog:manage',
     'pricing:read',
     'pricing:manage',
+    'subscription:read',
+    'subscription:manage',
   ],
   delivery_agent: ['delivery:read', 'delivery:record'],
   customer: ['customer:self'],
@@ -185,6 +189,26 @@ void test('pricing operations map only to explicit read, manage, and customer-se
   assert.doesNotThrow(() => requireVendorOperation('pricing.self-resolve', 'customer:self'));
   assert.throws(() => requireVendorOperation('pricing.self-resolve', 'pricing:read'), forbidden);
   assert.throws(() => requireVendorOperation('pricing.global-update', 'pricing:manage'), forbidden);
+});
+
+void test('subscription operations map to explicit read, manage, and customer-self permissions', () => {
+  for (const operation of ['subscription.list', 'subscription.get', 'subscription.history']) {
+    assert.doesNotThrow(() => requireVendorOperation(operation, 'subscription:read'));
+    assert.throws(() => requireVendorOperation(operation, 'subscription:manage'), forbidden);
+  }
+  for (const operation of [
+    'subscription.create', 'subscription.modify', 'subscription.pause', 'subscription.resume',
+    'subscription.cancel', 'subscription.delete', 'subscription.restore',
+  ]) {
+    assert.doesNotThrow(() => requireVendorOperation(operation, 'subscription:manage'));
+    assert.throws(() => requireVendorOperation(operation, 'subscription:read'), forbidden);
+  }
+  for (const operation of ['subscription.self-list', 'subscription.self-get', 'subscription.self-history']) {
+    assert.doesNotThrow(() => requireVendorOperation(operation, 'customer:self'));
+    assert.throws(() => requireVendorOperation(operation, 'subscription:read'), forbidden);
+  }
+  assert.throws(() => requireVendorPermission('customer', 'subscription:read'), forbidden);
+  assert.throws(() => requireVendorPermission('delivery_agent', 'subscription:read'), forbidden);
 });
 
 void test('catalog vendor operations accept onboarding, trial, and active vendors', async () => {
