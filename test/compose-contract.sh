@@ -95,6 +95,10 @@ printf '%s\n' "$worker" | grep -q 'stop_grace_period: 1m10s$'
 ! printf '%s\n' "$worker" | grep -q 'postgresql://milktrack_owner:'
 ! printf '%s\n' "$worker" | grep -q 'TEST_OWNER_DATABASE_URL:'
 ! printf '%s\n' "$worker" | grep -q 'MIGRATION_DATABASE_URL:'
+if printf '%s\n' "$worker" | grep -Eq '(AUTH_HMAC_KEY|MFA_ENCRYPTION_KEY):'; then
+  echo 'worker must not receive HTTP authentication keys' >&2
+  exit 1
+fi
 ! printf '%s\n' "$worker" | grep -q 'BYPASSRLS'
 ! printf '%s\n' "$worker" | grep -q 'TRUST_PROXY_CIDRS:'
 [ "$(printf '%s\n' "$worker" | grep -Ec '^      (POLL_INTERVAL_MS|CONCURRENCY|SHUTDOWN_TIMEOUT_MS):')" -eq 3 ]
