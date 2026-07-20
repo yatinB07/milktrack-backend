@@ -92,6 +92,11 @@ void test('runtime and retained-volume scripts exercise real production and pers
 
   assert.match(runtime, /docker run --detach/);
   assert.match(runtime, /fetch\('http:\/\/127\.0\.0\.1:3000\/v1\/health'\)/);
+  assert.match(runtime, /node dist\/worker\.js/);
+  assert.match(runtime, /\{\{\.Image\}\}/);
+  assert.match(runtime, /docker port "\$worker_container"/);
+  assert.match(runtime, /docker stop --time 10 "\$worker_container"/);
+  assert.match(runtime, /\{\{\.State\.ExitCode\}\}/);
   assert.doesNotMatch(runtime, /TEST_OWNER_DATABASE_URL=/);
   assert.doesNotMatch(runtime, /MIGRATION_DATABASE_URL=/);
   assert.match(retained, /COMPOSE_PROJECT_NAME:\?/);
