@@ -156,7 +156,11 @@ export class PrismaRouteAssignmentStore extends RouteAssignmentStore {
     })) > 0;
   }
 
-  async schedule(context: TransactionContext, serviceDate: string): Promise<readonly RouteScheduleProjection[]> {
+  async schedule(
+    context: TransactionContext,
+    vendorId: string,
+    serviceDate: string,
+  ): Promise<readonly RouteScheduleProjection[]> {
     type ScheduleRow = {
       routeId: string;
       routeVersion: number;
@@ -174,7 +178,8 @@ export class PrismaRouteAssignmentStore extends RouteAssignmentStore {
       LEFT JOIN route_assignments a ON a.route_id=r.id AND a.service_date=${serviceDate}::date AND a.status='assigned'
       LEFT JOIN LATERAL (SELECT id FROM route_stop_plans WHERE route_id=r.id AND superseded_at IS NULL AND effective_from<=${serviceDate}::date AND (effective_to IS NULL OR effective_to>${serviceDate}::date) ORDER BY effective_from DESC,id DESC LIMIT 1) p ON true
       LEFT JOIN route_stops s ON s.plan_id=p.id AND s.superseded_at IS NULL
-      WHERE r.status='active' AND r.deleted_at IS NULL ORDER BY r.id,s.sequence,s.id`);
+      WHERE r.vendor_id=${vendorId}::uuid AND r.status='active' AND r.deleted_at IS NULL
+      ORDER BY r.id,s.sequence,s.id`);
     const routes = new Map<string, RouteScheduleProjection>();
     for (const row of rows) {
       const existing = routes.get(row.routeId);

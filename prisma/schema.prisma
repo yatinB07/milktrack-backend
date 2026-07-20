@@ -390,7 +390,6 @@ model DeliverySlot {
   vendor         Vendor   @relation(fields: [vendorId], references: [id])
   subscriptionRevisions SubscriptionRevision[]
   routes Route[]
-  routeAssignments RouteAssignment[]
 
   @@unique([vendorId, id])
   @@unique([vendorId, code])
@@ -606,7 +605,6 @@ model RouteAssignment {
   updatedAt         DateTime         @updatedAt @map("updated_at") @db.Timestamptz(6)
   vendor            Vendor           @relation(fields: [vendorId], references: [id])
   route             Route            @relation(fields: [vendorId, routeId, deliverySlotId], references: [vendorId, id, deliverySlotId])
-  deliverySlot      DeliverySlot     @relation(fields: [vendorId, deliverySlotId], references: [vendorId, id])
   agentMembership   VendorMembership @relation(fields: [vendorId, agentMembershipId], references: [vendorId, id])
   creator           User             @relation("RouteAssignmentCreator", fields: [createdBy], references: [id])
   updater           User             @relation("RouteAssignmentUpdater", fields: [updatedBy], references: [id])

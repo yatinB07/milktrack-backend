@@ -48,5 +48,9 @@ export abstract class RouteAssignmentStore {
   ): Promise<RouteAssignmentMutation>;
   abstract cancel(tx: TransactionContext, input: Readonly<{ route: RouteRecord; serviceDate: string; actorId: string; reason: string }>): Promise<RouteAssignmentMutation>;
   abstract hasAssignedOnOrAfter(tx: TransactionContext, routeId: string, today: string): Promise<boolean>;
-  abstract schedule(tx: TransactionContext, serviceDate: string): Promise<readonly RouteScheduleProjection[]>;
+  abstract schedule(
+    tx: TransactionContext,
+    vendorId: string,
+    serviceDate: string,
+  ): Promise<readonly RouteScheduleProjection[]>;
 }

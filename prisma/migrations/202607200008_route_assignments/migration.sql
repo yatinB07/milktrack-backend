@@ -25,6 +25,7 @@ CREATE TABLE route_assignments (
   CONSTRAINT route_assignments_status_consistency_check CHECK (
     (status = 'assigned' AND cancelled_at IS NULL AND cancellation_reason IS NULL)
     OR (status = 'cancelled' AND cancelled_at IS NOT NULL
+      AND cancellation_reason IS NOT NULL
       AND cancellation_reason = btrim(cancellation_reason)
       AND char_length(cancellation_reason) BETWEEN 3 AND 500)
   )

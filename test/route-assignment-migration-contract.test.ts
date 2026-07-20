@@ -10,5 +10,14 @@ void test('route assignment migration defines retained tenant-safe exact-date as
     "WHERE status = 'assigned'", 'route_assignments_status_consistency_check',
     'ENABLE ROW LEVEL SECURITY', 'FORCE ROW LEVEL SECURITY', 'GRANT SELECT, INSERT', 'GRANT UPDATE (',
   ]) assert.ok(sql.includes(fragment), `migration must include ${fragment}`);
+  assert.match(sql, /status = 'cancelled' AND cancelled_at IS NOT NULL\s+AND cancellation_reason IS NOT NULL/u);
   assert.doesNotMatch(sql, /GRANT DELETE|CREATE TABLE scheduled_deliveries/u);
+});
+
+void test('route assignment Prisma relations match migration-owned foreign keys', async () => {
+  const schema = await readFile(new URL('../prisma/schema.prisma', import.meta.url), 'utf8');
+  const assignment = schema.match(/model RouteAssignment \{([\s\S]*?)\n\}/u)?.[1] ?? '';
+  const deliverySlot = schema.match(/model DeliverySlot \{([\s\S]*?)\n\}/u)?.[1] ?? '';
+  assert.doesNotMatch(assignment, /^\s+deliverySlot\s/mu);
+  assert.doesNotMatch(deliverySlot, /^\s+routeAssignments\s/mu);
 });
