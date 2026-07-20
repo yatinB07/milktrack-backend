@@ -13,7 +13,11 @@ const ownerPool = new pg.Pool({
 });
 const hmacKey = Buffer.from('0123456789abcdef0123456789abcdef');
 
-type Seed = { vendorIds: string[]; userIds: string[] };
+type Seed = {
+  vendorIds: string[];
+  userIds: string[];
+  administratorAccountKeyHashes?: string[];
+};
 
 function tokenHash(token: string): string {
   return createHmac('sha256', hmacKey).update(token).digest('hex');
@@ -168,6 +172,12 @@ async function cleanup(seed: Seed): Promise<void> {
     'DELETE FROM vendor_memberships WHERE vendor_id = ANY($1::uuid[])',
     [seed.vendorIds],
   );
+  if (seed.administratorAccountKeyHashes?.length) {
+    await ownerPool.query(
+      'DELETE FROM administrator_authentication_attempts WHERE account_key = ANY($1::text[])',
+      [seed.administratorAccountKeyHashes],
+    );
+  }
   for (const table of [
     'pending_mfa_authentications',
     'sessions',
@@ -352,6 +362,7 @@ void describe('vendor owner enrollment', () => {
         membershipId: invitation.membershipId,
       });
 
+      seed.administratorAccountKeyHashes = [tokenHash(email)];
       const passwordStep = await request(baseUrl, '/v1/auth/admin/password', {
         email,
         password,
