@@ -172,6 +172,77 @@ void test('automatic seeding inserts queued attempt-zero rows once and returns t
   }
 });
 
+void test('concurrent workers seed one seven-day horizon without duplicates', async () => {
+  const vendorId = await fixture('concurrent-automatic-seed');
+  const now = new Date('2030-01-01T00:00:00.000Z');
+  const input = {
+    vendorId,
+    triggerLocalDate: '2030-01-01',
+    serviceDates: Array.from({ length: 7 }, (_, index) => `2030-01-0${index + 1}`),
+    now,
+  };
+  const blockerPid = deferred<number>();
+  const waiterPid = deferred<number>();
+  const release = deferred();
+  try {
+    const first = transactions.run(vendorId, async (transaction) => {
+      const inserted = await store.seedAutomatic(transaction, input);
+      blockerPid.resolve(await backendPid(transaction));
+      await release.promise;
+      return inserted;
+    });
+    const blockingPid = await blockerPid.promise;
+    const second = transactions.run(vendorId, async (transaction) => {
+      waiterPid.resolve(await backendPid(transaction));
+      return store.seedAutomatic(transaction, input);
+    });
+    const waitingPid = await waiterPid.promise;
+    await waitForDatabaseLock(waitingPid, blockingPid);
+    release.resolve();
+    const inserted = await Promise.all([first, second]);
+    assert.deepEqual(inserted.sort((left, right) => left - right), [0, 7]);
+    assert.deepEqual((await owner.query<{ service_date: string }>(
+      `SELECT service_date::text FROM schedule_generation_runs
+       WHERE vendor_id=$1 AND trigger='automatic' ORDER BY service_date`,
+      [vendorId],
+    )).rows.map(({ service_date }) => service_date), input.serviceDates);
+  } finally {
+    release.resolve();
+    await cleanup(vendorId);
+  }
+});
+
+void test('a next-day restart preserves the prior horizon and seeds its full catch-up horizon', async () => {
+  const vendorId = await fixture('next-day-catch-up');
+  const firstDates = Array.from({ length: 7 }, (_, index) => `2030-01-0${index + 1}`);
+  const nextDates = Array.from({ length: 7 }, (_, index) => `2030-01-0${index + 2}`);
+  try {
+    assert.equal(await transactions.run(vendorId, (transaction) => store.seedAutomatic(transaction, {
+      vendorId,
+      triggerLocalDate: '2030-01-01',
+      serviceDates: firstDates,
+      now: new Date('2030-01-01T00:00:00.000Z'),
+    })), 7);
+    assert.equal(await transactions.run(vendorId, (transaction) => store.seedAutomatic(transaction, {
+      vendorId,
+      triggerLocalDate: '2030-01-02',
+      serviceDates: nextDates,
+      now: new Date('2030-01-02T00:00:00.000Z'),
+    })), 7);
+    assert.deepEqual((await owner.query<{ trigger_local_date: string; service_dates: string[] }>(
+      `SELECT trigger_local_date::text,array_agg(service_date::text ORDER BY service_date) AS service_dates
+       FROM schedule_generation_runs WHERE vendor_id=$1 AND trigger='automatic'
+       GROUP BY trigger_local_date ORDER BY trigger_local_date`,
+      [vendorId],
+    )).rows, [
+      { trigger_local_date: '2030-01-01', service_dates: firstDates },
+      { trigger_local_date: '2030-01-02', service_dates: nextDates },
+    ]);
+  } finally {
+    await cleanup(vendorId);
+  }
+});
+
 void test('claimNext skips a row locked by another worker', async () => {
   const vendorId = await fixture('skip-locked');
   await queued(vendorId);

@@ -183,12 +183,12 @@ void test('logs a fixed safe event and continues when claim infrastructure fails
 });
 
 void test('seeds exactly seven local dates across IANA date boundaries', async (context) => {
-  context.mock.timers.enable({ apis: ['Date'], now: new Date('2030-01-01T12:30:00.000Z') });
+  context.mock.timers.enable({ apis: ['Date'], now: new Date('2030-01-01T10:30:00.000Z') });
   const controller = new AbortController();
   const zones = new Map([
-    ['10000000-0000-4000-8000-000000000002', 'Pacific/Honolulu'],
-    ['10000000-0000-4000-8000-000000000003', 'UTC'],
-    ['10000000-0000-4000-8000-000000000004', 'Pacific/Kiritimati'],
+    ['10000000-0000-4000-8000-000000000002', 'Pacific/Kiritimati'],
+    ['10000000-0000-4000-8000-000000000003', 'Asia/Kolkata'],
+    ['10000000-0000-4000-8000-000000000004', 'Pacific/Pago_Pago'],
   ]);
   const seeded = new Map<string, readonly string[]>();
   const store = runStore({
@@ -215,16 +215,16 @@ void test('seeds exactly seven local dates across IANA date boundaries', async (
   ).run(controller.signal);
 
   assert.deepEqual(seeded.get('10000000-0000-4000-8000-000000000002'), [
-    '2030-01-01', '2030-01-02', '2030-01-03', '2030-01-04',
-    '2030-01-05', '2030-01-06', '2030-01-07',
+    '2030-01-02', '2030-01-03', '2030-01-04', '2030-01-05',
+    '2030-01-06', '2030-01-07', '2030-01-08',
   ]);
   assert.deepEqual(seeded.get('10000000-0000-4000-8000-000000000003'), [
     '2030-01-01', '2030-01-02', '2030-01-03', '2030-01-04',
     '2030-01-05', '2030-01-06', '2030-01-07',
   ]);
   assert.deepEqual(seeded.get('10000000-0000-4000-8000-000000000004'), [
-    '2030-01-02', '2030-01-03', '2030-01-04', '2030-01-05',
-    '2030-01-06', '2030-01-07', '2030-01-08',
+    '2029-12-31', '2030-01-01', '2030-01-02', '2030-01-03',
+    '2030-01-04', '2030-01-05', '2030-01-06',
   ]);
 });
 
