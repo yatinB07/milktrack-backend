@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
+
+import { Settings } from 'luxon';
 
 import type { AuditWriter } from '../src/audit/application/audit-writer.js';
 import type { TenantAuthorizationExecutor } from '../src/authorization/application/tenant-authorization.executor.js';
@@ -13,6 +16,7 @@ import {
 import type { ScheduleGenerationRunStore } from '../src/scheduling/application/schedule-generation-run.store.js';
 import type { ScheduleRunProcessor } from '../src/scheduling/application/schedule-run-processor.js';
 import { ScheduleGenerationRunController } from '../src/scheduling/http/schedule-generation-run.controller.js';
+import type { GenerateManualScheduleRunRequestDto, ScheduleGenerationRunQueryDto } from '../src/scheduling/http/schedule-generation-run.dto.js';
 
 const vendorId = '00000000-0000-4000-8000-000000000010';
 const actor: Actor = {
@@ -64,18 +68,21 @@ function service(input: Readonly<{ processor?: ScheduleRunProcessor; store?: Sch
 
 void test('manual generation claims a running run, audits it, and processes that exact claim', async () => {
   const calls: string[] = [];
+  const claim = {
+    id: run.id, vendorId, trigger: 'manual' as const, triggerLocalDate: run.triggerLocalDate,
+    serviceDate: run.serviceDate, attempt: 1, maxAttempts: 5,
+    leaseToken: '00000000-0000-4000-8000-000000000012',
+    leaseExpiresAt: new Date('2026-07-20T00:01:00.000Z'),
+    requestedByUserId: actor.userId,
+  };
+  let processedClaim: unknown;
   const store = {
     createAndClaimManual: (_tx: never, input: { serviceDate: string; requestedByUserId: string }) => {
       calls.push(`claim:${input.serviceDate}:${input.requestedByUserId}`);
-      return Promise.resolve({
-        id: run.id, vendorId, trigger: 'manual' as const, triggerLocalDate: run.triggerLocalDate,
-        serviceDate: input.serviceDate, attempt: 1, maxAttempts: 5,
-        leaseToken: '00000000-0000-4000-8000-000000000012', leaseExpiresAt: new Date(),
-        requestedByUserId: input.requestedByUserId,
-      });
+      return Promise.resolve(claim);
     },
   } as unknown as ScheduleGenerationRunStore;
-  const processor: ScheduleRunProcessor = { process: (claim) => { calls.push(`process:${claim.id}`); return Promise.resolve(run); } };
+  const processor: ScheduleRunProcessor = { process: (value) => { processedClaim = value; calls.push(`process:${value.id}`); return Promise.resolve(run); } };
   const audits: AuditWriter = { append: (_tx, event) => { calls.push(`audit:${event.action}:${event.entityId}`); return Promise.resolve(); } };
 
   const result = await requestContextStore.run({ correlationId: '00000000-0000-4000-8000-000000000003', actor }, () =>
@@ -83,6 +90,7 @@ void test('manual generation claims a running run, audits it, and processes that
   );
 
   assert.equal(result, run);
+  assert.deepEqual(processedClaim, claim);
   assert.deepEqual(calls, [
     `claim:${run.serviceDate}:${actor.userId}`,
     `audit:schedule_generation.manual_requested:${run.id}`,
@@ -90,18 +98,65 @@ void test('manual generation claims a running run, audits it, and processes that
   ]);
 });
 
-void test('manual generation accepts only the vendor-local rolling seven-day horizon', async () => {
-  const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(new Date());
-  const yesterday = new Date(`${today}T00:00:00.000Z`);
-  yesterday.setUTCDate(yesterday.getUTCDate() - 1);
-  const serviceDate = yesterday.toISOString().slice(0, 10);
+void test('manual generation uses vendor-local today through today plus six', async () => {
+  const originalNow = Settings.now;
+  Settings.now = () => Date.parse('2026-07-20T23:30:00.000Z');
+  const inputs: Array<{ triggerLocalDate: string; serviceDate: string }> = [];
+  const store = {
+    createAndClaimManual: (_tx: never, input: { triggerLocalDate: string; serviceDate: string }) => {
+      inputs.push(input);
+      return Promise.resolve({
+        id: run.id, vendorId, trigger: 'manual' as const,
+        triggerLocalDate: input.triggerLocalDate, serviceDate: input.serviceDate,
+        attempt: 1, maxAttempts: 5, leaseToken: '00000000-0000-4000-8000-000000000012',
+        leaseExpiresAt: new Date('2026-07-20T23:31:00.000Z'), requestedByUserId: actor.userId,
+      });
+    },
+  } as unknown as ScheduleGenerationRunStore;
 
-  await requestContextStore.run({ correlationId: '00000000-0000-4000-8000-000000000003', actor }, async () =>
-    assert.rejects(
-      service().generateManual(actor, vendorId, { serviceDate }),
-      (error: unknown) => error instanceof ApplicationError && error.code === 'INVALID_SCHEDULE_DATE' && error.status === 400,
-    ),
+  try {
+    for (const serviceDate of ['2026-07-21', '2026-07-27']) {
+      await requestContextStore.run({ correlationId: '00000000-0000-4000-8000-000000000003', actor }, () =>
+        service({ store }).generateManual(actor, vendorId, { serviceDate }),
+      );
+    }
+  } finally {
+    Settings.now = originalNow;
+  }
+
+  assert.deepEqual(inputs.map(({ triggerLocalDate, serviceDate }) => ({ triggerLocalDate, serviceDate })), [
+    { triggerLocalDate: '2026-07-21', serviceDate: '2026-07-21' },
+    { triggerLocalDate: '2026-07-21', serviceDate: '2026-07-27' },
+  ]);
+});
+
+void test('manual generation rejects today plus seven and invalid calendar dates', async () => {
+  const originalNow = Settings.now;
+  Settings.now = () => Date.parse('2026-07-20T23:30:00.000Z');
+
+  try {
+    for (const serviceDate of ['2026-07-28', '2026-02-30']) {
+      await requestContextStore.run({ correlationId: '00000000-0000-4000-8000-000000000003', actor }, () =>
+        assert.rejects(
+          service().generateManual(actor, vendorId, { serviceDate }),
+          (error: unknown) => error instanceof ApplicationError && error.code === 'INVALID_SCHEDULE_DATE' && error.status === 400,
+        ),
+      );
+    }
+  } finally {
+    Settings.now = originalNow;
+  }
+});
+
+void test('audit failure prevents synchronous processing from starting', async () => {
+  let processed = false;
+  const processor: ScheduleRunProcessor = { process: () => { processed = true; return Promise.resolve(run); } };
+  const audits: AuditWriter = { append: () => Promise.reject(new Error('audit unavailable')) };
+
+  await requestContextStore.run({ correlationId: '00000000-0000-4000-8000-000000000003', actor }, () =>
+    assert.rejects(service({ processor, audits }).generateManual(actor, vendorId, { serviceDate: run.serviceDate }), /audit unavailable/),
   );
+  assert.equal(processed, false);
 });
 
 void test('manual processor failure exposes only a retryable safe run identity', async () => {
@@ -140,21 +195,33 @@ void test('run list uses schedule read authorization and preserves filters plus 
   assert.deepEqual(page, { items: [run], nextCursor: 'next' });
 });
 
-void test('controller maps manual and list responses without persistence types', async () => {
+void test('controller explicitly maps request and query DTO fields', async () => {
+  const calls: unknown[] = [];
   const scheduled = {
-    generateManual: () => Promise.resolve(run),
-    list: () => Promise.resolve({ items: [run], nextCursor: 'next' }),
+    generateManual: (_actor: Actor, _vendorId: string, command: unknown) => { calls.push(command); return Promise.resolve(run); },
+    list: (_actor: Actor, _vendorId: string, query: unknown) => { calls.push(query); return Promise.resolve({ items: [run], nextCursor: 'next' }); },
   } as unknown as DefaultScheduleGenerationRunService;
   const controller = new ScheduleGenerationRunController(scheduled);
+  const body = { serviceDate: run.serviceDate, ignored: 'request transport only' } as unknown as GenerateManualScheduleRunRequestDto;
+  const query = { trigger: 'manual', status: 'failed', serviceDate: run.serviceDate, cursor: 'cursor', limit: 25, ignored: 'query transport only' } as unknown as ScheduleGenerationRunQueryDto;
 
   const response = await requestContextStore.run({ correlationId: '00000000-0000-4000-8000-000000000003', actor }, () =>
-    controller.manual(vendorId, { serviceDate: run.serviceDate }),
+    controller.manual(vendorId, body),
   );
   const page = await requestContextStore.run({ correlationId: '00000000-0000-4000-8000-000000000003', actor }, () =>
-    controller.list(vendorId, { limit: 25 }),
+    controller.list(vendorId, query),
   );
 
+  assert.deepEqual(calls, [
+    { serviceDate: run.serviceDate },
+    { trigger: 'manual', status: 'failed', serviceDate: run.serviceDate, cursor: 'cursor', limit: 25 },
+  ]);
   const safeRun = Object.fromEntries(Object.entries(run).filter(([key]) => key !== 'vendorId'));
   assert.deepEqual(response, { ...safeRun, availableAt: run.availableAt.toISOString(), startedAt: run.startedAt.toISOString(), finishedAt: run.finishedAt.toISOString(), createdAt: run.createdAt.toISOString(), updatedAt: run.updatedAt.toISOString() });
   assert.deepEqual(page, { items: [response], nextCursor: 'next' });
+});
+
+void test('queued schedule run response permits attempt zero', () => {
+  const source = readFileSync(new URL('../src/scheduling/http/schedule-generation-run.dto.ts', import.meta.url), 'utf8');
+  assert.match(source, /@ApiProperty\(\{ minimum: 0 \}\) attempt!:/);
 });

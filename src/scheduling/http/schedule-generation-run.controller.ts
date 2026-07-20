@@ -17,7 +17,11 @@ export class ScheduleGenerationRunController {
     @Param('vendorId', ParseUUIDPipe) vendorId: string,
     @Body() body: GenerateManualScheduleRunRequestDto,
   ): Promise<ScheduleGenerationRunResponseDto> {
-    return toScheduleGenerationRunResponse(await this.runs.generateManual(requestContextStore.requireActor(), vendorId, body));
+    return toScheduleGenerationRunResponse(await this.runs.generateManual(
+      requestContextStore.requireActor(),
+      vendorId,
+      { serviceDate: body.serviceDate },
+    ));
   }
 
   @Get() @ApiResponse({ status: 200, type: ScheduleGenerationRunListResponseDto })
@@ -25,7 +29,13 @@ export class ScheduleGenerationRunController {
     @Param('vendorId', ParseUUIDPipe) vendorId: string,
     @Query() query: ScheduleGenerationRunQueryDto,
   ): Promise<ScheduleGenerationRunListResponseDto> {
-    const page = await this.runs.list(requestContextStore.requireActor(), vendorId, query);
+    const page = await this.runs.list(requestContextStore.requireActor(), vendorId, {
+      ...(query.trigger === undefined ? {} : { trigger: query.trigger }),
+      ...(query.status === undefined ? {} : { status: query.status }),
+      ...(query.serviceDate === undefined ? {} : { serviceDate: query.serviceDate }),
+      ...(query.cursor === undefined ? {} : { cursor: query.cursor }),
+      ...(query.limit === undefined ? {} : { limit: query.limit }),
+    });
     return { items: page.items.map(toScheduleGenerationRunResponse), ...(page.nextCursor === undefined ? {} : { nextCursor: page.nextCursor }) };
   }
 }

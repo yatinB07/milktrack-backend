@@ -38,7 +38,7 @@ export class ScheduleGenerationRunResponseDto {
   @ApiProperty({ type: String, format: 'date' }) triggerLocalDate!: string;
   @ApiProperty({ type: String, format: 'date' }) serviceDate!: string;
   @ApiProperty({ enum: ['queued', 'running', 'retry_wait', 'succeeded', 'failed'] }) status!: ScheduleGenerationRunStatus;
-  @ApiProperty({ minimum: 1 }) attempt!: number;
+  @ApiProperty({ minimum: 0 }) attempt!: number;
   @ApiProperty({ minimum: 1 }) maxAttempts!: number;
   @ApiProperty({ type: String, format: 'date-time' }) availableAt!: string;
   @ApiPropertyOptional({ type: String, format: 'date-time' }) startedAt?: string;
