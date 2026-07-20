@@ -212,7 +212,7 @@ void test('publishes the complete Phase 1 HTTP contract without persistence secr
     '/v1/customer/vendors/{vendorId}/households/{householdId}/subscriptions/{subscriptionId}',
     '/v1/customer/vendors/{vendorId}/households/{householdId}/subscriptions/{subscriptionId}/revisions',
   ];
-  const routePaths = ['/v1/vendors/{vendorId}/routes','/v1/vendors/{vendorId}/routes/{routeId}','/v1/vendors/{vendorId}/routes/{routeId}/deactivate','/v1/vendors/{vendorId}/routes/{routeId}/reactivate','/v1/vendors/{vendorId}/routes/{routeId}/restore','/v1/vendors/{vendorId}/routes/{routeId}/stops','/v1/vendors/{vendorId}/routes/{routeId}/stops/replace','/v1/vendors/{vendorId}/routes/{routeId}/assignments','/v1/vendors/{vendorId}/routes/{routeId}/assignments/{serviceDate}','/v1/vendors/{vendorId}/routes/{routeId}/assignments/{serviceDate}/cancel','/v1/agent/vendors/{vendorId}/route-assignments'];
+  const routePaths = ['/v1/vendors/{vendorId}/routes','/v1/vendors/{vendorId}/routes/{routeId}','/v1/vendors/{vendorId}/routes/{routeId}/deactivate','/v1/vendors/{vendorId}/routes/{routeId}/reactivate','/v1/vendors/{vendorId}/routes/{routeId}/restore','/v1/vendors/{vendorId}/routes/{routeId}/stops','/v1/vendors/{vendorId}/routes/{routeId}/stops/replace','/v1/vendors/{vendorId}/routes/{routeId}/assignments','/v1/vendors/{vendorId}/routes/{routeId}/assignments/{serviceDate}','/v1/vendors/{vendorId}/routes/{routeId}/assignments/{serviceDate}/cancel','/v1/agent/vendors/{vendorId}/route-assignments','/v1/agent/vendors/{vendorId}/scheduled-deliveries'];
   for (const path of householdPaths) assert.ok(paths[path], `missing ${path}`);
   for (const path of catalogPaths) assert.ok(paths[path], `missing ${path}`);
   for (const path of pricingPaths) assert.ok(paths[path], `missing ${path}`);
@@ -601,6 +601,20 @@ void test('publishes the additive vendor catalog contract', async () => {
   assert.deepEqual(Object.keys(properties('RenameDeliverySlotRequestDto')), ['name']);
   assert.deepEqual(object(schemas.RestoreProductRequestDto, 'restore product DTO').required, ['expectedVersion']);
   assert.deepEqual(object(properties('ProductResponseDto').status, 'product status').enum, ['active', 'inactive']);
+});
+
+void test('publishes the safe agent scheduled-delivery projection', async () => {
+  const { document } = await readDocument();
+  const paths = object(document.paths, 'paths');
+  const operation = object(object(paths['/v1/agent/vendors/{vendorId}/scheduled-deliveries'], 'scheduled path').get, 'scheduled get');
+  const schemas = object(object(document.components, 'components').schemas, 'schemas');
+  const properties = (name: string) => object(object(schemas[name], name).properties, `${name} properties`);
+  assert.deepEqual((operation.parameters as JsonObject[]).map(({ name }) => name).sort(), ['cursor', 'limit', 'serviceDate', 'vendorId']);
+  assert.deepEqual(Object.keys(properties('ScheduledDeliveryListResponseDto')).sort(), ['items', 'nextCursor']);
+  assert.deepEqual(Object.keys(properties('ScheduledDeliveryResponseDto')).sort(), [
+    'deliverySlotId', 'householdId', 'id', 'plannedQuantity', 'productId', 'routeAssignmentId',
+    'routeStopId', 'sequence', 'serviceDate', 'subscriptionId', 'unitId',
+  ]);
 });
 
 void test('publishes the complete additive household contract', async () => {

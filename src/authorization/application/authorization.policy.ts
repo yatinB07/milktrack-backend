@@ -152,6 +152,7 @@ const activeVendorOperations: Readonly<Record<string, VendorPermission>> = {
   'route.assignment-put': 'route:manage',
   'route.assignment-cancel': 'route:manage',
   'route.assignments-self': 'route:self',
+  'schedule.self-list': 'delivery:read',
 };
 
 export const hasPlatformPermission = (

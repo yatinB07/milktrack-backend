@@ -7,6 +7,7 @@ import { requestContextStore } from '../src/common/context/request-context.js';
 import { DefaultSubscriptionService } from '../src/subscriptions/application/subscription.service.js';
 
 const tx = {} as TransactionContext;
+const scheduleDates = { lock: () => Promise.resolve() };
 const actor: Actor = {
   userId: '00000000-0000-4000-8000-000000000001', sessionId: '00000000-0000-4000-8000-000000000002',
   displayName: 'Administrator', authenticationMethod: 'administrator_mfa', platformRoles: [], memberships: [],
@@ -22,7 +23,7 @@ void test('create validates active dependencies and passes canonical configurati
   const households = { requireSubscriptionHousehold: () => { calls.push('household'); return Promise.resolve({ householdId: 'household' }); } };
   const catalog = { requireSubscriptionSelection: () => { calls.push('catalog'); return Promise.resolve({ productId: 'product', unitId: 'unit', deliverySlotId: 'slot', unitDecimalScale: 3 }); } };
   const store = { create: (_tx: TransactionContext, input: unknown) => { calls.push('store'); created = input; return Promise.resolve({ id: 'subscription', vendorId: 'vendor', householdId: 'household', version: 1, createdAt: new Date(), updatedAt: new Date(), revisions: [] }); } };
-  const service = new DefaultSubscriptionService(authorization as never, store as never, catalog as never, households as never, vendors as never, audits);
+  const service = new DefaultSubscriptionService(authorization as never, store as never, catalog as never, households as never, vendors as never, audits, scheduleDates);
   await requestContextStore.run({ correlationId: '00000000-0000-4000-8000-000000000003' }, () => service.create(actor, 'vendor', {
     householdId: 'household', productId: 'product', unitId: 'unit', deliverySlotId: 'slot', quantity: '01.250',
     weekdays: [5, 1], startDate: '2999-01-01', endDate: '2999-01-31',
@@ -50,7 +51,7 @@ void test('pause and cancel use retained locked configuration without revalidati
     lockForMutation: () => Promise.resolve(locked),
     replacePlan: (_tx: TransactionContext, input: unknown) => { transitions.push(input); return Promise.resolve({ ...locked, version: 2, revisions: [], replacementRevisionId: 'replacement', supersededRevisionIds: [], supersededRevisionCount: 0 }); },
   };
-  const service = new DefaultSubscriptionService(authorization as never, store as never, catalog as never, households as never, vendors as never, audits);
+  const service = new DefaultSubscriptionService(authorization as never, store as never, catalog as never, households as never, vendors as never, audits, scheduleDates);
   await requestContextStore.run({ correlationId: '00000000-0000-4000-8000-000000000003' }, async () => {
     await service.pause(actor, 'vendor', 'subscription', { effectiveDate: '2999-01-01', expectedVersion: 1, reason: 'Holiday' });
     await service.cancel(actor, 'vendor', 'subscription', { effectiveDate: '2999-01-01', expectedVersion: 1, reason: 'Stopped service' });
@@ -70,7 +71,7 @@ void test('completed terminal roots delete through the root lock without requiri
     lockRoot: () => Promise.resolve(completed),
     softDelete: () => { deleted = true; return Promise.resolve({ ...completed, version: 2, deletedAt: new Date() }); },
   };
-  const service = new DefaultSubscriptionService(authorization as never, store as never, {} as never, {} as never, vendors as never, audits);
+  const service = new DefaultSubscriptionService(authorization as never, store as never, {} as never, {} as never, vendors as never, audits, scheduleDates);
   await requestContextStore.run({ correlationId: '00000000-0000-4000-8000-000000000003' }, () => service.softDelete(actor, 'vendor', 'subscription', { expectedVersion: 1, reason: 'Archive complete service' }));
   assert.equal(deleted, true);
 });
@@ -88,7 +89,7 @@ void test('customer list/history stay household-scoped and remove administrative
     history: () => Promise.resolve({ items: [revision] }),
   };
   const households = { requireCustomerSubscriptionHousehold: () => Promise.resolve({ householdId: 'household' }) };
-  const service = new DefaultSubscriptionService(authorization as never, store as never, {} as never, households as never, vendors as never, audits);
+  const service = new DefaultSubscriptionService(authorization as never, store as never, {} as never, households as never, vendors as never, audits, scheduleDates);
   const customer = { ...actor, authenticationMethod: 'phone_otp' as const };
   await requestContextStore.run({ correlationId: '00000000-0000-4000-8000-000000000003' }, async () => {
     const page = await service.listCustomer(customer, 'vendor', 'household', { status: 'cancelled', limit: 25 });
@@ -115,7 +116,7 @@ void test('mutation audit records the exact replacement and superseded revision 
     replacePlan: () => Promise.resolve({ ...locked, version: 2, revisions: [replacement, laterSuperseded], replacementRevisionId: 'replacement', supersededRevisionIds: ['old', 'later'], supersededRevisionCount: 2 }),
   };
   const events: unknown[] = []; const auditWriter = { append: (_tx: TransactionContext, event: unknown) => { events.push(event); return Promise.resolve(); } };
-  const service = new DefaultSubscriptionService(authorization as never, store as never, {} as never, {} as never, vendors as never, auditWriter);
+  const service = new DefaultSubscriptionService(authorization as never, store as never, {} as never, {} as never, vendors as never, auditWriter, scheduleDates);
   await requestContextStore.run({ correlationId: '00000000-0000-4000-8000-000000000003' }, () => service.pause(actor, 'vendor', 'subscription', { effectiveDate: '2999-01-01', expectedVersion: 1, reason: 'Pause' }));
   const event = events[0] as { oldValue: { plan: unknown[] }; newValue: { revisionId: string; supersededRevisionIds: string[] } };
   assert.equal(event.newValue.revisionId, 'replacement');

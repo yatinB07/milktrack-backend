@@ -38,6 +38,28 @@ type AggregateRow = Prisma.SubscriptionGetPayload<{ include: typeof aggregateInc
 export class PrismaSubscriptionStore extends SubscriptionStore {
   private readonly cursors = new CursorCodec();
 
+  async projectSchedule(context: TransactionContext, vendorId: string, serviceDate: string) {
+    const rows = await unwrapPrismaTransaction(context).$queryRaw<Array<{
+      subscriptionId: string; revisionId: string; householdId: string; productId: string;
+      unitId: string; deliverySlotId: string; plannedQuantity: string;
+    }>>(Prisma.sql`
+      SELECT s.id AS "subscriptionId",r.id AS "revisionId",s.household_id AS "householdId",
+        r.product_id AS "productId",r.unit_id AS "unitId",r.delivery_slot_id AS "deliverySlotId",
+        r.quantity::text AS "plannedQuantity"
+      FROM subscriptions s
+      JOIN subscription_revisions r ON r.vendor_id=s.vendor_id AND r.subscription_id=s.id
+      JOIN subscription_revision_weekdays w ON w.vendor_id=r.vendor_id AND w.subscription_revision_id=r.id
+      JOIN units u ON u.vendor_id=r.vendor_id AND u.id=r.unit_id
+      WHERE s.vendor_id=${vendorId}::uuid AND s.deleted_at IS NULL
+        AND r.superseded_at IS NULL AND r.status='active'
+        AND r.effective_from<=${serviceDate}::date
+        AND (r.effective_to IS NULL OR r.effective_to>${serviceDate}::date)
+        AND w.weekday=EXTRACT(ISODOW FROM ${serviceDate}::date)
+        AND r.quantity=round(r.quantity,u.decimal_scale)
+      ORDER BY s.id,r.id`);
+    return rows.map((row) => ({ ...row, plannedQuantity: canonicalDecimal(row.plannedQuantity) }));
+  }
+
   async list(context: TransactionContext, query: SubscriptionPageQuery, today: string, routeHouseholdId?: string) {
     const tx = unwrapPrismaTransaction(context); const limit = this.cursors.parseLimit(query.limit);
     const cursor = query.cursor ? this.cursors.decode(query.cursor) : undefined;

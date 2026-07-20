@@ -17,6 +17,39 @@ export class PrismaPricingStore extends PricingStore {
 
   constructor() { super(); }
 
+  async resolveManySchedule(
+    context: TransactionContext,
+    vendorId: string,
+    serviceDate: string,
+    candidates: readonly Readonly<{ subscriptionId: string; householdId: string; productId: string; unitId: string; deliverySlotId: string }>[],
+  ) {
+    if (candidates.length === 0) return [];
+    type Availability = typeof candidates[number] & { status: 'resolved' | 'missing' };
+    return unwrapPrismaTransaction(context).$queryRaw<Availability[]>(Prisma.sql`
+      WITH candidates AS (
+        SELECT * FROM jsonb_to_recordset(${JSON.stringify(candidates)}::jsonb) AS c(
+          "subscriptionId" uuid,"householdId" uuid,"productId" uuid,"unitId" uuid,"deliverySlotId" uuid
+        )
+      ), instants AS (
+        SELECT c.*,(${serviceDate}::date + ds.start_local_time) AT TIME ZONE v.timezone AS service_at
+        FROM candidates c
+        JOIN delivery_slots ds ON ds.vendor_id=${vendorId}::uuid AND ds.id=c."deliverySlotId"
+        JOIN vendors v ON v.id=ds.vendor_id
+      )
+      SELECT i."subscriptionId",i."householdId",i."productId",i."unitId",i."deliverySlotId",
+        CASE WHEN EXISTS (
+          SELECT 1 FROM customer_price_overrides p
+          WHERE p.vendor_id=${vendorId}::uuid AND p.household_id=i."householdId"
+            AND p.product_id=i."productId" AND p.unit_id=i."unitId"
+            AND p.effective_from<=i.service_at AND (p.effective_to IS NULL OR p.effective_to>i.service_at)
+        ) OR EXISTS (
+          SELECT 1 FROM global_prices p
+          WHERE p.vendor_id=${vendorId}::uuid AND p.product_id=i."productId" AND p.unit_id=i."unitId"
+            AND p.effective_from<=i.service_at AND (p.effective_to IS NULL OR p.effective_to>i.service_at)
+        ) THEN 'resolved' ELSE 'missing' END AS status
+      FROM instants i ORDER BY i."subscriptionId",i."deliverySlotId"`);
+  }
+
   async listGlobals(context: TransactionContext, query: PricePageQuery) {
     const tx = unwrapPrismaTransaction(context); const limit = this.cursors.parseLimit(query.limit);
     const cursor = query.cursor ? this.cursors.decode(query.cursor) : undefined;

@@ -11,6 +11,8 @@ import { requestContextStore } from '../../common/context/request-context.js';
 import { ApplicationError } from '../../common/errors/application.error.js';
 import { HouseholdService } from '../../customers/application/household.service.js';
 import { VendorService } from '../../vendors/application/vendor.service.js';
+import { ScheduleDateLock } from '../../schedule-coordination/application/schedule-date-lock.js';
+import { affectedScheduleDates, scheduleHorizon } from '../../schedule-coordination/application/schedule-horizon.js';
 import {
   deriveSubscriptionStatus,
   normalizeSubscriptionWeekdays,
@@ -69,6 +71,7 @@ export class DefaultSubscriptionService extends SubscriptionService {
     @Inject(HouseholdService) private readonly households: HouseholdService,
     @Inject(VendorService) private readonly vendors: VendorService,
     @Inject(AuditWriter) private readonly audits: AuditWriter,
+    @Inject(ScheduleDateLock) private readonly scheduleDates: ScheduleDateLock,
   ) { super(); }
 
   create(actor: Actor, vendorId: string, command: CreateSubscriptionCommand): Promise<SubscriptionResult> {
@@ -77,6 +80,7 @@ export class DefaultSubscriptionService extends SubscriptionService {
     if (!periodContainsServiceDay(period.effectiveFrom, period.effectiveTo, weekdays)) this.invalidDate();
     return this.execute(actor, vendorId, 'subscription:manage', 'subscription.create', async (tx) => {
       const today = await this.today(tx, vendorId); this.requireNotPast(period.effectiveFrom, today);
+      await this.scheduleDates.lock(tx, vendorId, affectedScheduleDates(today, period.effectiveFrom, period.effectiveTo, weekdays));
       await this.households.requireSubscriptionHousehold(tx, command.householdId);
       const selected = await this.catalog.requireSubscriptionSelection(tx, command.productId, command.unitId, command.deliverySlotId);
       const quantity = parseSubscriptionQuantity(command.quantity, selected.unitDecimalScale);
@@ -119,6 +123,7 @@ export class DefaultSubscriptionService extends SubscriptionService {
     const reason = this.reason(command.reason);
     await this.execute(actor, vendorId, 'subscription:manage', 'subscription.delete', async (tx) => {
       const today = await this.today(tx, vendorId);
+      await this.scheduleDates.lock(tx, vendorId, scheduleHorizon(today));
       const locked = await this.subscriptions.lockRoot(tx, subscriptionId, command.expectedVersion);
       const status = deriveSubscriptionStatus(this.currentPlan(locked), today);
       if (status !== 'cancelled' && status !== 'completed')
@@ -131,6 +136,7 @@ export class DefaultSubscriptionService extends SubscriptionService {
     const reason = this.reason(command.reason);
     return this.execute(actor, vendorId, 'subscription:manage', 'subscription.restore', async (tx) => {
       const today = await this.today(tx, vendorId);
+      await this.scheduleDates.lock(tx, vendorId, scheduleHorizon(today));
       const locked = await this.subscriptions.lockRoot(tx, subscriptionId, command.expectedVersion, true);
       const status = deriveSubscriptionStatus(this.currentPlan(locked), today);
       if (status !== 'cancelled' && status !== 'completed')
@@ -171,6 +177,7 @@ export class DefaultSubscriptionService extends SubscriptionService {
     const reason = this.reason(command.reason); parseSubscriptionPeriod(command.effectiveDate);
     return this.execute(actor, vendorId, 'subscription:manage', `subscription.${operation}`, async (tx) => {
       const today = await this.today(tx, vendorId); this.requireNotPast(command.effectiveDate, today);
+      await this.scheduleDates.lock(tx, vendorId, affectedScheduleDates(today, command.effectiveDate));
       const locked = await this.subscriptions.lockForMutation(tx, subscriptionId, command.expectedVersion, command.effectiveDate);
       this.requireTransition(locked.selected.status, operation);
       let config = locked.selected;

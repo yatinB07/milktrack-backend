@@ -7,6 +7,7 @@ import { DatabaseModule } from '../database/database.module.js';
 import { IdentityModule } from '../identity/identity.module.js';
 import { MembershipsModule } from '../memberships/memberships.module.js';
 import { VendorsModule } from '../vendors/vendors.module.js';
+import { ScheduleCoordinationModule } from '../schedule-coordination/schedule-coordination.module.js';
 import { RouteAssignmentStore } from './application/route-assignment.store.js';
 import { RouteStopPlanStore } from './application/route-stop-plan.store.js';
 import { DefaultRoutingScheduleService, RoutingScheduleService } from './application/routing-schedule.service.js';
@@ -27,6 +28,7 @@ import { PrismaRouteStopPlanStore } from './infrastructure/prisma-route-stop-pla
     IdentityModule,
     MembershipsModule,
     VendorsModule,
+    ScheduleCoordinationModule,
   ],
   controllers: [RouteController, AgentRouteAssignmentController],
   providers: [

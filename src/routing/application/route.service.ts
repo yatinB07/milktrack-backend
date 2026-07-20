@@ -12,6 +12,8 @@ import type { Actor } from '../../common/context/request-context.js';
 import { requestContextStore } from '../../common/context/request-context.js';
 import { ApplicationError } from '../../common/errors/application.error.js';
 import { VendorService } from '../../vendors/application/vendor.service.js';
+import { ScheduleDateLock } from '../../schedule-coordination/application/schedule-date-lock.js';
+import { affectedScheduleDates, scheduleHorizon } from '../../schedule-coordination/application/schedule-horizon.js';
 import { normalizeRouteCode, normalizeRouteName, normalizeRouteReason } from '../domain/route-rules.js';
 import { normalizeRouteAssignmentMutation, validateRouteAssignmentDate } from '../domain/route-assignment-rules.js';
 import { RouteAssignmentStore, type RouteAssignmentMutation, type RouteAssignmentPage, type RouteAssignmentPageQuery } from './route-assignment.store.js';
@@ -54,6 +56,7 @@ export class DefaultRouteService extends RouteService {
     @Inject(MembershipService) private readonly memberships: MembershipService,
     @Inject(VendorService) private readonly vendors: VendorService,
     @Inject(AuditWriter) private readonly audits: AuditWriter,
+    @Inject(ScheduleDateLock) private readonly scheduleDates: ScheduleDateLock,
   ) { super(); }
 
   list(actor: Actor, vendorId: string, query: RoutePageQuery) {
@@ -82,10 +85,11 @@ export class DefaultRouteService extends RouteService {
   async softDelete(actor: Actor, vendorId: string, routeId: string, command: RouteVersionReason) {
     const reason = normalizeRouteReason(command.reason);
     await this.execute(actor, vendorId, 'route:manage', 'route.delete', async (tx) => {
+      const today = await this.today(tx, vendorId);
+      await this.scheduleDates.lock(tx, vendorId, scheduleHorizon(today));
       const route = await this.routes.lockRoot(tx, routeId, command.expectedVersion);
       if (route.status !== 'inactive')
         throw new ApplicationError('ROUTE_DELETE_REQUIRES_INACTIVE', 'Route must be inactive before deletion', 409);
-      const today = await this.today(tx, vendorId);
       if (await this.stopPlans.hasCurrentOrFutureStops(tx, routeId, today))
         throw new ApplicationError('ROUTE_DELETE_REQUIRES_EMPTY', 'Route must have no current or future stops before deletion', 409);
       if (await this.assignments.hasAssignedOnOrAfter(tx, routeId, today))
@@ -97,6 +101,8 @@ export class DefaultRouteService extends RouteService {
   restore(actor: Actor, vendorId: string, routeId: string, command: RouteVersionReason) {
     const reason = normalizeRouteReason(command.reason);
     return this.execute(actor, vendorId, 'route:manage', 'route.restore', async (tx) => {
+      const today = await this.today(tx, vendorId);
+      await this.scheduleDates.lock(tx, vendorId, scheduleHorizon(today));
       const change = await this.routes.restore(tx, routeId, command.expectedVersion);
       await this.audit(tx, actor, vendorId, routeId, 'route.restored', change.before, change.after, reason); return change.after;
     });
@@ -108,7 +114,9 @@ export class DefaultRouteService extends RouteService {
   }
   replaceStops(actor: Actor, vendorId: string, routeId: string, command: ReplaceRouteStopsCommand) {
     return this.execute(actor, vendorId, 'route:manage', 'route.stops-replace', async (tx) => {
-      const normalized = normalizeRouteStopReplacement(command.effectiveDate, command.householdIds, command.reason, await this.today(tx, vendorId));
+      const today = await this.today(tx, vendorId);
+      const normalized = normalizeRouteStopReplacement(command.effectiveDate, command.householdIds, command.reason, today);
+      await this.scheduleDates.lock(tx, vendorId, affectedScheduleDates(today, normalized.effectiveDate));
       const route = await this.routes.lockRoot(tx, routeId, command.expectedVersion);
       if (route.status !== 'active') throw new ApplicationError('ROUTE_STATE_CONFLICT', 'Route state does not allow stop replacement', 409);
       await this.catalog.requireRouteDeliverySlot(tx, route.deliverySlotId);
@@ -130,11 +138,13 @@ export class DefaultRouteService extends RouteService {
 
   assign(actor: Actor, vendorId: string, routeId: string, serviceDate: string, command: AssignRouteCommand) {
     return this.execute(actor, vendorId, 'route:manage', 'route.assignment-put', async (tx) => {
+      const today = await this.today(tx, vendorId);
       const normalized = normalizeRouteAssignmentMutation(
         serviceDate,
         command.reason,
-        await this.today(tx, vendorId),
+        today,
       );
+      await this.lockAssignmentDate(tx, vendorId, normalized.serviceDate, today);
       const route = await this.routes.lockRoot(tx, routeId, command.expectedVersion);
       if (route.status !== 'active') {
         throw new ApplicationError('ROUTE_STATE_CONFLICT', 'Route state does not allow assignment', 409);
@@ -157,11 +167,13 @@ export class DefaultRouteService extends RouteService {
 
   cancelAssignment(actor: Actor, vendorId: string, routeId: string, serviceDate: string, command: RouteVersionReason) {
     return this.execute(actor, vendorId, 'route:manage', 'route.assignment-cancel', async (tx) => {
+      const today = await this.today(tx, vendorId);
       const normalized = normalizeRouteAssignmentMutation(
         serviceDate,
         command.reason,
-        await this.today(tx, vendorId),
+        today,
       );
+      await this.lockAssignmentDate(tx, vendorId, normalized.serviceDate, today);
       const route = await this.routes.lockRoot(tx, routeId, command.expectedVersion);
       const result = await this.assignments.cancel(tx, {
         route,
@@ -196,6 +208,8 @@ export class DefaultRouteService extends RouteService {
   private changeStatus(actor: Actor, vendorId: string, routeId: string, command: RouteVersionReason, status: RouteStatus, operation: string, action: string) {
     const reason = normalizeRouteReason(command.reason);
     return this.execute(actor, vendorId, 'route:manage', operation, async (tx) => {
+      const today = await this.today(tx, vendorId);
+      await this.scheduleDates.lock(tx, vendorId, scheduleHorizon(today));
       if (status === 'active') {
         const route = await this.routes.lockRoot(tx, routeId, command.expectedVersion); await this.catalog.requireRouteDeliverySlot(tx, route.deliverySlotId);
       }
@@ -209,6 +223,10 @@ export class DefaultRouteService extends RouteService {
     const today = DateTime.now().setZone(timezone).toISODate();
     if (!today) throw new ApplicationError('VENDOR_TIMEZONE_INVALID', 'Vendor timezone is invalid', 503);
     return today;
+  }
+  private async lockAssignmentDate(tx: TransactionContext, vendorId: string, serviceDate: string, today: string) {
+    const dates = scheduleHorizon(today);
+    if (dates.includes(serviceDate)) await this.scheduleDates.lock(tx, vendorId, [serviceDate]);
   }
   private auditStops(tx:TransactionContext,actor:Actor,vendorId:string,route:RouteRecord,effectiveDate:string,householdIds:readonly string[],reason:string,previous:RouteStopSnapshot,projection:RouteStopProjection) {
     const safe=(ids:readonly string[],value:RouteStopSnapshot|RouteStopProjection,version:number)=>({householdIds:[...ids],effectiveDate,...(value.startDate?{startDate:value.startDate}:{}),...(value.endDate?{endDate:value.endDate}:{}),deliverySlotId:route.deliverySlotId,routeStatus:route.status,routeVersion:version});

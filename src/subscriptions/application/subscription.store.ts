@@ -69,6 +69,10 @@ export type ReplaceSubscriptionPlan = Readonly<{
 
 /** Subscription-owned persistence boundary for its root/revision/weekday aggregate. */
 export abstract class SubscriptionStore {
+  abstract projectSchedule(tx: TransactionContext, vendorId: string, serviceDate: string): Promise<readonly Readonly<{
+    subscriptionId: string; revisionId: string; householdId: string; productId: string;
+    unitId: string; deliverySlotId: string; plannedQuantity: string;
+  }>[]>;
   abstract list(tx: TransactionContext, query: SubscriptionPageQuery, today: string, householdId?: string): Promise<SubscriptionPage>;
   abstract get(tx: TransactionContext, subscriptionId: string, householdId?: string): Promise<SubscriptionAggregateRecord>;
   abstract history(tx: TransactionContext, subscriptionId: string, query: Pick<SubscriptionPageQuery, 'cursor' | 'limit'>, householdId?: string): Promise<SubscriptionHistoryPage>;

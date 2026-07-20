@@ -9,6 +9,11 @@ export type CreateCustomerOverride = CreateGlobalPrice & Readonly<{ householdId:
 
 /** Pricing-owned persistence boundary; every operation joins the caller's tenant transaction. */
 export abstract class PricingStore {
+  abstract resolveManySchedule(tx: TransactionContext, vendorId: string, serviceDate: string, candidates: readonly Readonly<{
+    subscriptionId: string; householdId: string; productId: string; unitId: string; deliverySlotId: string;
+  }>[]): Promise<readonly Readonly<{
+    subscriptionId: string; householdId: string; productId: string; unitId: string; deliverySlotId: string; status: 'resolved' | 'missing';
+  }>[]>;
   abstract listGlobals(tx: TransactionContext, query: PricePageQuery): Promise<PricePage<PriceRecord>>;
   abstract listOverrides(tx: TransactionContext, householdId: string, query: PricePageQuery): Promise<PricePage<OverrideRecord>>;
   abstract getGlobal(tx: TransactionContext, id: string): Promise<PriceRecord>;

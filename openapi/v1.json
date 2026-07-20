@@ -2232,6 +2232,85 @@
         ],
         "type": "object"
       },
+      "ScheduledDeliveryListResponseDto": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ScheduledDeliveryResponseDto"
+            },
+            "type": "array"
+          },
+          "nextCursor": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
+      "ScheduledDeliveryResponseDto": {
+        "properties": {
+          "deliverySlotId": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "householdId": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "plannedQuantity": {
+            "example": "1.25",
+            "type": "string"
+          },
+          "productId": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "routeAssignmentId": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "routeStopId": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "sequence": {
+            "minimum": 1,
+            "type": "number"
+          },
+          "serviceDate": {
+            "format": "date",
+            "type": "string"
+          },
+          "subscriptionId": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "unitId": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "subscriptionId",
+          "householdId",
+          "productId",
+          "unitId",
+          "deliverySlotId",
+          "routeAssignmentId",
+          "routeStopId",
+          "serviceDate",
+          "plannedQuantity",
+          "sequence"
+        ],
+        "type": "object"
+      },
       "SessionResponseDto": {
         "properties": {
           "accessExpiresAt": {
@@ -3150,6 +3229,129 @@
         ],
         "tags": [
           "Agent route assignments"
+        ]
+      }
+    },
+    "/v1/agent/vendors/{vendorId}/scheduled-deliveries": {
+      "get": {
+        "operationId": "AgentScheduledDeliveryController_list",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "vendorId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "serviceDate",
+            "required": true,
+            "schema": {
+              "format": "date",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 25,
+              "maximum": 100,
+              "minimum": 1,
+              "type": "number"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScheduledDeliveryListResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "opaqueBearer": []
+          }
+        ],
+        "tags": [
+          "Agent scheduled deliveries"
         ]
       }
     },

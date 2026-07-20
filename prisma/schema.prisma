@@ -256,6 +256,7 @@ model Vendor {
   routes Route[]
   routeStopPlans RouteStopPlan[]
   routeAssignments RouteAssignment[]
+  scheduledDeliveries ScheduledDelivery[]
 
   @@map("vendors")
 }
@@ -311,6 +312,7 @@ model Household {
   priceOverrides CustomerPriceOverride[]
   subscriptions Subscription[]
   routeStops RouteStop[]
+  scheduledDeliveries ScheduledDelivery[]
 
   @@unique([vendorId, id])
   @@index([vendorId, createdAt, id])
@@ -371,6 +373,7 @@ model Product {
   globalPrices   GlobalPrice[] @relation("GlobalPriceProduct")
   priceOverrides CustomerPriceOverride[] @relation("CustomerPriceOverrideProduct")
   subscriptionRevisions SubscriptionRevision[]
+  scheduledDeliveries ScheduledDelivery[]
 
   @@unique([vendorId, id])
   @@unique([vendorId, id, defaultUnitId])
@@ -390,6 +393,7 @@ model DeliverySlot {
   vendor         Vendor   @relation(fields: [vendorId], references: [id])
   subscriptionRevisions SubscriptionRevision[]
   routes Route[]
+  scheduledDeliveries ScheduledDelivery[]
 
   @@unique([vendorId, id])
   @@unique([vendorId, code])
@@ -458,8 +462,10 @@ model Subscription {
   household      Household @relation(fields: [vendorId, householdId], references: [vendorId, id])
   deleter        User?     @relation("SubscriptionDeleter", fields: [deletedBy], references: [id])
   revisions      SubscriptionRevision[]
+  scheduledDeliveries ScheduledDelivery[]
 
   @@unique([vendorId, id])
+  @@unique([vendorId, id, householdId])
   @@index([vendorId, createdAt(sort: Desc), id(sort: Desc)])
   @@index([vendorId, householdId, createdAt(sort: Desc), id(sort: Desc)])
   @@map("subscriptions")
@@ -490,9 +496,11 @@ model SubscriptionRevision {
   supersededBy           SubscriptionRevision? @relation("RevisionSupersession", fields: [vendorId, subscriptionId, supersededByRevisionId], references: [vendorId, subscriptionId, id])
   supersededRevisions    SubscriptionRevision[] @relation("RevisionSupersession")
   weekdays               SubscriptionRevisionWeekday[]
+  scheduledDeliveries    ScheduledDelivery[]
 
   @@unique([vendorId, id])
   @@unique([vendorId, subscriptionId, id])
+  @@unique([vendorId, subscriptionId, id, productId, unitId, deliverySlotId])
   @@index([vendorId, subscriptionId, effectiveFrom, id])
   @@index([vendorId, subscriptionId, createdAt(sort: Desc), id(sort: Desc)])
   @@map("subscription_revisions")
@@ -608,12 +616,49 @@ model RouteAssignment {
   agentMembership   VendorMembership @relation(fields: [vendorId, agentMembershipId], references: [vendorId, id])
   creator           User             @relation("RouteAssignmentCreator", fields: [createdBy], references: [id])
   updater           User             @relation("RouteAssignmentUpdater", fields: [updatedBy], references: [id])
+  scheduledDeliveries ScheduledDelivery[]
 
   @@unique([vendorId, id])
+  @@unique([vendorId, id, serviceDate, deliverySlotId])
   @@unique([vendorId, routeId, serviceDate])
   @@index([vendorId, routeId, serviceDate(sort: Desc), id(sort: Desc)])
   @@index([vendorId, agentMembershipId, serviceDate(sort: Desc), id(sort: Desc)])
   @@map("route_assignments")
+}
+
+model ScheduledDelivery {
+  id                     String    @id @db.Uuid
+  vendorId               String    @map("vendor_id") @db.Uuid
+  subscriptionId         String    @map("subscription_id") @db.Uuid
+  subscriptionRevisionId String    @map("subscription_revision_id") @db.Uuid
+  householdId            String    @map("household_id") @db.Uuid
+  productId              String    @map("product_id") @db.Uuid
+  unitId                 String    @map("unit_id") @db.Uuid
+  deliverySlotId         String    @map("delivery_slot_id") @db.Uuid
+  routeAssignmentId      String?   @map("route_assignment_id") @db.Uuid
+  serviceDate            DateTime  @map("service_date") @db.Date
+  plannedQuantity        Decimal   @map("planned_quantity") @db.Decimal(18, 3)
+  status                 String    @default("scheduled")
+  cancelledAt            DateTime? @map("cancelled_at") @db.Timestamptz(6)
+  cancellationReason     String?   @map("cancellation_reason")
+  finalizedAt            DateTime? @map("finalized_at") @db.Timestamptz(6)
+  version                Int       @default(1)
+  createdAt              DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt              DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  vendor                 Vendor    @relation(fields: [vendorId], references: [id])
+  subscription           Subscription @relation(fields: [vendorId, subscriptionId, householdId], references: [vendorId, id, householdId])
+  subscriptionRevision   SubscriptionRevision @relation(fields: [vendorId, subscriptionId, subscriptionRevisionId, productId, unitId, deliverySlotId], references: [vendorId, subscriptionId, id, productId, unitId, deliverySlotId])
+  household              Household @relation(fields: [vendorId, householdId], references: [vendorId, id])
+  product                Product   @relation(fields: [vendorId, productId, unitId], references: [vendorId, id, defaultUnitId])
+  deliverySlot           DeliverySlot @relation(fields: [vendorId, deliverySlotId], references: [vendorId, id])
+  routeAssignment        RouteAssignment? @relation(fields: [vendorId, routeAssignmentId, serviceDate, deliverySlotId], references: [vendorId, id, serviceDate, deliverySlotId])
+
+  @@unique([vendorId, id])
+  @@unique([vendorId, subscriptionId, serviceDate, deliverySlotId], map: "scheduled_deliveries_business_key")
+  @@index([vendorId, serviceDate, status, id])
+  @@index([vendorId, routeAssignmentId, serviceDate, status, id])
+  @@index([vendorId, householdId, serviceDate, status, id])
+  @@map("scheduled_deliveries")
 }
 
 model OwnerEnrollment {

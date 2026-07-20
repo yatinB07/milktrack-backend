@@ -12,10 +12,12 @@ import { GlobalPriceController } from './http/global-price.controller.js';
 import { PriceOverrideController } from './http/price-override.controller.js';
 import { CustomerResolvedPriceController, VendorResolvedPriceController } from './http/resolved-price.controller.js';
 import { PrismaPricingStore } from './infrastructure/prisma-pricing.store.js';
+import { DefaultSchedulingPriceService, SchedulingPriceService } from './application/scheduling-price.service.js';
 
 @Module({
   imports: [AuditModule, AuthorizationModule, CatalogModule, CustomersModule, DatabaseModule, IdentityModule, VendorsModule],
   controllers: [GlobalPriceController, PriceOverrideController, VendorResolvedPriceController, CustomerResolvedPriceController],
-  providers: [PrismaPricingStore, { provide: PricingStore, useExisting: PrismaPricingStore }, DefaultPricingService, { provide: PricingService, useExisting: DefaultPricingService }],
+  providers: [PrismaPricingStore, { provide: PricingStore, useExisting: PrismaPricingStore }, DefaultPricingService, { provide: PricingService, useExisting: DefaultPricingService }, DefaultSchedulingPriceService, { provide: SchedulingPriceService, useExisting: DefaultSchedulingPriceService }],
+  exports: [SchedulingPriceService],
 })
 export class PricingModule {}
