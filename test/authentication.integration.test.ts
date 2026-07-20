@@ -298,27 +298,30 @@ test.after(() => ownerPool.end());
 void test('known and unknown phone requests are indistinguishable while only known identities receive OTP delivery', async () => {
   const fixture = await insertPhoneFixture('+919876500001');
   const { prisma, delivery, service } = createService();
-  const before = Date.now();
   try {
+    const knownRequestedAt = Date.now();
     const known = await service.requestPhoneOtp({
       phone: ' +919876500001 ',
       purpose: 'sign_in',
       ipHash: 'known-ip',
     });
+    const knownReturnedAt = Date.now();
+    const unknownRequestedAt = Date.now();
     const unknown = await service.requestPhoneOtp({
       phone: '+919876599999',
       purpose: 'sign_in',
       ipHash: 'unknown-ip',
     });
+    const unknownReturnedAt = Date.now();
 
     assert.equal(known.accepted, true);
     assert.equal(unknown.accepted, true);
     assert.equal(Buffer.from(known.challengeToken, 'base64url').length, 32);
     assert.equal(Buffer.from(unknown.challengeToken, 'base64url').length, 32);
-    assert.ok(known.expiresAt.getTime() >= before + 299_000);
-    assert.ok(known.expiresAt.getTime() <= before + 301_000);
-    assert.ok(unknown.expiresAt.getTime() >= before + 299_000);
-    assert.ok(unknown.expiresAt.getTime() <= before + 301_000);
+    assert.ok(known.expiresAt.getTime() >= knownRequestedAt + 300_000);
+    assert.ok(known.expiresAt.getTime() <= knownReturnedAt + 300_000);
+    assert.ok(unknown.expiresAt.getTime() >= unknownRequestedAt + 300_000);
+    assert.ok(unknown.expiresAt.getTime() <= unknownReturnedAt + 300_000);
     const code = delivery.takeLastCodeForTest(fixture.phone);
     assert.match(code ?? '', /^\d{6}$/);
     assert.equal(delivery.takeLastCodeForTest('+919876599999'), undefined);
