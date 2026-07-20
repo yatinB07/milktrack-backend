@@ -78,8 +78,10 @@ printf '%s\n' "$backend" | grep -q 'postgresql://milktrack_app:'
 
 worker="$(service_block worker)"
 printf '%s\n' "$worker" | grep -q 'command:'
-printf '%s\n' "$worker" | grep -q '^      - npm$'
-printf '%s\n' "$worker" | grep -q '^      - start:worker:dev$'
+printf '%s\n' "$worker" | grep -q '^      - node$'
+printf '%s\n' "$worker" | grep -q '^      - --import$'
+printf '%s\n' "$worker" | grep -q '^      - tsx$'
+printf '%s\n' "$worker" | grep -q '^      - src/worker.ts$'
 printf '%s\n' "$worker" | grep -q 'target: development$'
 printf '%s\n' "$worker" | grep -q '^      migrate:$'
 printf '%s\n' "$worker" | grep -q 'condition: service_completed_successfully$'
