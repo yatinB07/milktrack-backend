@@ -103,6 +103,7 @@ model User {
   routeStopsCreated RouteStop[] @relation("RouteStopCreator")
   routeAssignmentsCreated RouteAssignment[] @relation("RouteAssignmentCreator")
   routeAssignmentsUpdated RouteAssignment[] @relation("RouteAssignmentUpdater")
+  scheduleGenerationRunsRequested ScheduleGenerationRun[] @relation("ScheduleGenerationRunRequester")
 
   @@map("users")
 }
@@ -257,6 +258,7 @@ model Vendor {
   routeStopPlans RouteStopPlan[]
   routeAssignments RouteAssignment[]
   scheduledDeliveries ScheduledDelivery[]
+  scheduleGenerationRuns ScheduleGenerationRun[]
 
   @@map("vendors")
 }
@@ -659,6 +661,41 @@ model ScheduledDelivery {
   @@index([vendorId, routeAssignmentId, serviceDate, status, id])
   @@index([vendorId, householdId, serviceDate, status, id])
   @@map("scheduled_deliveries")
+}
+
+model ScheduleGenerationRun {
+  id                String    @id @db.Uuid
+  vendorId          String    @map("vendor_id") @db.Uuid
+  trigger           String
+  triggerLocalDate  DateTime  @map("trigger_local_date") @db.Date
+  serviceDate       DateTime  @map("service_date") @db.Date
+  status            String    @default("queued")
+  attemptCount      Int       @default(0) @map("attempt_count")
+  maxAttempts       Int       @default(5) @map("max_attempts")
+  availableAt       DateTime  @default(now()) @map("available_at") @db.Timestamptz(6)
+  leaseToken        String?   @map("lease_token") @db.Uuid
+  claimedAt         DateTime? @map("claimed_at") @db.Timestamptz(6)
+  leaseExpiresAt    DateTime? @map("lease_expires_at") @db.Timestamptz(6)
+  startedAt         DateTime? @map("started_at") @db.Timestamptz(6)
+  finishedAt        DateTime? @map("finished_at") @db.Timestamptz(6)
+  failureCode       String?   @map("failure_code")
+  failureMessage    String?   @map("failure_message")
+  requestedByUserId String?   @map("requested_by_user_id") @db.Uuid
+  createdCount      Int?      @map("created_count")
+  existingCount     Int?      @map("existing_count")
+  updatedCount      Int?      @map("updated_count")
+  cancelledCount    Int?      @map("cancelled_count")
+  missingPriceCount Int?      @map("missing_price_count")
+  createdAt         DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt         DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  vendor             Vendor    @relation(fields: [vendorId], references: [id])
+  requester          User?     @relation("ScheduleGenerationRunRequester", fields: [requestedByUserId], references: [id])
+
+  @@unique([vendorId, id])
+  @@index([vendorId, status, availableAt, createdAt, id])
+  @@index([vendorId, leaseExpiresAt, createdAt, id])
+  @@index([vendorId, createdAt(sort: Desc), id(sort: Desc)])
+  @@map("schedule_generation_runs")
 }
 
 model OwnerEnrollment {
