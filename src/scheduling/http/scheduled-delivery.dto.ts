@@ -2,6 +2,8 @@ import { Type } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { IsInt, IsOptional, IsString, Max, Min } from 'class-validator';
 
+import type { AgentScheduledDelivery } from '../application/scheduled-delivery.store.js';
+
 export class AgentScheduledDeliveryQueryDto {
   @ApiProperty({ type: String, format: 'date' }) @IsString() serviceDate!: string;
   @IsOptional() @IsString() cursor?: string;
@@ -28,3 +30,19 @@ export class ScheduledDeliveryListResponseDto {
   items!: ScheduledDeliveryResponseDto[];
   @ApiPropertyOptional({ type: String }) nextCursor?: string;
 }
+
+export const toScheduledDeliveryResponse = (
+  value: AgentScheduledDelivery,
+): ScheduledDeliveryResponseDto => ({
+  id: value.id,
+  subscriptionId: value.subscriptionId,
+  householdId: value.householdId,
+  productId: value.productId,
+  unitId: value.unitId,
+  deliverySlotId: value.deliverySlotId,
+  routeAssignmentId: value.routeAssignmentId,
+  routeStopId: value.routeStopId,
+  serviceDate: value.serviceDate,
+  plannedQuantity: value.plannedQuantity,
+  sequence: value.sequence,
+});

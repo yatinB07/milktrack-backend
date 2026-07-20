@@ -117,7 +117,7 @@ export class PrismaScheduledDeliveryStore extends ScheduledDeliveryStore {
       const bytes = Buffer.from(value, 'base64url');
       if (bytes.toString('base64url') !== value) throw new Error();
       const parsed: unknown = JSON.parse(bytes.toString('utf8'));
-      if (!Array.isArray(parsed) || parsed.length !== 2 || !Number.isInteger(parsed[0]) || typeof parsed[1] !== 'string' || !uuid.test(parsed[1])) throw new Error();
+      if (!Array.isArray(parsed) || parsed.length !== 2 || !Number.isInteger(parsed[0]) || parsed[0] < 1 || typeof parsed[1] !== 'string' || !uuid.test(parsed[1])) throw new Error();
       return { sequence: parsed[0] as number, id: parsed[1] };
     } catch {
       throw new ApplicationError('INVALID_CURSOR', 'Cursor is invalid', 400);

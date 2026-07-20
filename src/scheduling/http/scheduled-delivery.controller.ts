@@ -5,7 +5,11 @@ import { requestContextStore } from '../../common/context/request-context.js';
 import { ApiErrorResponseDto } from '../../common/errors/application-error.filter.js';
 import { ActorGuard } from '../../identity/http/actor.guard.js';
 import { ScheduledDeliveryService } from '../application/scheduled-delivery.service.js';
-import { ScheduledDeliveryListResponseDto, AgentScheduledDeliveryQueryDto } from './scheduled-delivery.dto.js';
+import {
+  AgentScheduledDeliveryQueryDto,
+  ScheduledDeliveryListResponseDto,
+  toScheduledDeliveryResponse,
+} from './scheduled-delivery.dto.js';
 
 @ApiTags('Agent scheduled deliveries')
 @ApiBearerAuth('opaqueBearer')
@@ -16,11 +20,20 @@ export class AgentScheduledDeliveryController {
 
   @Get()
   @ApiResponse({ status: 200, type: ScheduledDeliveryListResponseDto })
-  list(
+  async list(
     @Param('vendorId', ParseUUIDPipe) vendorId: string,
     @Query() query: AgentScheduledDeliveryQueryDto,
   ) {
-    return this.deliveries.listSelf(requestContextStore.requireActor(), vendorId, query.serviceDate, query);
+    const page = await this.deliveries.listSelf(
+      requestContextStore.requireActor(),
+      vendorId,
+      query.serviceDate,
+      query,
+    );
+    return {
+      items: page.items.map(toScheduledDeliveryResponse),
+      ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}),
+    };
   }
 }
 
