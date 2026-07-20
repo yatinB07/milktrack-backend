@@ -24,7 +24,14 @@ export class PrismaScheduleRegenerationWriter extends ScheduleRegenerationWriter
           ${randomUUID()}::uuid,${vendorId}::uuid,'configuration_change',${triggerLocalDate}::date,
           ${serviceDate}::date,'queued',${requestedByUserId}::uuid,CURRENT_TIMESTAMP
         ) ON CONFLICT (vendor_id,service_date)
-          WHERE trigger='configuration_change' AND status IN ('queued','running','retry_wait') DO NOTHING
+          WHERE trigger='configuration_change' AND status IN ('queued','running','retry_wait') DO UPDATE SET
+            available_at=GREATEST(
+              schedule_generation_runs.available_at,
+              schedule_generation_runs.claimed_at + interval '1 microsecond',
+              clock_timestamp()
+            ),
+            updated_at=clock_timestamp()
+          WHERE schedule_generation_runs.status='running'
       `);
     }
   }

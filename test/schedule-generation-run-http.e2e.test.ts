@@ -7,6 +7,10 @@ import type { INestApplication } from '@nestjs/common';
 import { DateTime } from 'luxon';
 import pg from 'pg';
 
+import { TenantTransactionRunner } from '../src/common/application/transaction-context.js';
+import { ScheduleGenerationRunStore } from '../src/scheduling/application/schedule-generation-run.store.js';
+import { ScheduleRunProcessor } from '../src/scheduling/application/schedule-run-processor.js';
+
 const owner = new pg.Pool({ connectionString: process.env.TEST_OWNER_DATABASE_URL });
 const authKey = Buffer.from(process.env.AUTH_HMAC_KEY!, 'base64');
 const users: string[] = [];
@@ -16,6 +20,58 @@ let baseUrl = '';
 
 const hash = (value: string) => createHmac('sha256', authKey).update(value).digest('hex');
 type Fixture = Readonly<{ vendorId: string; ownerId: string; ownerToken: string; serviceDate: string }>;
+type ActorFixture = Readonly<{ userId: string; token: string }>;
+
+async function actor(
+  label: string,
+  input: Readonly<{
+    vendorId?: string;
+    vendorRole?: 'vendor_owner' | 'vendor_administrator' | 'delivery_agent' | 'customer';
+    platformRole?: 'product_owner' | 'platform_administrator' | 'support_operations';
+    authenticationMethod: 'phone_otp' | 'administrator_mfa';
+  }>,
+): Promise<ActorFixture> {
+  const userId = randomUUID();
+  const token = randomUUID();
+  users.push(userId);
+  await owner.query('INSERT INTO users(id,display_name,updated_at) VALUES($1,$2,now())', [userId, `Schedule ${label}`]);
+  if (input.vendorId && input.vendorRole) {
+    await owner.query(
+      `INSERT INTO vendor_memberships(id,vendor_id,user_id,role,status,joined_at,updated_at)
+       VALUES($1,$2,$3,$4::"MembershipRole",'active',now(),now())`,
+      [randomUUID(), input.vendorId, userId, input.vendorRole],
+    );
+  }
+  if (input.platformRole) {
+    await owner.query(
+      `INSERT INTO platform_role_assignments(id,user_id,role,granted_by)
+       VALUES($1,$2,$3::"PlatformRole",$2)`,
+      [randomUUID(), userId, input.platformRole],
+    );
+  }
+  if (input.authenticationMethod === 'administrator_mfa') {
+    await owner.query(
+      "INSERT INTO mfa_factors(id,user_id,type,encrypted_secret,enabled_at) VALUES($1,$2,'totp','schedule',now())",
+      [randomUUID(), userId],
+    );
+  }
+  await owner.query(
+    `INSERT INTO sessions(id,user_id,access_token_hash,refresh_token_hash,authentication_method,device_id,access_expires_at,expires_at,last_seen_at)
+     VALUES($1,$2,$3,$4,$5::"AuthenticationMethod",$6,now()+interval '1 hour',now()+interval '1 day',now())`,
+    [randomUUID(), userId, hash(token), hash(randomUUID()), input.authenticationMethod, `schedule-${userId}`],
+  );
+  return { userId, token };
+}
+
+async function supportGrant(vendorId: string, userId: string, scope: readonly string[]) {
+  await owner.query(
+    `INSERT INTO support_access_grants(
+       id,vendor_id,grantee_user_id,requested_by,approved_by,purpose,scope_json,
+       access_mode,starts_at,expires_at
+     ) VALUES($1,$2,$3,$3,$3,'Schedule support',$4::jsonb,'read',now()-interval '1 minute',now()+interval '1 hour')`,
+    [randomUUID(), vendorId, userId, JSON.stringify(scope)],
+  );
+}
 
 async function fixture(label: string): Promise<Fixture> {
   const serviceDate = DateTime.now().setZone('Asia/Kolkata').toISODate()!;
@@ -93,6 +149,25 @@ async function json<T>(response: Response, status: number): Promise<T> {
   return response.json() as Promise<T>;
 }
 
+async function forbidden(response: Response) {
+  const body = await json<{ code: string; message: string }>(response, 403);
+  assert.deepEqual({ code: body.code, message: body.message }, {
+    code: 'FORBIDDEN', message: 'You are not allowed to perform this action',
+  });
+}
+
+async function waitForRun(vendorId: string): Promise<string> {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    const row = await owner.query<{ id: string }>(
+      "SELECT id FROM schedule_generation_runs WHERE vendor_id=$1 AND trigger='manual' AND status='running'",
+      [vendorId],
+    );
+    if (row.rows[0]) return row.rows[0].id;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error('manual run did not enter running state');
+}
+
 async function rejectAuditAction(action: string) {
   const suffix = randomUUID().replaceAll('-', '');
   const functionName = `reject_schedule_audit_fn_${suffix}`;
@@ -123,11 +198,13 @@ after(async () => {
   try {
     await client.query('BEGIN');
     await client.query('SET CONSTRAINTS ALL DEFERRED');
+    await client.query('DELETE FROM audit_events WHERE vendor_id=ANY($1::uuid[]) OR actor_user_id=ANY($2::uuid[])', [vendors, users]);
     for (const table of [
-      'audit_events', 'schedule_generation_runs', 'scheduled_deliveries',
+      'support_access_grants', 'schedule_generation_runs', 'scheduled_deliveries',
       'subscription_revision_weekdays', 'subscription_revisions', 'subscriptions',
       'delivery_slots', 'products', 'units', 'households', 'vendor_memberships',
     ]) await client.query(`DELETE FROM ${table} WHERE vendor_id=ANY($1::uuid[])`, [vendors]);
+    await client.query('DELETE FROM platform_role_assignments WHERE user_id=ANY($1::uuid[])', [users]);
     await client.query('DELETE FROM sessions WHERE user_id=ANY($1::uuid[])', [users]);
     await client.query('DELETE FROM mfa_factors WHERE user_id=ANY($1::uuid[])', [users]);
     await client.query('DELETE FROM users WHERE id=ANY($1::uuid[])', [users]);
@@ -232,4 +309,124 @@ void test('manual completion rollback returns a safe 503 and leaves a visible re
     `SELECT action FROM audit_events WHERE vendor_id=$1 AND action LIKE 'schedule_generation.manual_%'`,
     [current.vendorId],
   )).rows, [{ action: 'schedule_generation.manual_requested' }]);
+});
+
+void test('schedule run HTTP authorization permits only vendor managers and exact scoped support reads', async () => {
+  const current = await fixture('AUTHORIZATION');
+  const path = `/v1/vendors/${current.vendorId}/schedule-generation-runs`;
+  const administrator = await actor('administrator', {
+    vendorId: current.vendorId, vendorRole: 'vendor_administrator', authenticationMethod: 'administrator_mfa',
+  });
+  const exactSupport = await actor('exact support', {
+    platformRole: 'support_operations', authenticationMethod: 'administrator_mfa',
+  });
+  await supportGrant(current.vendorId, exactSupport.userId, ['schedule:read']);
+  const denied = await Promise.all([
+    actor('customer', { vendorId: current.vendorId, vendorRole: 'customer', authenticationMethod: 'phone_otp' }),
+    actor('agent', { vendorId: current.vendorId, vendorRole: 'delivery_agent', authenticationMethod: 'phone_otp' }),
+    actor('product owner', { platformRole: 'product_owner', authenticationMethod: 'administrator_mfa' }),
+    actor('platform administrator', { platformRole: 'platform_administrator', authenticationMethod: 'administrator_mfa' }),
+    actor('broad support', { platformRole: 'support_operations', authenticationMethod: 'administrator_mfa' }),
+    actor('wildcard support', { platformRole: 'support_operations', authenticationMethod: 'administrator_mfa' }),
+  ]);
+  await supportGrant(current.vendorId, denied[4].userId, ['audit:read']);
+  await supportGrant(current.vendorId, denied[5].userId, ['*']);
+
+  for (const token of [current.ownerToken, administrator.token]) {
+    assert.equal((await api(path, token)).status, 200);
+    assert.equal((await api(`${path}/manual`, token, {
+      method: 'POST', body: { serviceDate: current.serviceDate },
+    })).status, 200);
+  }
+  assert.equal((await api(path, exactSupport.token)).status, 200);
+  await forbidden(await api(`${path}/manual`, exactSupport.token, {
+    method: 'POST', body: { serviceDate: current.serviceDate },
+  }));
+  for (const { token } of denied) {
+    await forbidden(await api(path, token));
+    await forbidden(await api(`${path}/manual`, token, {
+      method: 'POST', body: { serviceDate: current.serviceDate },
+    }));
+  }
+});
+
+void test('repeat and concurrent manual requests create distinct runs but one schedule', async () => {
+  const current = await fixture('CONCURRENT');
+  const path = `/v1/vendors/${current.vendorId}/schedule-generation-runs/manual`;
+  const request = () => api(path, current.ownerToken, {
+    method: 'POST', body: { serviceDate: current.serviceDate },
+  });
+  const concurrent = await Promise.all([request(), request()]);
+  const runs = await Promise.all(concurrent.map((response) => json<{ id: string; status: string }>(response, 200)));
+  const repeated = await json<{ id: string; status: string }>(await request(), 200);
+  assert.equal(new Set([...runs.map(({ id }) => id), repeated.id]).size, 3);
+  assert.ok([...runs, repeated].every(({ status }) => status === 'succeeded'));
+  assert.equal((await owner.query(
+    "SELECT 1 FROM schedule_generation_runs WHERE vendor_id=$1 AND trigger='manual' AND status='succeeded'",
+    [current.vendorId],
+  )).rowCount, 3);
+  assert.equal((await owner.query(
+    'SELECT 1 FROM scheduled_deliveries WHERE vendor_id=$1 AND service_date=$2',
+    [current.vendorId, current.serviceDate],
+  )).rowCount, 1);
+});
+
+void test('a live directly-running manual lease cannot be stolen', { timeout: 10_000 }, async () => {
+  const current = await fixture('LIVE_LEASE');
+  const lock = await owner.connect();
+  let released = false;
+  let response: Promise<Response> | undefined;
+  try {
+    await lock.query('BEGIN');
+    await lock.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [
+      `scheduling-vendor-date:${current.vendorId}:${current.serviceDate}`,
+    ]);
+    response = api(`/v1/vendors/${current.vendorId}/schedule-generation-runs/manual`, current.ownerToken, {
+      method: 'POST', body: { serviceDate: current.serviceDate },
+    });
+    const runId = await waitForRun(current.vendorId);
+    const transactions = app.get(TenantTransactionRunner);
+    const runs = app.get(ScheduleGenerationRunStore);
+    const stolen = await transactions.run(current.vendorId, (transaction) => runs.claimNext(transaction, {
+      vendorId: current.vendorId, leaseToken: randomUUID(), now: new Date(),
+    }));
+    assert.equal(stolen, null);
+    assert.equal((await owner.query<{ status: string }>(
+      'SELECT status FROM schedule_generation_runs WHERE id=$1', [runId],
+    )).rows[0]?.status, 'running');
+    await lock.query('COMMIT');
+    released = true;
+    assert.equal((await response).status, 200);
+  } finally {
+    if (!released) await lock.query('ROLLBACK');
+    lock.release();
+    if (response !== undefined) await response.catch(() => undefined);
+  }
+});
+
+void test('an expired manual lease is reclaimed and processed with a fresh fence', async () => {
+  const current = await fixture('RECLAIM');
+  const runId = randomUUID();
+  await owner.query(
+    `INSERT INTO schedule_generation_runs(
+       id,vendor_id,trigger,trigger_local_date,service_date,status,attempt_count,
+       available_at,lease_token,claimed_at,lease_expires_at,started_at,requested_by_user_id,updated_at
+     ) VALUES($1,$2,'manual',$3,$3,'running',1,now()-interval '2 minutes',$4,
+       now()-interval '2 minutes',now()-interval '1 minute',now()-interval '2 minutes',$5,now())`,
+    [runId, current.vendorId, current.serviceDate, randomUUID(), current.ownerId],
+  );
+  const transactions = app.get(TenantTransactionRunner);
+  const runs = app.get(ScheduleGenerationRunStore);
+  const claim = await transactions.run(current.vendorId, (transaction) => runs.claimNext(transaction, {
+    vendorId: current.vendorId, leaseToken: randomUUID(), now: new Date(),
+  }));
+  assert.equal(claim?.id, runId);
+  assert.equal(claim?.attempt, 2);
+  const completed = await app.get(ScheduleRunProcessor).process(claim, randomUUID());
+  assert.equal(completed.status, 'succeeded');
+  assert.equal(completed.attempt, 2);
+  assert.equal((await owner.query(
+    'SELECT 1 FROM scheduled_deliveries WHERE vendor_id=$1 AND service_date=$2',
+    [current.vendorId, current.serviceDate],
+  )).rowCount, 1);
 });

@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto';
+
 import { Injectable } from '@nestjs/common';
 
 import type { TransactionContext } from '../../common/application/transaction-context.js';
@@ -54,6 +56,16 @@ type RunRow = Readonly<{
   updatedAt: Date;
 }>;
 
+type LockedRun = Readonly<{
+  id: string;
+  maxAttempts: number;
+  trigger: ScheduleGenerationTrigger;
+  triggerLocalDate: Date;
+  serviceDate: Date;
+  requestedByUserId: string | null;
+  invalidated: boolean;
+}>;
+
 const runColumns = Prisma.sql`
   id,vendor_id AS "vendorId",trigger,trigger_local_date AS "triggerLocalDate",
   service_date AS "serviceDate",status,attempt_count AS attempt,max_attempts AS "maxAttempts",
@@ -94,19 +106,25 @@ export class PrismaScheduleGenerationRunStore extends ScheduleGenerationRunStore
   ): Promise<ScheduleGenerationRunClaim | null> {
     const tx = unwrapPrismaTransaction(context);
     const leaseExpiresAt = this.leaseExpiry(input.now);
-    await tx.$executeRaw(Prisma.sql`
-      WITH exhausted AS (
-        SELECT id AS exhausted_id FROM schedule_generation_runs
+    const exhausted = await tx.$queryRaw<LockedRun[]>(Prisma.sql`
+        SELECT id,max_attempts AS "maxAttempts",trigger,
+          trigger_local_date AS "triggerLocalDate",service_date AS "serviceDate",
+          requested_by_user_id AS "requestedByUserId",available_at>claimed_at AS invalidated
+        FROM schedule_generation_runs
         WHERE vendor_id=${input.vendorId}::uuid AND status='running'
           AND attempt_count=max_attempts AND lease_expires_at<=${input.now}
         ORDER BY lease_expires_at,created_at,id
-        FOR UPDATE SKIP LOCKED
-      )
-      UPDATE schedule_generation_runs r SET
-        status='failed',lease_token=NULL,claimed_at=NULL,lease_expires_at=NULL,
-        finished_at=${input.now},failure_code='LEASE_EXPIRED',
-        failure_message='Schedule generation lease expired after final attempt',updated_at=${input.now}
-      FROM exhausted WHERE r.id=exhausted.exhausted_id`);
+        FOR UPDATE SKIP LOCKED`);
+    for (const run of exhausted) {
+      await tx.$executeRaw(Prisma.sql`
+        UPDATE schedule_generation_runs SET
+          status='failed',lease_token=NULL,claimed_at=NULL,lease_expires_at=NULL,
+          finished_at=${input.now},failure_code='LEASE_EXPIRED',
+          failure_message='Schedule generation lease expired after final attempt',updated_at=${input.now}
+        WHERE id=${run.id}::uuid AND status='running'`);
+      // Expiry cleanup must leave replacement work queued for the next claim cycle.
+      await this.enqueueInvalidatedConfiguration(tx, run, new Date(input.now.getTime() + 1));
+    }
     const rows = await tx.$queryRaw<RunRow[]>(Prisma.sql`
       WITH candidate AS (
         SELECT id AS candidate_id FROM schedule_generation_runs
@@ -144,6 +162,8 @@ export class PrismaScheduleGenerationRunStore extends ScheduleGenerationRunStore
     input: SucceedScheduleRun,
   ): Promise<ScheduleGenerationRun | null> {
     const tx = unwrapPrismaTransaction(context);
+    const current = await this.lockRun(tx, input.fence);
+    if (!current) return null;
     const rows = await tx.$queryRaw<RunRow[]>(Prisma.sql`
       UPDATE schedule_generation_runs SET
         status='succeeded',lease_token=NULL,claimed_at=NULL,lease_expires_at=NULL,
@@ -154,6 +174,7 @@ export class PrismaScheduleGenerationRunStore extends ScheduleGenerationRunStore
       WHERE id=${input.fence.id}::uuid AND lease_token=${input.fence.leaseToken}::uuid
         AND attempt_count=${input.fence.attempt} AND status='running'
       RETURNING ${runColumns}`);
+    if (rows[0]) await this.enqueueInvalidatedConfiguration(tx, current, input.finishedAt);
     return rows[0] ? this.run(rows[0]) : null;
   }
 
@@ -162,16 +183,12 @@ export class PrismaScheduleGenerationRunStore extends ScheduleGenerationRunStore
     input: FailScheduleRun,
   ): Promise<ScheduleGenerationRun | null> {
     const tx = unwrapPrismaTransaction(context);
-    const current = await tx.$queryRaw<Array<{ maxAttempts: number }>>(Prisma.sql`
-      SELECT max_attempts AS "maxAttempts" FROM schedule_generation_runs
-      WHERE id=${input.fence.id}::uuid AND lease_token=${input.fence.leaseToken}::uuid
-        AND attempt_count=${input.fence.attempt} AND status='running'
-      FOR UPDATE`);
-    if (!current[0]) return null;
+    const current = await this.lockRun(tx, input.fence);
+    if (!current) return null;
     const failure = normalizeScheduleRunFailure(input.code, input.message);
     const transition = planScheduleRunFailure(
       input.fence.attempt,
-      current[0].maxAttempts,
+      current.maxAttempts,
       input.retryable,
       input.failedAt,
     );
@@ -192,6 +209,9 @@ export class PrismaScheduleGenerationRunStore extends ScheduleGenerationRunStore
           WHERE id=${input.fence.id}::uuid AND lease_token=${input.fence.leaseToken}::uuid
             AND attempt_count=${input.fence.attempt} AND status='running'
           RETURNING ${runColumns}`);
+    if (rows[0] && transition.status === 'failed') {
+      await this.enqueueInvalidatedConfiguration(tx, current, input.failedAt);
+    }
     return rows[0] ? this.run(rows[0]) : null;
   }
 
@@ -225,6 +245,39 @@ export class PrismaScheduleGenerationRunStore extends ScheduleGenerationRunStore
 
   private leaseExpiry(now: Date): Date {
     return new Date(now.getTime() + SCHEDULE_GENERATION_LEASE_SECONDS * 1_000);
+  }
+
+  private async lockRun(
+    tx: ReturnType<typeof unwrapPrismaTransaction>,
+    fence: Readonly<{ id: string; leaseToken: string; attempt: number }>,
+  ): Promise<LockedRun | undefined> {
+    const rows = await tx.$queryRaw<LockedRun[]>(Prisma.sql`
+      SELECT id,max_attempts AS "maxAttempts",trigger,
+        trigger_local_date AS "triggerLocalDate",service_date AS "serviceDate",
+        requested_by_user_id AS "requestedByUserId",available_at>claimed_at AS invalidated
+      FROM schedule_generation_runs
+      WHERE id=${fence.id}::uuid AND lease_token=${fence.leaseToken}::uuid
+        AND attempt_count=${fence.attempt} AND status='running'
+      FOR UPDATE`);
+    return rows[0];
+  }
+
+  private async enqueueInvalidatedConfiguration(
+    tx: ReturnType<typeof unwrapPrismaTransaction>,
+    run: LockedRun,
+    availableAt: Date,
+  ): Promise<void> {
+    if (run.trigger !== 'configuration_change' || !run.requestedByUserId || !run.invalidated) return;
+    await tx.$executeRaw(Prisma.sql`
+      INSERT INTO schedule_generation_runs (
+        id,vendor_id,trigger,trigger_local_date,service_date,status,available_at,
+        requested_by_user_id,updated_at
+      ) VALUES (
+        ${randomUUID()}::uuid,current_setting('app.vendor_id')::uuid,'configuration_change',
+        ${run.triggerLocalDate}::date,${run.serviceDate}::date,'queued',${availableAt},
+        ${run.requestedByUserId}::uuid,${availableAt}
+      ) ON CONFLICT (vendor_id,service_date)
+        WHERE trigger='configuration_change' AND status IN ('queued','running','retry_wait') DO NOTHING`);
   }
 
   private claim(row: RunRow): ScheduleGenerationRunClaim {

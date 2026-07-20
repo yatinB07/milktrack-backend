@@ -26,9 +26,13 @@ void test('configuration regeneration coalesces open work, replaces terminal wor
 
   try {
     await transactions.run(vendorId, (tx) => writer.write(tx, vendorId, '2030-01-01', dates, userId));
-    await owner.query("UPDATE schedule_generation_runs SET status='running',attempt_count=1,lease_token=$1,claimed_at=now(),lease_expires_at=now()+interval '1 minute',started_at=now(),updated_at=now() WHERE vendor_id=$2 AND service_date=$3", [randomUUID(), vendorId, dates[1]]);
-    await owner.query("UPDATE schedule_generation_runs SET status='retry_wait',attempt_count=1,started_at=now(),failure_code='RETRYABLE',failure_message='Retry safely',updated_at=now() WHERE vendor_id=$1 AND service_date=$2", [vendorId, dates[2]]);
+    await owner.query("UPDATE schedule_generation_runs SET status='running',attempt_count=1,available_at='2029-12-31T23:59:00Z',lease_token=$1,claimed_at='2030-01-01T00:00:00Z',lease_expires_at='2030-01-01T00:01:00Z',started_at='2030-01-01T00:00:00Z',updated_at=now() WHERE vendor_id=$2 AND service_date=$3", [randomUUID(), vendorId, dates[1]]);
+    await owner.query("UPDATE schedule_generation_runs SET status='retry_wait',attempt_count=1,available_at='2030-01-01T00:05:00Z',started_at=now(),failure_code='RETRYABLE',failure_message='Retry safely',updated_at=now() WHERE vendor_id=$1 AND service_date=$2", [vendorId, dates[2]]);
     await owner.query("UPDATE schedule_generation_runs SET status='succeeded',attempt_count=1,started_at=now(),finished_at=now(),created_count=0,existing_count=0,updated_count=0,cancelled_count=0,missing_price_count=0,updated_at=now() WHERE vendor_id=$1 AND service_date=$2", [vendorId, dates[3]]);
+    const queuedAvailableAt = (await owner.query<{ available_at: Date }>(
+      'SELECT available_at FROM schedule_generation_runs WHERE vendor_id=$1 AND service_date=$2',
+      [vendorId, dates[0]],
+    )).rows[0].available_at;
 
     await transactions.run(vendorId, (tx) => writer.write(tx, vendorId, '2030-01-01', dates, userId));
     const rows = await owner.query<{ service_date: string; status: string; count: string }>(
@@ -43,6 +47,15 @@ void test('configuration regeneration coalesces open work, replaces terminal wor
       { service_date: dates[3], status: 'queued', count: '1' },
       { service_date: dates[3], status: 'succeeded', count: '1' },
     ]);
+    const coalesced = await owner.query<{ service_date: string; invalidated: boolean | null; available_at: Date }>(
+      `SELECT service_date::text,available_at>claimed_at AS invalidated,available_at
+       FROM schedule_generation_runs WHERE vendor_id=$1 AND service_date IN ($2,$3,$4)
+       ORDER BY service_date`,
+      [vendorId, dates[0], dates[1], dates[2]],
+    );
+    assert.equal(coalesced.rows[0]?.available_at.toISOString(), queuedAvailableAt.toISOString());
+    assert.equal(coalesced.rows[1]?.invalidated, true);
+    assert.equal(coalesced.rows[2]?.available_at.toISOString(), '2030-01-01T00:05:00.000Z');
 
     await assert.rejects(transactions.run(vendorId, async (tx) => {
       await unwrapPrismaTransaction(tx).vendor.update({ where: { id: vendorId }, data: { displayName: 'Rolled back' } });
