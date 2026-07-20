@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
 
-import { Inject, Injectable } from '@nestjs/common';
+import { Inject, Injectable, Logger } from '@nestjs/common';
 import { DateTime } from 'luxon';
 
 import { TenantTransactionRunner } from '../../common/application/transaction-context.js';
@@ -19,6 +19,8 @@ type ActiveWork = Map<Promise<void>, AbortController>;
 
 @Injectable()
 export class DefaultScheduleWorker extends ScheduleWorker {
+  private readonly logger = new Logger(DefaultScheduleWorker.name);
+
   constructor(
     @Inject(SCHEDULE_WORKER_OPTIONS)
     private readonly options: ScheduleWorkerOptions,
@@ -40,7 +42,7 @@ export class DefaultScheduleWorker extends ScheduleWorker {
       try {
         await this.tick(signal, active);
       } catch {
-        // A failed tick is retried after the configured poll interval.
+        this.logger.error('SCHEDULE_WORKER_TICK_FAILED');
       }
       if (!signal.aborted) await this.pause(signal);
     }
@@ -64,6 +66,7 @@ export class DefaultScheduleWorker extends ScheduleWorker {
             { vendorId, leaseToken: randomUUID(), now: new Date() },
           ));
         } catch {
+          this.logger.error('SCHEDULE_WORKER_CLAIM_FAILED');
           continue;
         }
         if (!claim) continue;
@@ -110,7 +113,7 @@ export class DefaultScheduleWorker extends ScheduleWorker {
         });
         if (seeded) eligible.push(vendorId);
       } catch {
-        // One tenant failure must not prevent other eligible vendors from running.
+        this.logger.error('SCHEDULE_WORKER_VENDOR_SEED_FAILED');
       }
     }
     return eligible;

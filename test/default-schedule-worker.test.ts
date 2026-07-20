@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { setTimeout as delay } from 'node:timers/promises';
 import test from 'node:test';
 
+import { Logger } from '@nestjs/common';
 import { DateTime } from 'luxon';
 
 import {
@@ -87,6 +88,99 @@ const options = {
   heartbeatIntervalMs: 10_000,
   shutdownTimeoutMs: 100,
 };
+
+async function captureWorkerErrors(operation: () => Promise<void>): Promise<string[]> {
+  const messages: string[] = [];
+  const original = Object.getOwnPropertyDescriptor(Logger.prototype, 'error');
+  Object.defineProperty(Logger.prototype, 'error', {
+    configurable: true,
+    value(message: unknown) {
+      messages.push(String(message));
+    },
+  });
+  try {
+    await operation();
+    return messages;
+  } finally {
+    if (original) Object.defineProperty(Logger.prototype, 'error', original);
+  }
+}
+
+void test('logs a fixed safe event and retries after vendor listing infrastructure fails', async () => {
+  const controller = new AbortController();
+  let listCalls = 0;
+  const messages = await captureWorkerErrors(async () => new DefaultScheduleWorker(
+    { ...options, pollIntervalMs: 1 },
+    {
+      listEligible: () => {
+        listCalls += 1;
+        if (listCalls === 1) return Promise.reject(new Error('postgresql://owner:secret@db/private SQL'));
+        controller.abort();
+        return Promise.resolve({ items: [] });
+      },
+      findEligible: () => Promise.resolve(null),
+    },
+    new RecordingTransactions(),
+    runStore({}),
+    { process: () => Promise.reject(new Error('unused')) },
+  ).run(controller.signal));
+
+  assert.equal(listCalls, 2);
+  assert.deepEqual(messages, ['SCHEDULE_WORKER_TICK_FAILED']);
+});
+
+void test('logs one fixed safe event per vendor eligibility or seed infrastructure failure', async () => {
+  const controller = new AbortController();
+  const firstVendorId = '10000000-0000-4000-8000-000000000002';
+  const secondVendorId = '10000000-0000-4000-8000-000000000003';
+  const thirdVendorId = '10000000-0000-4000-8000-000000000004';
+  const transactions = new RecordingTransactions();
+  const messages = await captureWorkerErrors(async () => new DefaultScheduleWorker(
+    options,
+    {
+      listEligible: () => Promise.resolve({
+        items: [firstVendorId, secondVendorId, thirdVendorId].map((id) => ({ id, timezone: 'UTC' })),
+      }),
+      findEligible: (_transaction, id) => id === firstVendorId
+        ? Promise.reject(new Error('customer@example.test'))
+        : Promise.resolve({ id, timezone: 'UTC' }),
+    },
+    transactions,
+    runStore({
+      seedAutomatic: (_transaction, input) => input.vendorId === secondVendorId
+        ? Promise.reject(new Error('SELECT secret FROM private'))
+        : Promise.resolve(7),
+      claimNext: () => {
+        controller.abort();
+        return Promise.resolve(null);
+      },
+    }),
+    { process: () => Promise.reject(new Error('unused')) },
+  ).run(controller.signal));
+
+  assert.deepEqual(messages, [
+    'SCHEDULE_WORKER_VENDOR_SEED_FAILED',
+    'SCHEDULE_WORKER_VENDOR_SEED_FAILED',
+  ]);
+});
+
+void test('logs a fixed safe event and continues when claim infrastructure fails', async () => {
+  const controller = new AbortController();
+  const messages = await captureWorkerErrors(async () => new DefaultScheduleWorker(
+    options,
+    { listEligible: () => Promise.resolve({ items: [{ id: vendorId, timezone: 'UTC' }] }), findEligible: (_transaction, id) => Promise.resolve({ id, timezone: 'UTC' }) },
+    new RecordingTransactions(),
+    runStore({
+      claimNext: () => {
+        controller.abort();
+        return Promise.reject(new Error('lease_token=private'));
+      },
+    }),
+    { process: () => Promise.reject(new Error('unused')) },
+  ).run(controller.signal));
+
+  assert.deepEqual(messages, ['SCHEDULE_WORKER_CLAIM_FAILED']);
+});
 
 void test('pages and revalidates vendors, seeds their local seven-day horizon, and drains due work with bounded concurrency', async () => {
   const controller = new AbortController();
