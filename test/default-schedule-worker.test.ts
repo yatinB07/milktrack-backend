@@ -89,18 +89,18 @@ const options = {
   shutdownTimeoutMs: 100,
 };
 
-async function captureWorkerErrors(operation: () => Promise<void>): Promise<string[]> {
-  const messages: string[] = [];
+async function captureWorkerErrors(operation: () => Promise<void>): Promise<unknown[][]> {
+  const calls: unknown[][] = [];
   const original = Object.getOwnPropertyDescriptor(Logger.prototype, 'error');
   Object.defineProperty(Logger.prototype, 'error', {
     configurable: true,
-    value(message: unknown) {
-      messages.push(String(message));
+    value(...args: unknown[]) {
+      calls.push(args);
     },
   });
   try {
     await operation();
-    return messages;
+    return calls;
   } finally {
     if (original) Object.defineProperty(Logger.prototype, 'error', original);
   }
@@ -126,7 +126,7 @@ void test('logs a fixed safe event and retries after vendor listing infrastructu
   ).run(controller.signal));
 
   assert.equal(listCalls, 2);
-  assert.deepEqual(messages, ['SCHEDULE_WORKER_TICK_FAILED']);
+  assert.deepEqual(messages, [['SCHEDULE_WORKER_TICK_FAILED']]);
 });
 
 void test('logs one fixed safe event per vendor eligibility or seed infrastructure failure', async () => {
@@ -159,8 +159,8 @@ void test('logs one fixed safe event per vendor eligibility or seed infrastructu
   ).run(controller.signal));
 
   assert.deepEqual(messages, [
-    'SCHEDULE_WORKER_VENDOR_SEED_FAILED',
-    'SCHEDULE_WORKER_VENDOR_SEED_FAILED',
+    ['SCHEDULE_WORKER_VENDOR_SEED_FAILED'],
+    ['SCHEDULE_WORKER_VENDOR_SEED_FAILED'],
   ]);
 });
 
@@ -179,7 +179,97 @@ void test('logs a fixed safe event and continues when claim infrastructure fails
     { process: () => Promise.reject(new Error('unused')) },
   ).run(controller.signal));
 
-  assert.deepEqual(messages, ['SCHEDULE_WORKER_CLAIM_FAILED']);
+  assert.deepEqual(messages, [['SCHEDULE_WORKER_CLAIM_FAILED']]);
+});
+
+void test('seeds exactly seven local dates across IANA date boundaries', async (context) => {
+  context.mock.timers.enable({ apis: ['Date'], now: new Date('2030-01-01T12:30:00.000Z') });
+  const controller = new AbortController();
+  const zones = new Map([
+    ['10000000-0000-4000-8000-000000000002', 'Pacific/Honolulu'],
+    ['10000000-0000-4000-8000-000000000003', 'UTC'],
+    ['10000000-0000-4000-8000-000000000004', 'Pacific/Kiritimati'],
+  ]);
+  const seeded = new Map<string, readonly string[]>();
+  const store = runStore({
+    seedAutomatic: (_transaction, input) => {
+      seeded.set(input.vendorId, input.serviceDates);
+      return Promise.resolve(input.serviceDates.length);
+    },
+    claimNext: () => {
+      controller.abort();
+      return Promise.resolve(null);
+    },
+  });
+  await new DefaultScheduleWorker(
+    options,
+    {
+      listEligible: () => Promise.resolve({
+        items: [...zones].map(([id, timezone]) => ({ id, timezone })),
+      }),
+      findEligible: (_transaction, id) => Promise.resolve({ id, timezone: zones.get(id)! }),
+    },
+    new RecordingTransactions(),
+    store,
+    { process: () => Promise.reject(new Error('unused')) },
+  ).run(controller.signal);
+
+  assert.deepEqual(seeded.get('10000000-0000-4000-8000-000000000002'), [
+    '2030-01-01', '2030-01-02', '2030-01-03', '2030-01-04',
+    '2030-01-05', '2030-01-06', '2030-01-07',
+  ]);
+  assert.deepEqual(seeded.get('10000000-0000-4000-8000-000000000003'), [
+    '2030-01-01', '2030-01-02', '2030-01-03', '2030-01-04',
+    '2030-01-05', '2030-01-06', '2030-01-07',
+  ]);
+  assert.deepEqual(seeded.get('10000000-0000-4000-8000-000000000004'), [
+    '2030-01-02', '2030-01-03', '2030-01-04', '2030-01-05',
+    '2030-01-06', '2030-01-07', '2030-01-08',
+  ]);
+});
+
+void test('a restarted worker reseeds idempotently and catches up due work', async () => {
+  const firstRun = new AbortController();
+  const restartedRun = new AbortController();
+  const dates = new Set<string>();
+  let seedCalls = 0;
+  let claimed = false;
+  const processed: string[] = [];
+  const store = runStore({
+    seedAutomatic: (_transaction, input) => {
+      seedCalls += 1;
+      const before = dates.size;
+      for (const serviceDate of input.serviceDates) dates.add(serviceDate);
+      if (seedCalls === 1) firstRun.abort();
+      return Promise.resolve(dates.size - before);
+    },
+    claimNext: () => {
+      if (claimed) return Promise.resolve(null);
+      claimed = true;
+      return Promise.resolve(claim(1));
+    },
+  });
+  const dependencies = [
+    options,
+    { listEligible: () => Promise.resolve({ items: [{ id: vendorId, timezone: 'UTC' }] }), findEligible: (_transaction: TransactionContext, id: string) => Promise.resolve({ id, timezone: 'UTC' }) },
+    new RecordingTransactions(),
+    store,
+    {
+      process: (value: ScheduleGenerationRunClaim) => {
+        processed.push(value.id);
+        restartedRun.abort();
+        return Promise.resolve(completed(value));
+      },
+    },
+  ] as const;
+
+  await new DefaultScheduleWorker(...dependencies).run(firstRun.signal);
+  assert.deepEqual(processed, []);
+  await new DefaultScheduleWorker(...dependencies).run(restartedRun.signal);
+
+  assert.equal(seedCalls, 2);
+  assert.equal(dates.size, 7);
+  assert.deepEqual(processed, [claim(1).id]);
 });
 
 void test('pages and revalidates vendors, seeds their local seven-day horizon, and drains due work with bounded concurrency', async () => {
@@ -248,6 +338,55 @@ void test('pages and revalidates vendors, seeds their local seven-day horizon, a
   assert.deepEqual(transactions.committed.filter((event) => event.startsWith('seed:')), [`seed:${vendorId}`]);
   assert.equal(started, claims.length);
   assert.equal(maximumActive, options.concurrency);
+});
+
+void test('logs only a fixed event when lease renewal infrastructure fails', async () => {
+  const controller = new AbortController();
+  const processing = deferred();
+  const renewalFailed = deferred();
+  let claimCalls = 0;
+  const messages = await captureWorkerErrors(async () => {
+    const running = new DefaultScheduleWorker(
+      { ...options, concurrency: 1, heartbeatIntervalMs: 1 },
+      { listEligible: () => Promise.resolve({ items: [{ id: vendorId, timezone: 'UTC' }] }), findEligible: (_transaction, id) => Promise.resolve({ id, timezone: 'UTC' }) },
+      new RecordingTransactions(),
+      runStore({
+        claimNext: () => Promise.resolve(claimCalls++ === 0 ? claim(1) : null),
+        renew: () => {
+          renewalFailed.resolve();
+          return Promise.reject(new Error('postgresql://owner:secret@db/private SQL'));
+        },
+      }),
+      { process: async (value) => { await processing.promise; return completed(value); } },
+    ).run(controller.signal);
+    await renewalFailed.promise;
+    controller.abort();
+    processing.resolve();
+    await running;
+  });
+
+  assert.deepEqual(messages, [['SCHEDULE_WORKER_RENEW_FAILED']]);
+});
+
+void test('does not duplicate processor failures already recorded in durable run history', async () => {
+  const controller = new AbortController();
+  let claimCalls = 0;
+  const messages = await captureWorkerErrors(async () => new DefaultScheduleWorker(
+    { ...options, concurrency: 1 },
+    { listEligible: () => Promise.resolve({ items: [{ id: vendorId, timezone: 'UTC' }] }), findEligible: (_transaction, id) => Promise.resolve({ id, timezone: 'UTC' }) },
+    new RecordingTransactions(),
+    runStore({
+      claimNext: () => {
+        claimCalls += 1;
+        if (claimCalls === 1) return Promise.resolve(claim(1));
+        controller.abort();
+        return Promise.resolve(null);
+      },
+    }),
+    { process: () => Promise.reject(new Error('durably recorded private detail')) },
+  ).run(controller.signal));
+
+  assert.deepEqual(messages, []);
 });
 
 void test('renews the exact claim fence in separate tenant transactions and stops on ownership loss', async () => {

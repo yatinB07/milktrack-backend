@@ -156,7 +156,7 @@ export class DefaultScheduleWorker extends ScheduleWorker {
         ));
         if (!renewed) return;
       } catch {
-        // A failed renewal cannot prove continued ownership, so this worker stops renewing.
+        this.logger.error('SCHEDULE_WORKER_RENEW_FAILED');
         return;
       }
     }
