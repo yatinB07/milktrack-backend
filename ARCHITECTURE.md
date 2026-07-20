@@ -114,8 +114,8 @@ authenticate opaque session
 ```
 
 `vendor_memberships`, `owner_enrollments`, `support_access_grants`,
-`audit_events`, `units`, and `products` have row-level security enabled and
-forced. Their policies compare
+`audit_events`, `units`, `products`, and `delivery_slots` have row-level security
+enabled and forced. Their policies compare
 `vendor_id` with the transaction-local `app.vendor_id`. The fixed runtime role is
 `milktrack_app`,
 matching the role named by committed migrations. Only its injected password is
@@ -162,6 +162,9 @@ Selective soft deletion applies to mutable master records only:
 - products are soft deleted with actor, reason, timestamp, and optimistic version;
   their vendor-scoped code is reusable only after deletion, while unit codes
   remain unique even when inactive.
+- delivery slots use an active boolean rather than soft deletion. Their code and
+  vendor-local `time(0)` window are immutable and remain reserved while inactive;
+  lifecycle transitions are row-locked, reasoned, and audited.
 
 There is no global Prisma soft-delete middleware. Authentication challenges and
 sessions are consumed, expired, or revoked. Audit events are never soft-deleted:
@@ -212,6 +215,8 @@ The final Phase 1 hardening migrations are:
 The next Phase 2 migration, `202607200002_vendor_catalog`, adds tenant-safe unit
 and product tables, composite vendor/unit integrity, non-deleted product code
 uniqueness, and forced RLS without resetting earlier household or Phase 1 data.
+The additive `202607200003_delivery_slots` migration adds vendor-local slot
+windows with forced RLS and preserves all earlier tenant data.
 
 Local Compose pins PostgreSQL 18.4 by digest; every Dockerfile stage derives from
 the Node.js 24.18.0 image pinned by digest. The production stage installs only

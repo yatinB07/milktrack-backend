@@ -198,13 +198,16 @@ dependency change, not an unversioned production pull.
 Household management is available under `/v1/vendors/{vendorId}/households`,
 with customer self reads under `/v1/customer/vendors/{vendorId}/households`.
 Vendor catalog management is available under `/v1/vendors/{vendorId}/units`
-and `/v1/vendors/{vendorId}/products`. Catalog lists default to active records
+and `/v1/vendors/{vendorId}/products`, with vendor-local delivery slots under
+`/v1/vendors/{vendorId}/delivery-slots`. Catalog lists default to active records
 and accept bounded opaque cursors plus explicit status and search filters.
 Product status changes use PATCH; delete/restore use optimistic versions, and
-product creation intentionally does not accept `expectedVersion`.
+product creation intentionally does not accept `expectedVersion`. Delivery-slot
+codes and `HH:mm` local time windows are immutable; only names can be changed,
+and deactivate/reactivate requires a reason.
 
 Use the existing Compose migration and integration commands after applying the
-additive household and vendor-catalog migrations.
+additive household, vendor-catalog, and delivery-slot migrations.
 
 The committed contract is `openapi/v1.json`. Regenerate it from the same Nest
 application and Swagger configuration used at runtime, then check for drift:

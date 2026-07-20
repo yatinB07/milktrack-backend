@@ -90,6 +90,12 @@ const activeVendorOperations: Readonly<Record<string, VendorPermission>> = {
   'catalog.product-update': 'catalog:manage',
   'catalog.product-delete': 'catalog:manage',
   'catalog.product-restore': 'catalog:manage',
+  'catalog.delivery-slot-list': 'catalog:read',
+  'catalog.delivery-slot-get': 'catalog:read',
+  'catalog.delivery-slot-create': 'catalog:manage',
+  'catalog.delivery-slot-rename': 'catalog:manage',
+  'catalog.delivery-slot-deactivate': 'catalog:manage',
+  'catalog.delivery-slot-reactivate': 'catalog:manage',
 };
 
 export const hasPlatformPermission = (

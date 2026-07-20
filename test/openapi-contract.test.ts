@@ -184,6 +184,10 @@ void test('publishes the complete Phase 1 HTTP contract without persistence secr
     '/v1/vendors/{vendorId}/products',
     '/v1/vendors/{vendorId}/products/{productId}',
     '/v1/vendors/{vendorId}/products/{productId}/restore',
+    '/v1/vendors/{vendorId}/delivery-slots',
+    '/v1/vendors/{vendorId}/delivery-slots/{slotId}',
+    '/v1/vendors/{vendorId}/delivery-slots/{slotId}/deactivate',
+    '/v1/vendors/{vendorId}/delivery-slots/{slotId}/reactivate',
   ];
   for (const path of householdPaths) assert.ok(paths[path], `missing ${path}`);
   for (const path of catalogPaths) assert.ok(paths[path], `missing ${path}`);
@@ -390,6 +394,12 @@ void test('publishes the additive vendor catalog contract', async () => {
     ['patch', '/v1/vendors/{vendorId}/products/{productId}', '200', 'ProductResponseDto'],
     ['delete', '/v1/vendors/{vendorId}/products/{productId}', '204', undefined],
     ['post', '/v1/vendors/{vendorId}/products/{productId}/restore', '200', 'ProductResponseDto'],
+    ['get', '/v1/vendors/{vendorId}/delivery-slots', '200', 'DeliverySlotListResponseDto'],
+    ['post', '/v1/vendors/{vendorId}/delivery-slots', '201', 'DeliverySlotResponseDto'],
+    ['get', '/v1/vendors/{vendorId}/delivery-slots/{slotId}', '200', 'DeliverySlotResponseDto'],
+    ['patch', '/v1/vendors/{vendorId}/delivery-slots/{slotId}', '200', 'DeliverySlotResponseDto'],
+    ['post', '/v1/vendors/{vendorId}/delivery-slots/{slotId}/deactivate', '200', 'DeliverySlotResponseDto'],
+    ['post', '/v1/vendors/{vendorId}/delivery-slots/{slotId}/reactivate', '200', 'DeliverySlotResponseDto'],
   ] as const;
   for (const [method, path, status, schemaName] of operations) {
     const operation = object(object(paths[path], `missing ${path}`)[method], `missing ${method.toUpperCase()} ${path}`);
@@ -398,7 +408,18 @@ void test('publishes the additive vendor catalog contract', async () => {
     if (schemaName) assert.equal(responseSchema(response, `${path} response`).$ref, `#/components/schemas/${schemaName}`);
     else assert.equal(response.content, undefined);
   }
-  for (const path of ['/v1/vendors/{vendorId}/units', '/v1/vendors/{vendorId}/products']) {
+  for (const [method, path, schemaName] of [
+    ['post', '/v1/vendors/{vendorId}/delivery-slots', 'CreateDeliverySlotRequestDto'],
+    ['patch', '/v1/vendors/{vendorId}/delivery-slots/{slotId}', 'RenameDeliverySlotRequestDto'],
+    ['post', '/v1/vendors/{vendorId}/delivery-slots/{slotId}/deactivate', 'ReasonRequestDto'],
+    ['post', '/v1/vendors/{vendorId}/delivery-slots/{slotId}/reactivate', 'ReasonRequestDto'],
+  ] as const) {
+    const operation = object(object(paths[path], path)[method], `${method} ${path}`);
+    const requestBody = object(operation.requestBody, `${method} ${path} request body`);
+    const content = object(requestBody.content, `${method} ${path} request content`);
+    assert.equal(object(object(content['application/json'], 'JSON request').schema, 'request schema').$ref, `#/components/schemas/${schemaName}`);
+  }
+  for (const path of ['/v1/vendors/{vendorId}/units', '/v1/vendors/{vendorId}/products', '/v1/vendors/{vendorId}/delivery-slots']) {
     const parameters = object(paths[path], path).get as JsonObject;
     const names = (parameters.parameters as JsonObject[]).map(({ name }) => name);
     for (const name of ['cursor', 'limit', 'status', 'search']) assert.ok(names.includes(name));
@@ -407,9 +428,16 @@ void test('publishes the additive vendor catalog contract', async () => {
   const properties = (name: string) => object(object(schemas[name], name).properties, `${name} properties`);
   assert.deepEqual(Object.keys(properties('UnitResponseDto')).sort(), ['code', 'createdAt', 'decimalScale', 'id', 'name', 'status', 'updatedAt', 'vendorId']);
   assert.deepEqual(Object.keys(properties('ProductResponseDto')).sort(), ['code', 'createdAt', 'defaultUnitId', 'id', 'name', 'status', 'updatedAt', 'vendorId', 'version']);
+  assert.deepEqual(Object.keys(properties('DeliverySlotResponseDto')).sort(), ['code', 'createdAt', 'endLocalTime', 'id', 'name', 'startLocalTime', 'status', 'updatedAt', 'vendorId']);
   assert.equal('expectedVersion' in properties('CreateProductRequestDto'), false);
   assert.equal(object(properties('CreateUnitRequestDto').code, 'unit code').pattern, '^[A-Za-z0-9_-]{2,32}$');
   assert.equal(object(properties('CreateProductRequestDto').code, 'product code').pattern, '^[A-Za-z0-9_-]{2,32}$');
+  assert.equal(object(properties('CreateDeliverySlotRequestDto').code, 'delivery-slot code').pattern, '^[A-Za-z0-9_-]{2,32}$');
+  for (const name of ['startLocalTime', 'endLocalTime']) {
+    assert.equal(object(properties('CreateDeliverySlotRequestDto')[name], `${name} schema`).pattern, '^(?:[01]\\d|2[0-3]):[0-5]\\d$');
+    assert.equal(object(properties('DeliverySlotResponseDto')[name], `${name} response schema`).pattern, '^(?:[01]\\d|2[0-3]):[0-5]\\d$');
+  }
+  assert.deepEqual(Object.keys(properties('RenameDeliverySlotRequestDto')), ['name']);
   assert.deepEqual(object(schemas.RestoreProductRequestDto, 'restore product DTO').required, ['expectedVersion']);
   assert.deepEqual(object(properties('ProductResponseDto').status, 'product status').enum, ['active', 'inactive']);
 });

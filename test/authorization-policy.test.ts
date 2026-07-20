@@ -134,6 +134,8 @@ void test('catalog operations map only to the reviewed read and manage permissio
     'catalog.unit-get',
     'catalog.product-list',
     'catalog.product-get',
+    'catalog.delivery-slot-list',
+    'catalog.delivery-slot-get',
   ]) {
     assert.doesNotThrow(() => requireVendorOperation(operation, 'catalog:read'));
     assert.throws(() => requireVendorOperation(operation, 'catalog:manage'), forbidden);
@@ -147,6 +149,10 @@ void test('catalog operations map only to the reviewed read and manage permissio
     'catalog.product-update',
     'catalog.product-delete',
     'catalog.product-restore',
+    'catalog.delivery-slot-create',
+    'catalog.delivery-slot-rename',
+    'catalog.delivery-slot-deactivate',
+    'catalog.delivery-slot-reactivate',
   ]) {
     assert.doesNotThrow(() => requireVendorOperation(operation, 'catalog:manage'));
     assert.throws(() => requireVendorOperation(operation, 'catalog:read'), forbidden);

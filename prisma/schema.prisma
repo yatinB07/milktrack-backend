@@ -239,6 +239,7 @@ model Vendor {
   households        Household[]
   units             Unit[]
   products          Product[]
+  deliverySlots     DeliverySlot[]
 
   @@map("vendors")
 }
@@ -350,6 +351,24 @@ model Product {
 
   @@unique([vendorId, id])
   @@map("products")
+}
+
+model DeliverySlot {
+  id             String   @id @db.Uuid
+  vendorId       String   @map("vendor_id") @db.Uuid
+  code           String
+  name           String
+  startLocalTime DateTime @map("start_local_time") @db.Time(0)
+  endLocalTime   DateTime @map("end_local_time") @db.Time(0)
+  active         Boolean  @default(true)
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  vendor         Vendor   @relation(fields: [vendorId], references: [id])
+
+  @@unique([vendorId, id])
+  @@unique([vendorId, code])
+  @@index([vendorId, active, createdAt(sort: Desc), id(sort: Desc)])
+  @@map("delivery_slots")
 }
 
 model OwnerEnrollment {

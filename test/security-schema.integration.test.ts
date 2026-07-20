@@ -25,6 +25,7 @@ void test('migrations safely upgrade legacy data without resetting it', async ()
     '202607180010_owner_enrollment',
     '202607200001_households',
     '202607200002_vendor_catalog',
+    '202607200003_delivery_slots',
   ] as const;
   const migrations = await Promise.all(
     migrationDirectories.map((directory) =>
@@ -104,6 +105,18 @@ void test('migrations safely upgrade legacy data without resetting it', async ()
       [legacyHouseholdId, legacyVendorId],
     );
     await client.query(migrations[11]);
+    const legacyUnitId = randomUUID(); const legacyProductId = randomUUID();
+    await client.query(
+      `INSERT INTO units (id,vendor_id,code,name,decimal_scale,updated_at)
+       VALUES ($1,$2,'LEGACY_UNIT','Legacy Unit',2,now())`,
+      [legacyUnitId, legacyVendorId],
+    );
+    await client.query(
+      `INSERT INTO products (id,vendor_id,code,name,default_unit_id,updated_at)
+       VALUES ($1,$2,'LEGACY_PRODUCT','Legacy Product',$3,now())`,
+      [legacyProductId, legacyVendorId, legacyUnitId],
+    );
+    await client.query(migrations[12]);
 
     const session = await client.query<{
       authentication_method: string;
@@ -184,6 +197,8 @@ void test('migrations safely upgrade legacy data without resetting it', async ()
       (await client.query('SELECT id FROM households WHERE id = $1', [legacyHouseholdId])).rowCount,
       1,
     );
+    assert.equal((await client.query('SELECT id FROM units WHERE id=$1', [legacyUnitId])).rowCount, 1);
+    assert.equal((await client.query('SELECT id FROM products WHERE id=$1', [legacyProductId])).rowCount, 1);
 
     const anonymousChallengeId = randomUUID();
     await client.query(

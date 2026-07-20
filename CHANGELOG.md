@@ -6,6 +6,9 @@ All notable backend changes are recorded here.
 
 ### Added
 
+- Added tenant-safe vendor-local delivery slots with canonical `HH:mm` windows,
+  immutable codes/times, bounded filtered cursor pagination, row-locked reasoned
+  lifecycle transitions, forced RLS, and atomic audits.
 - Added tenant-safe vendor units and products with forced RLS, bounded filtered
   cursor pagination, immutable unit/product identifiers, optimistic product
   mutations, soft delete/restore, active-unit validation, and atomic audits.
@@ -34,6 +37,8 @@ All notable backend changes are recorded here.
 
 ### Security
 
+- Added bidirectional delivery-slot tenant isolation, runtime-role access and
+  hard-delete denial checks, plus atomic rollback coverage for audit failure.
 - Added composite tenant-safe product-to-unit integrity and bidirectional catalog
   RLS tests, including positive runtime-role access and hard-delete denial.
 - Added forced PostgreSQL row-level security for vendor memberships, support

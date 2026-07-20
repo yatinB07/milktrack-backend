@@ -581,12 +581,12 @@ void test('executor permits only exact catalog read grants to support operations
 
   try {
     const support = actor(userIds[0], ['support_operations']);
-    assert.deepEqual(await execute(support, 'catalog:read', 'catalog.product-list'), {
+    assert.deepEqual(await execute(support, 'catalog:read', 'catalog.delivery-slot-list'), {
       calls: 1,
       result: 'catalog',
     });
     await assert.rejects(
-      execute(support, 'catalog:manage', 'catalog.product-update'),
+      execute(support, 'catalog:manage', 'catalog.delivery-slot-deactivate'),
       forbidden,
     );
     await assert.rejects(

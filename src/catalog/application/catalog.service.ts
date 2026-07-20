@@ -10,6 +10,7 @@ import { requestContextStore } from '../../common/context/request-context.js';
 import { ApplicationError } from '../../common/errors/application.error.js';
 import {
   PrismaCatalogStore,
+  type DeliverySlotRecord,
   type ProductRecord,
   type UnitRecord,
 } from '../infrastructure/prisma-catalog.store.js';
@@ -32,6 +33,10 @@ export type UpdateProduct = Readonly<{
 }>;
 export type VersionedReason = Readonly<{ expectedVersion: number; reason: string }>;
 export type RestoreProduct = Readonly<{ expectedVersion: number; reason?: string }>;
+export type CreateDeliverySlot = Readonly<{
+  code: string; name: string; startLocalTime: string; endLocalTime: string;
+}>;
+export type RenameDeliverySlot = Readonly<{ name: string }>;
 export type CatalogPage<T> = Readonly<{ items: readonly T[]; nextCursor?: string }>;
 
 export abstract class CatalogService {
@@ -47,6 +52,12 @@ export abstract class CatalogService {
   abstract updateProduct(actor: Actor, vendorId: string, productId: string, command: UpdateProduct): Promise<ProductRecord>;
   abstract deleteProduct(actor: Actor, vendorId: string, productId: string, command: VersionedReason): Promise<void>;
   abstract restoreProduct(actor: Actor, vendorId: string, productId: string, command: RestoreProduct): Promise<ProductRecord>;
+  abstract listDeliverySlots(actor: Actor, vendorId: string, query: CatalogPageQuery): Promise<CatalogPage<DeliverySlotRecord>>;
+  abstract getDeliverySlot(actor: Actor, vendorId: string, slotId: string): Promise<DeliverySlotRecord>;
+  abstract createDeliverySlot(actor: Actor, vendorId: string, command: CreateDeliverySlot): Promise<DeliverySlotRecord>;
+  abstract renameDeliverySlot(actor: Actor, vendorId: string, slotId: string, command: RenameDeliverySlot): Promise<DeliverySlotRecord>;
+  abstract deactivateDeliverySlot(actor: Actor, vendorId: string, slotId: string, command: Reason): Promise<DeliverySlotRecord>;
+  abstract reactivateDeliverySlot(actor: Actor, vendorId: string, slotId: string, command: Reason): Promise<DeliverySlotRecord>;
 }
 
 const normalizedCode = (value: string) => value.trim().toUpperCase();
@@ -143,11 +154,50 @@ export class PrismaCatalogService extends CatalogService {
       return change.after;
     });
   }
+  listDeliverySlots(actor: Actor, vendorId: string, query: CatalogPageQuery) {
+    return this.execute(actor, vendorId, 'catalog:read', 'catalog.delivery-slot-list', (tx) => this.catalog.listDeliverySlots(tx, this.normalizeQuery(query)));
+  }
+  getDeliverySlot(actor: Actor, vendorId: string, slotId: string) {
+    return this.execute(actor, vendorId, 'catalog:read', 'catalog.delivery-slot-get', (tx) => this.catalog.getDeliverySlot(tx, slotId));
+  }
+  createDeliverySlot(actor: Actor, vendorId: string, command: CreateDeliverySlot) {
+    if (command.startLocalTime >= command.endLocalTime)
+      throw new ApplicationError('INVALID_DELIVERY_SLOT_TIME_RANGE', 'Start time must be before end time', 400);
+    return this.execute(actor, vendorId, 'catalog:manage', 'catalog.delivery-slot-create', async (tx) => {
+      const slot = await this.catalog.createDeliverySlot(tx, {
+        id: randomUUID(), vendorId, code: normalizedCode(command.code),
+        name: normalizedName(command.name, 100),
+        startLocalTime: command.startLocalTime, endLocalTime: command.endLocalTime,
+      });
+      await this.audit(tx, actor, vendorId, slot.id, 'delivery_slot.created', 'delivery_slot', undefined, slot);
+      return slot;
+    });
+  }
+  renameDeliverySlot(actor: Actor, vendorId: string, slotId: string, command: RenameDeliverySlot) {
+    return this.execute(actor, vendorId, 'catalog:manage', 'catalog.delivery-slot-rename', async (tx) => {
+      const change = await this.catalog.renameDeliverySlot(tx, slotId, normalizedName(command.name, 100));
+      await this.audit(tx, actor, vendorId, slotId, 'delivery_slot.renamed', 'delivery_slot', change.before, change.after);
+      return change.after;
+    });
+  }
+  deactivateDeliverySlot(actor: Actor, vendorId: string, slotId: string, command: Reason) {
+    return this.changeDeliverySlotStatus(actor, vendorId, slotId, false, 'catalog.delivery-slot-deactivate', 'delivery_slot.deactivated', normalizedReason(command.reason));
+  }
+  reactivateDeliverySlot(actor: Actor, vendorId: string, slotId: string, command: Reason) {
+    return this.changeDeliverySlotStatus(actor, vendorId, slotId, true, 'catalog.delivery-slot-reactivate', 'delivery_slot.reactivated', normalizedReason(command.reason));
+  }
 
   private changeUnitStatus(actor: Actor, vendorId: string, unitId: string, status: CatalogStatus, operation: string, action: string, reason: string) {
     return this.execute(actor, vendorId, 'catalog:manage', operation, async (tx) => {
       const change = await this.catalog.changeUnitStatus(tx, unitId, status);
       await this.audit(tx, actor, vendorId, unitId, action, 'unit', change.before, change.after, reason);
+      return change.after;
+    });
+  }
+  private changeDeliverySlotStatus(actor: Actor, vendorId: string, slotId: string, active: boolean, operation: string, action: string, reason: string) {
+    return this.execute(actor, vendorId, 'catalog:manage', operation, async (tx) => {
+      const change = await this.catalog.changeDeliverySlotStatus(tx, slotId, active);
+      await this.audit(tx, actor, vendorId, slotId, action, 'delivery_slot', change.before, change.after, reason);
       return change.after;
     });
   }
