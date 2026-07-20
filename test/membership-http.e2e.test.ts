@@ -1310,19 +1310,23 @@ void describe('membership and user lifecycle HTTP API', () => {
     const administratorToken = await issueSession(administratorId);
     const vendorId = await insertVendor(seed);
     const email = `audit-failure-${randomUUID()}@example.com`;
+    const suffix = randomUUID().replaceAll('-', '');
+    const trigger = `task10_fail_owner_onboarding_audit_${suffix}`;
+    const triggerFunction = `task10_fail_owner_onboarding_audit_fn_${suffix}`;
     await ownerPool.query(`
-      CREATE OR REPLACE FUNCTION task10_fail_owner_onboarding_audit() RETURNS trigger
+      CREATE FUNCTION ${triggerFunction}() RETURNS trigger
       LANGUAGE plpgsql AS $$
       BEGIN
-        IF NEW.action = 'vendor.owner_enrollment_invited' THEN
+        IF NEW.vendor_id = '${vendorId}'::uuid
+           AND NEW.action = 'vendor.owner_enrollment_invited' THEN
           RAISE EXCEPTION 'forced owner onboarding audit failure';
         END IF;
         RETURN NEW;
       END $$`);
     await ownerPool.query(`
-      CREATE TRIGGER task10_fail_owner_onboarding_audit
+      CREATE TRIGGER ${trigger}
       BEFORE INSERT ON audit_events
-      FOR EACH ROW EXECUTE FUNCTION task10_fail_owner_onboarding_audit()`);
+      FOR EACH ROW EXECUTE FUNCTION ${triggerFunction}()`);
 
     try {
       const response = await request(
@@ -1349,10 +1353,10 @@ void describe('membership and user lifecycle HTTP API', () => {
       assert.equal(rows.rows[0]?.count, '0');
     } finally {
       await ownerPool.query(
-        'DROP TRIGGER IF EXISTS task10_fail_owner_onboarding_audit ON audit_events',
+        `DROP TRIGGER IF EXISTS ${trigger} ON audit_events`,
       );
       await ownerPool.query(
-        'DROP FUNCTION IF EXISTS task10_fail_owner_onboarding_audit()',
+        `DROP FUNCTION IF EXISTS ${triggerFunction}()`,
       );
       await cleanup(seed);
     }
