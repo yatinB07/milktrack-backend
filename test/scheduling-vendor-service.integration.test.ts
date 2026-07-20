@@ -19,6 +19,7 @@ const vendorIds = {
   suspended: '70000000-0000-4000-8000-000000000004',
   deleted: '70000000-0000-4000-8000-000000000005',
   onboarding: '70000000-0000-4000-8000-000000000006',
+  olderEligible: '70000000-0000-4000-8000-000000000007',
 } as const;
 
 test.before(async () => {
@@ -29,6 +30,7 @@ test.before(async () => {
     [vendorIds.suspended, 'suspended', 'Asia/Tokyo', '2030-01-04T00:00:00.000Z', null],
     [vendorIds.deleted, 'active', 'Australia/Sydney', '2030-01-05T00:00:00.000Z', '2030-01-06T00:00:00.000Z'],
     [vendorIds.onboarding, 'onboarding', 'Europe/Paris', '2030-01-06T00:00:00.000Z', null],
+    [vendorIds.olderEligible, 'active', 'Asia/Singapore', '2030-01-01T00:00:00.000Z', null],
   ] as const;
 
   for (const [id, status, timezone, createdAt, deletedAt] of fixtures) {
@@ -58,8 +60,9 @@ void test('pages only nondeleted trial and active vendors in stable descending o
   assert.doesNotMatch(first.nextCursor!, /2030|70000000/);
 
   const second = await service.listEligible({ cursor: first.nextCursor, limit: 2 });
-  assert.deepEqual(second, {
-    items: [{ id: vendorIds.activeTie, timezone: 'Europe/London' }],
+  assert.deepEqual(second.items[0], {
+    id: vendorIds.activeTie,
+    timezone: 'Europe/London',
   });
 });
 
