@@ -24,6 +24,7 @@ void test('migrations safely upgrade legacy data without resetting it', async ()
     '202607180009_align_membership_cursor_precision',
     '202607180010_owner_enrollment',
     '202607200001_households',
+    '202607200002_vendor_catalog',
   ] as const;
   const migrations = await Promise.all(
     migrationDirectories.map((directory) =>
@@ -93,6 +94,16 @@ void test('migrations safely upgrade legacy data without resetting it', async ()
     await client.query(migrations[8]);
     await client.query(migrations[9]);
     await client.query(migrations[10]);
+    const legacyHouseholdId = randomUUID();
+    await client.query(
+      `INSERT INTO households
+         (id, vendor_id, account_number, name, address_line_1, city, region,
+          postal_code, country_code, updated_at)
+       VALUES ($1, $2, 'LEGACY-HOUSEHOLD', 'Legacy Household', '1 Legacy Road',
+               'Pune', 'Maharashtra', '411001', 'IN', now())`,
+      [legacyHouseholdId, legacyVendorId],
+    );
+    await client.query(migrations[11]);
 
     const session = await client.query<{
       authentication_method: string;
@@ -167,6 +178,10 @@ void test('migrations safely upgrade legacy data without resetting it', async ()
 
     assert.equal(
       (await client.query('SELECT id FROM vendors WHERE id = $1', [legacyVendorId])).rowCount,
+      1,
+    );
+    assert.equal(
+      (await client.query('SELECT id FROM households WHERE id = $1', [legacyHouseholdId])).rowCount,
       1,
     );
 

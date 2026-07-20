@@ -7,6 +7,7 @@ import type {
 } from '../src/authorization/application/authorization.policy.js';
 import {
   requirePlatformPermission,
+  requireVendorOperation,
   requireVendorPermission,
 } from '../src/authorization/application/authorization.policy.js';
 import type { AuditWriter } from '../src/audit/application/audit-writer.js';
@@ -39,6 +40,8 @@ const vendor = {
     'vendor:profile:read',
     'household:read',
     'household:manage',
+    'catalog:read',
+    'catalog:manage',
   ],
   vendor_administrator: [
     'membership:read',
@@ -47,6 +50,8 @@ const vendor = {
     'vendor:profile:read',
     'household:read',
     'household:manage',
+    'catalog:read',
+    'catalog:manage',
   ],
   delivery_agent: ['delivery:read', 'delivery:record'],
   customer: ['customer:self'],
@@ -119,6 +124,68 @@ void test('vendor roles allow exactly the reviewed permission matrix', () => {
   assert.doesNotThrow(() => requireVendorPermission('customer', 'customer:self'));
   assert.throws(() => requireVendorPermission('delivery_agent', 'household:read'), forbidden);
   assert.throws(() => requireVendorPermission('customer', 'household:manage'), forbidden);
+  assert.throws(() => requireVendorPermission('delivery_agent', 'catalog:read'), forbidden);
+  assert.throws(() => requireVendorPermission('customer', 'catalog:manage'), forbidden);
+});
+
+void test('catalog operations map only to the reviewed read and manage permissions', () => {
+  for (const operation of [
+    'catalog.unit-list',
+    'catalog.unit-get',
+    'catalog.product-list',
+    'catalog.product-get',
+  ]) {
+    assert.doesNotThrow(() => requireVendorOperation(operation, 'catalog:read'));
+    assert.throws(() => requireVendorOperation(operation, 'catalog:manage'), forbidden);
+  }
+  for (const operation of [
+    'catalog.unit-create',
+    'catalog.unit-rename',
+    'catalog.unit-deactivate',
+    'catalog.unit-reactivate',
+    'catalog.product-create',
+    'catalog.product-update',
+    'catalog.product-delete',
+    'catalog.product-restore',
+  ]) {
+    assert.doesNotThrow(() => requireVendorOperation(operation, 'catalog:manage'));
+    assert.throws(() => requireVendorOperation(operation, 'catalog:read'), forbidden);
+  }
+  assert.throws(() => requireVendorOperation('catalog.product-status', 'catalog:manage'), forbidden);
+});
+
+void test('catalog vendor operations accept onboarding, trial, and active vendors', async () => {
+  const statuses: string[][] = [];
+  const audits: AuditWriter = { append: () => Promise.resolve() };
+  const policy = new PrismaAuthorizationPolicy(audits);
+  const actor: Actor = {
+    userId: '00000000-0000-4000-8000-000000000001',
+    sessionId: '00000000-0000-4000-8000-000000000002',
+    displayName: 'Catalog administrator',
+    authenticationMethod: 'administrator_mfa',
+    platformRoles: [],
+    memberships: [],
+  };
+  const tx = {
+    vendor: {
+      findFirst: ({ where }: { where: { status: { in: string[] } } }) => {
+        statuses.push(where.status.in);
+        return Promise.resolve({ id: actor.userId });
+      },
+    },
+    vendorMembership: {
+      findMany: () => Promise.resolve([{ role: 'vendor_administrator' }]),
+    },
+  } as unknown as Prisma.TransactionClient;
+
+  await policy.requireVendor(
+    wrapPrismaTransaction(tx),
+    actor,
+    actor.userId,
+    'catalog:manage',
+    'catalog.product-update',
+  );
+  assert.deepEqual(statuses, [['onboarding', 'trial', 'active']]);
 });
 
 void test('vendor policy grants access when any active membership role permits it', async () => {

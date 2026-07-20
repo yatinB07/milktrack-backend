@@ -176,8 +176,18 @@ void test('publishes the complete Phase 1 HTTP contract without persistence secr
     '/v1/vendors/{vendorId}/households/{id}/restore',
     '/v1/customer/vendors/{vendorId}/households',
   ];
+  const catalogPaths = [
+    '/v1/vendors/{vendorId}/units',
+    '/v1/vendors/{vendorId}/units/{unitId}',
+    '/v1/vendors/{vendorId}/units/{unitId}/deactivate',
+    '/v1/vendors/{vendorId}/units/{unitId}/reactivate',
+    '/v1/vendors/{vendorId}/products',
+    '/v1/vendors/{vendorId}/products/{productId}',
+    '/v1/vendors/{vendorId}/products/{productId}/restore',
+  ];
   for (const path of householdPaths) assert.ok(paths[path], `missing ${path}`);
-  assert.deepEqual(Object.keys(paths).sort(), [...Object.keys(phaseOneOperations), ...householdPaths].sort());
+  for (const path of catalogPaths) assert.ok(paths[path], `missing ${path}`);
+  assert.deepEqual(Object.keys(paths).sort(), [...Object.keys(phaseOneOperations), ...householdPaths, ...catalogPaths].sort());
 
   for (const [path, methods] of Object.entries(phaseOneOperations)) {
     const pathItem = object(paths[path], `missing OpenAPI path ${path}`);
@@ -362,6 +372,46 @@ void test('publishes the complete Phase 1 HTTP contract without persistence secr
       }
     }
   }
+});
+
+void test('publishes the additive vendor catalog contract', async () => {
+  const { document } = await readDocument();
+  const paths = object(document.paths, 'OpenAPI paths must be documented');
+  const operations = [
+    ['get', '/v1/vendors/{vendorId}/units', '200', 'UnitListResponseDto'],
+    ['post', '/v1/vendors/{vendorId}/units', '201', 'UnitResponseDto'],
+    ['get', '/v1/vendors/{vendorId}/units/{unitId}', '200', 'UnitResponseDto'],
+    ['patch', '/v1/vendors/{vendorId}/units/{unitId}', '200', 'UnitResponseDto'],
+    ['post', '/v1/vendors/{vendorId}/units/{unitId}/deactivate', '200', 'UnitResponseDto'],
+    ['post', '/v1/vendors/{vendorId}/units/{unitId}/reactivate', '200', 'UnitResponseDto'],
+    ['get', '/v1/vendors/{vendorId}/products', '200', 'ProductListResponseDto'],
+    ['post', '/v1/vendors/{vendorId}/products', '201', 'ProductResponseDto'],
+    ['get', '/v1/vendors/{vendorId}/products/{productId}', '200', 'ProductResponseDto'],
+    ['patch', '/v1/vendors/{vendorId}/products/{productId}', '200', 'ProductResponseDto'],
+    ['delete', '/v1/vendors/{vendorId}/products/{productId}', '204', undefined],
+    ['post', '/v1/vendors/{vendorId}/products/{productId}/restore', '200', 'ProductResponseDto'],
+  ] as const;
+  for (const [method, path, status, schemaName] of operations) {
+    const operation = object(object(paths[path], `missing ${path}`)[method], `missing ${method.toUpperCase()} ${path}`);
+    assert.deepEqual(operation.security, [{ opaqueBearer: [] }]);
+    const response = object(object(operation.responses, `${path} responses`)[status], `${path} ${status}`);
+    if (schemaName) assert.equal(responseSchema(response, `${path} response`).$ref, `#/components/schemas/${schemaName}`);
+    else assert.equal(response.content, undefined);
+  }
+  for (const path of ['/v1/vendors/{vendorId}/units', '/v1/vendors/{vendorId}/products']) {
+    const parameters = object(paths[path], path).get as JsonObject;
+    const names = (parameters.parameters as JsonObject[]).map(({ name }) => name);
+    for (const name of ['cursor', 'limit', 'status', 'search']) assert.ok(names.includes(name));
+  }
+  const schemas = object(object(document.components, 'components').schemas, 'schemas');
+  const properties = (name: string) => object(object(schemas[name], name).properties, `${name} properties`);
+  assert.deepEqual(Object.keys(properties('UnitResponseDto')).sort(), ['code', 'createdAt', 'decimalScale', 'id', 'name', 'status', 'updatedAt', 'vendorId']);
+  assert.deepEqual(Object.keys(properties('ProductResponseDto')).sort(), ['code', 'createdAt', 'defaultUnitId', 'id', 'name', 'status', 'updatedAt', 'vendorId', 'version']);
+  assert.equal('expectedVersion' in properties('CreateProductRequestDto'), false);
+  assert.equal(object(properties('CreateUnitRequestDto').code, 'unit code').pattern, '^[A-Za-z0-9_-]{2,32}$');
+  assert.equal(object(properties('CreateProductRequestDto').code, 'product code').pattern, '^[A-Za-z0-9_-]{2,32}$');
+  assert.deepEqual(object(schemas.RestoreProductRequestDto, 'restore product DTO').required, ['expectedVersion']);
+  assert.deepEqual(object(properties('ProductResponseDto').status, 'product status').enum, ['active', 'inactive']);
 });
 
 void test('publishes the complete additive household contract', async () => {

@@ -15,6 +15,8 @@ export type VendorPermission =
   | 'membership:manage'
   | 'household:read'
   | 'household:manage'
+  | 'catalog:read'
+  | 'catalog:manage'
   | 'audit:read'
   | 'delivery:read'
   | 'delivery:record'
@@ -40,6 +42,8 @@ const vendorPermissions: Readonly<Record<VendorRole, ReadonlySet<VendorPermissio
     'audit:read',
     'household:read',
     'household:manage',
+    'catalog:read',
+    'catalog:manage',
   ]),
   vendor_administrator: new Set([
     'vendor:profile:read',
@@ -48,6 +52,8 @@ const vendorPermissions: Readonly<Record<VendorRole, ReadonlySet<VendorPermissio
     'audit:read',
     'household:read',
     'household:manage',
+    'catalog:read',
+    'catalog:manage',
   ]),
   delivery_agent: new Set(['delivery:read', 'delivery:record']),
   customer: new Set(['customer:self']),
@@ -72,6 +78,18 @@ const activeVendorOperations: Readonly<Record<string, VendorPermission>> = {
   'household.member-attach': 'household:manage',
   'household.member-end': 'household:manage',
   'household.self-list': 'customer:self',
+  'catalog.unit-list': 'catalog:read',
+  'catalog.unit-get': 'catalog:read',
+  'catalog.unit-create': 'catalog:manage',
+  'catalog.unit-rename': 'catalog:manage',
+  'catalog.unit-deactivate': 'catalog:manage',
+  'catalog.unit-reactivate': 'catalog:manage',
+  'catalog.product-list': 'catalog:read',
+  'catalog.product-get': 'catalog:read',
+  'catalog.product-create': 'catalog:manage',
+  'catalog.product-update': 'catalog:manage',
+  'catalog.product-delete': 'catalog:manage',
+  'catalog.product-restore': 'catalog:manage',
 };
 
 export const hasPlatformPermission = (

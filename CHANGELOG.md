@@ -6,6 +6,9 @@ All notable backend changes are recorded here.
 
 ### Added
 
+- Added tenant-safe vendor units and products with forced RLS, bounded filtered
+  cursor pagination, immutable unit/product identifiers, optimistic product
+  mutations, soft delete/restore, active-unit validation, and atomic audits.
 - Added tenant-safe household and customer-membership management with forced RLS,
   soft deletion, cursor pagination, optimistic versions, and audited mutations.
 
@@ -31,6 +34,8 @@ All notable backend changes are recorded here.
 
 ### Security
 
+- Added composite tenant-safe product-to-unit integrity and bidirectional catalog
+  RLS tests, including positive runtime-role access and hard-delete denial.
 - Added forced PostgreSQL row-level security for vendor memberships, support
   grants, owner enrollments, and audit events using transaction-local tenant
   context.

@@ -549,6 +549,60 @@ void test('support access requires a current matching vendor read grant and audi
   }
 });
 
+void test('executor permits only exact catalog read grants to support operations', async () => {
+  const vendorId = randomUUID();
+  const userIds = [randomUUID(), randomUUID(), randomUUID()];
+  const prisma = new PrismaService();
+  const executor = new PrismaTenantAuthorizationExecutor(
+    new PrismaTenantTransactionRunner(prisma),
+    new PrismaAuthorizationPolicy(new PrismaAuditWriter()),
+    new PrismaSecurityDenialRecorder(prisma),
+  );
+  await Promise.all(userIds.map(insertUser));
+  await insertVendor(vendorId);
+  await insertGrant({ vendorId, userId: userIds[0], scope: ['catalog:read'] });
+  await insertGrant({ vendorId, userId: userIds[1], scope: ['audit:read'] });
+
+  const execute = async (
+    currentActor: Actor,
+    permission: 'catalog:read' | 'catalog:manage',
+    operation: string,
+  ) => {
+    let calls = 0;
+    const result = await requestContextStore.run(
+      { correlationId: randomUUID(), actor: currentActor },
+      () => executor.execute(
+        { actor: currentActor, vendorId, permission, operation },
+        () => { calls += 1; return Promise.resolve('catalog'); },
+      ),
+    );
+    return { calls, result };
+  };
+
+  try {
+    const support = actor(userIds[0], ['support_operations']);
+    assert.deepEqual(await execute(support, 'catalog:read', 'catalog.product-list'), {
+      calls: 1,
+      result: 'catalog',
+    });
+    await assert.rejects(
+      execute(support, 'catalog:manage', 'catalog.product-update'),
+      forbidden,
+    );
+    await assert.rejects(
+      execute(actor(userIds[1], ['support_operations']), 'catalog:read', 'catalog.unit-list'),
+      forbidden,
+    );
+    await assert.rejects(
+      execute(actor(userIds[2], ['product_owner']), 'catalog:read', 'catalog.product-list'),
+      forbidden,
+    );
+  } finally {
+    await prisma.$disconnect();
+    await cleanup({ vendorIds: [vendorId], userIds });
+  }
+});
+
 void test('every tenant denial rolls back and leaves exactly one minimal global denial audit', async () => {
   const vendorIds = [randomUUID(), randomUUID(), randomUUID(), randomUUID()];
   const missingVendorId = randomUUID();

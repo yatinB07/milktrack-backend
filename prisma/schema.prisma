@@ -55,6 +55,11 @@ enum HouseholdMemberStatus {
   ended
 }
 
+enum CatalogStatus {
+  active
+  inactive
+}
+
 enum PlatformRole {
   product_owner
   platform_administrator
@@ -232,6 +237,8 @@ model Vendor {
   auditEvents       AuditEvent[]
   ownerEnrollments  OwnerEnrollment[]
   households        Household[]
+  units             Unit[]
+  products          Product[]
 
   @@map("vendors")
 }
@@ -305,6 +312,44 @@ model HouseholdMember {
   @@unique([vendorId, id])
   @@index([vendorId, householdId, createdAt, id])
   @@map("household_members")
+}
+
+model Unit {
+  id           String        @id @db.Uuid
+  vendorId     String        @map("vendor_id") @db.Uuid
+  code         String
+  name         String
+  decimalScale Int           @map("decimal_scale")
+  status       CatalogStatus @default(active)
+  createdAt    DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt    DateTime      @updatedAt @map("updated_at") @db.Timestamptz(6)
+  vendor       Vendor        @relation(fields: [vendorId], references: [id])
+  products     Product[]
+
+  @@unique([vendorId, id])
+  @@unique([vendorId, code])
+  @@index([vendorId, status, createdAt(sort: Desc), id(sort: Desc)])
+  @@map("units")
+}
+
+model Product {
+  id             String        @id @db.Uuid
+  vendorId       String        @map("vendor_id") @db.Uuid
+  code           String
+  name           String
+  defaultUnitId  String        @map("default_unit_id") @db.Uuid
+  status         CatalogStatus @default(active)
+  version        Int           @default(1)
+  deletedAt      DateTime?     @map("deleted_at") @db.Timestamptz(6)
+  deletedBy      String?       @map("deleted_by") @db.Uuid
+  deletionReason String?       @map("deletion_reason")
+  createdAt      DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime      @updatedAt @map("updated_at") @db.Timestamptz(6)
+  vendor         Vendor        @relation(fields: [vendorId], references: [id])
+  defaultUnit    Unit          @relation(fields: [vendorId, defaultUnitId], references: [vendorId, id])
+
+  @@unique([vendorId, id])
+  @@map("products")
 }
 
 model OwnerEnrollment {

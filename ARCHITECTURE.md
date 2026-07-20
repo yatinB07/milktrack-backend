@@ -27,7 +27,7 @@ exported application operation rather than importing its persistence adapter.
 The current implementation has no message broker, outbox, cache, or remote
 service boundary.
 
-## Phase 1 modules and table ownership
+## Implemented modules and table ownership
 
 | Module | Responsibility | Owned tables |
 |---|---|---|
@@ -38,6 +38,7 @@ service boundary.
 | Audit | Append-only privileged/security events and tenant audit reads | `audit_events` |
 | Database | Prisma connection and tenant-scoped transaction runner | No business tables |
 | Health | Liveness HTTP contract | No tables |
+| Catalog | Vendor units and products, lifecycle rules, filtered cursor reads, optimistic product mutations, and atomic audits | `units`, `products` |
 
 Some authorization tables currently have schema and policy consumers but no
 public management endpoint. Their presence does not imply that later platform
@@ -112,8 +113,9 @@ authenticate opaque session
   -> commit
 ```
 
-`vendor_memberships`, `owner_enrollments`, `support_access_grants`, and
-`audit_events` have row-level security enabled and forced. Their policies compare
+`vendor_memberships`, `owner_enrollments`, `support_access_grants`,
+`audit_events`, `units`, and `products` have row-level security enabled and
+forced. Their policies compare
 `vendor_id` with the transaction-local `app.vendor_id`. The fixed runtime role is
 `milktrack_app`,
 matching the role named by committed migrations. Only its injected password is
@@ -157,6 +159,9 @@ Selective soft deletion applies to mutable master records only:
   vendor;
 - closing a vendor is a lifecycle transition and does not erase its history;
 - active-only uniqueness uses partial indexes where identifiers may be reused.
+- products are soft deleted with actor, reason, timestamp, and optimistic version;
+  their vendor-scoped code is reusable only after deletion, while unit codes
+  remain unique even when inactive.
 
 There is no global Prisma soft-delete middleware. Authentication challenges and
 sessions are consumed, expired, or revoked. Audit events are never soft-deleted:
@@ -175,7 +180,7 @@ records, and IP values are HMAC-protected before storage. Owner invitation,
 delivery-token rotation, setup, completion, lockout, retirement, deactivation,
 and explicit session revocation retain their corresponding audit history.
 
-Vendor and audit lists use opaque bounded cursors: default 25, maximum 100, with
+Vendor, audit, unit, and product lists use opaque bounded cursors: default 25, maximum 100, with
 a stable ID tie-breaker. Their ordered timestamps use PostgreSQL millisecond
 precision to match JavaScript cursor serialization.
 
@@ -203,6 +208,10 @@ The final Phase 1 hardening migrations are:
   ordering compatible with JavaScript cursor serialization;
 - `202607180010_owner_enrollment`: forced-RLS owner enrollment state, composite
   identity integrity, and the exact-handle security-definer resolver.
+
+The next Phase 2 migration, `202607200002_vendor_catalog`, adds tenant-safe unit
+and product tables, composite vendor/unit integrity, non-deleted product code
+uniqueness, and forced RLS without resetting earlier household or Phase 1 data.
 
 Local Compose pins PostgreSQL 18.4 by digest; every Dockerfile stage derives from
 the Node.js 24.18.0 image pinned by digest. The production stage installs only

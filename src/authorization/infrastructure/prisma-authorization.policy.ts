@@ -46,7 +46,7 @@ export class PrismaAuthorizationPolicy extends AuthorizationPolicy {
     const permittedVendorStatuses =
       operation === 'household.self-list'
         ? (['trial', 'active'] as const)
-        : operation === 'vendor.profile.read' || operation.startsWith('membership.') || operation.startsWith('household.')
+        : operation === 'vendor.profile.read' || operation.startsWith('membership.') || operation.startsWith('household.') || operation.startsWith('catalog.')
           ? (['onboarding', 'trial', 'active'] as const)
           : (['active'] as const);
 

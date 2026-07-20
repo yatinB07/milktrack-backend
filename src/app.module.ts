@@ -12,6 +12,7 @@ import { IdentityModule } from './identity/identity.module.js';
 import { MembershipsModule } from './memberships/memberships.module.js';
 import { VendorsModule } from './vendors/vendors.module.js';
 import { CustomersModule } from './customers/customers.module.js';
+import { CatalogModule } from './catalog/catalog.module.js';
 
 @Module({
   imports: [
@@ -23,6 +24,7 @@ import { CustomersModule } from './customers/customers.module.js';
     MembershipsModule,
     VendorsModule,
     CustomersModule,
+    CatalogModule,
   ],
   providers: [{ provide: RequestContextStore, useValue: requestContextStore }],
 })
