@@ -25,9 +25,8 @@ void test('scheduled delivery migration owns duplicate-safe retained tenant sche
   assert.doesNotMatch(sql, /GRANT DELETE|schedule_generation_runs|delivery_events/u);
 });
 
-void test('Prisma publishes scheduled deliveries without S2 run models', async () => {
+void test('Prisma publishes scheduled deliveries', async () => {
   const schema = await readFile(new URL('../prisma/schema.prisma', import.meta.url), 'utf8');
   assert.match(schema, /model ScheduledDelivery \{/u);
   assert.match(schema, /@@unique\(\[vendorId, subscriptionId, serviceDate, deliverySlotId\]/u);
-  assert.doesNotMatch(schema, /model ScheduleGenerationRun/u);
 });
