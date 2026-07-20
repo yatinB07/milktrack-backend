@@ -213,12 +213,14 @@ void test('publishes the complete Phase 1 HTTP contract without persistence secr
     '/v1/customer/vendors/{vendorId}/households/{householdId}/subscriptions/{subscriptionId}/revisions',
   ];
   const routePaths = ['/v1/vendors/{vendorId}/routes','/v1/vendors/{vendorId}/routes/{routeId}','/v1/vendors/{vendorId}/routes/{routeId}/deactivate','/v1/vendors/{vendorId}/routes/{routeId}/reactivate','/v1/vendors/{vendorId}/routes/{routeId}/restore','/v1/vendors/{vendorId}/routes/{routeId}/stops','/v1/vendors/{vendorId}/routes/{routeId}/stops/replace','/v1/vendors/{vendorId}/routes/{routeId}/assignments','/v1/vendors/{vendorId}/routes/{routeId}/assignments/{serviceDate}','/v1/vendors/{vendorId}/routes/{routeId}/assignments/{serviceDate}/cancel','/v1/agent/vendors/{vendorId}/route-assignments','/v1/agent/vendors/{vendorId}/scheduled-deliveries'];
+  const scheduleRunPaths = ['/v1/vendors/{vendorId}/schedule-generation-runs', '/v1/vendors/{vendorId}/schedule-generation-runs/manual'];
   for (const path of householdPaths) assert.ok(paths[path], `missing ${path}`);
   for (const path of catalogPaths) assert.ok(paths[path], `missing ${path}`);
   for (const path of pricingPaths) assert.ok(paths[path], `missing ${path}`);
   for (const path of subscriptionPaths) assert.ok(paths[path], `missing ${path}`);
   for (const path of routePaths) assert.ok(paths[path], `missing ${path}`);
-  assert.deepEqual(Object.keys(paths).sort(), [...Object.keys(phaseOneOperations), ...householdPaths, ...catalogPaths, ...pricingPaths, ...subscriptionPaths, ...routePaths].sort());
+  for (const path of scheduleRunPaths) assert.ok(paths[path], `missing ${path}`);
+  assert.deepEqual(Object.keys(paths).sort(), [...Object.keys(phaseOneOperations), ...householdPaths, ...catalogPaths, ...pricingPaths, ...subscriptionPaths, ...routePaths, ...scheduleRunPaths].sort());
 
   for (const [path, methods] of Object.entries(phaseOneOperations)) {
     const pathItem = object(paths[path], `missing OpenAPI path ${path}`);
@@ -601,6 +603,66 @@ void test('publishes the additive vendor catalog contract', async () => {
   assert.deepEqual(Object.keys(properties('RenameDeliverySlotRequestDto')), ['name']);
   assert.deepEqual(object(schemas.RestoreProductRequestDto, 'restore product DTO').required, ['expectedVersion']);
   assert.deepEqual(object(properties('ProductResponseDto').status, 'product status').enum, ['active', 'inactive']);
+});
+
+void test('publishes secured manual schedule generation and run visibility contracts', async () => {
+  const { document } = await readDocument();
+  const paths = object(document.paths, 'paths');
+  const runsPath = '/v1/vendors/{vendorId}/schedule-generation-runs';
+  const manualPath = `${runsPath}/manual`;
+  assert.deepEqual(Object.keys(object(paths[runsPath], runsPath)), ['get']);
+  assert.deepEqual(Object.keys(object(paths[manualPath], manualPath)), ['post']);
+
+  const list = object(object(paths[runsPath], runsPath).get, 'run list');
+  const manual = object(object(paths[manualPath], manualPath).post, 'manual generation');
+  for (const operation of [list, manual]) {
+    assert.deepEqual(operation.security, [{ opaqueBearer: [] }]);
+    const responses = object(operation.responses, 'schedule generation responses');
+    for (const status of ['400', '401', '403', '404', '409', '503']) {
+      assert.equal(
+        responseSchema(responses[status], `schedule generation ${status}`).$ref,
+        '#/components/schemas/ApiErrorResponseDto',
+      );
+    }
+  }
+  assert.equal(
+    responseSchema(object(list.responses, 'list responses')['200'], 'list 200').$ref,
+    '#/components/schemas/ScheduleGenerationRunListResponseDto',
+  );
+  assert.equal(
+    responseSchema(object(manual.responses, 'manual responses')['200'], 'manual 200').$ref,
+    '#/components/schemas/ScheduleGenerationRunResponseDto',
+  );
+  const requestContent = object(object(manual.requestBody, 'manual body').content, 'manual content');
+  assert.equal(
+    object(object(requestContent['application/json'], 'manual JSON').schema, 'manual schema').$ref,
+    '#/components/schemas/GenerateManualScheduleRunRequestDto',
+  );
+  const parameters = list.parameters as JsonObject[];
+  assert.deepEqual(
+    parameters.map(({ name }) => name).sort(),
+    ['cursor', 'limit', 'serviceDate', 'status', 'trigger', 'vendorId'],
+  );
+  const limit = parameters.find(({ name }) => name === 'limit');
+  assert(limit);
+  assert.deepEqual(object(limit.schema, 'run list limit schema'), {
+    minimum: 1,
+    maximum: 100,
+    default: 25,
+    type: 'number',
+  });
+
+  const schemas = object(object(document.components, 'components').schemas, 'schemas');
+  const properties = object(
+    object(schemas.ScheduleGenerationRunResponseDto, 'run response').properties,
+    'run response properties',
+  );
+  assert.equal('vendorId' in properties, false);
+  assert.equal('leaseToken' in properties, false);
+  assert.equal('requestedByUserId' in properties, false);
+  assert.equal(object(properties.serviceDate, 'service date').format, 'date');
+  assert.equal(object(properties.attempt, 'attempt').minimum, 0);
+  assert.equal(object(properties.failureMessage, 'failure message').type, 'string');
 });
 
 void test('publishes the safe agent scheduled-delivery projection', async () => {

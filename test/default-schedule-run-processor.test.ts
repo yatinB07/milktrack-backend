@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
+import type { AuditWriter } from '../src/audit/application/audit-writer.js';
 import {
   TenantTransactionRunner,
   type TransactionContext,
@@ -26,6 +27,7 @@ const claim: ScheduleGenerationRunClaim = {
   leaseExpiresAt: new Date('2030-01-01T00:01:00.000Z'),
 };
 const counts = { created: 1, existing: 2, updated: 3, cancelled: 4, missingPrice: 5 };
+const noOpAudits: AuditWriter = { append: () => Promise.resolve() };
 
 class RecordingTransactions extends TenantTransactionRunner {
   readonly contexts: TransactionContext[] = [];
@@ -84,11 +86,68 @@ void test('generator effects and fenced success commit in one tenant transaction
     },
   });
 
-  const result = await new DefaultScheduleRunProcessor(transactions, generator, store).process(claim);
+  const result = await new DefaultScheduleRunProcessor(transactions, generator, store, noOpAudits).process(claim);
 
   assert.equal(result.status, 'succeeded');
   assert.equal(transactions.contexts.length, 1);
   assert.deepEqual(transactions.committed, ['generated', `succeeded:${claim.leaseToken}`]);
+});
+
+void test('manual completion audit commits with generated schedules and fenced success', async () => {
+  const transactions = new RecordingTransactions();
+  const manualClaim = { ...claim, trigger: 'manual' as const, requestedByUserId: '40000000-0000-4000-8000-000000000001' };
+  const generator: ScheduleGenerator = {
+    generate: (transaction) => {
+      transactions.stage(transaction, 'generated');
+      return Promise.resolve(counts);
+    },
+  };
+  const store = runStore({
+    succeed: (transaction) => {
+      transactions.stage(transaction, 'succeeded');
+      return Promise.resolve({ ...completed('succeeded'), trigger: 'manual', requestedByUserId: manualClaim.requestedByUserId });
+    },
+  });
+  const audits: AuditWriter = {
+    append: (transaction, event) => {
+      transactions.stage(transaction, `audit:${event.action}:${event.correlationId}`);
+      assert.equal(event.actorUserId, manualClaim.requestedByUserId);
+      assert.deepEqual(event.newValue, { serviceDate: claim.serviceDate, attempt: 1, counts });
+      return Promise.resolve();
+    },
+  };
+
+  const result = await new DefaultScheduleRunProcessor(transactions, generator, store, audits)
+    .process(manualClaim, 'manual-correlation');
+
+  assert.equal(result.status, 'succeeded');
+  assert.equal(transactions.contexts.length, 1);
+  assert.deepEqual(transactions.committed, [
+    'generated',
+    'succeeded',
+    'audit:schedule_generation.manual_completed:manual-correlation',
+  ]);
+});
+
+void test('recovered manual processing creates a completion correlation when none is supplied', async () => {
+  const transactions = new RecordingTransactions();
+  const manualClaim = { ...claim, trigger: 'manual' as const, requestedByUserId: '40000000-0000-4000-8000-000000000001' };
+  let correlationId: string | undefined;
+  const generator: ScheduleGenerator = { generate: () => Promise.resolve(counts) };
+  const store = runStore({
+    succeed: () => Promise.resolve({ ...completed('succeeded'), trigger: 'manual', requestedByUserId: manualClaim.requestedByUserId }),
+  });
+  const audits: AuditWriter = {
+    append: (_transaction, event) => {
+      correlationId = event.correlationId;
+      return Promise.resolve();
+    },
+  };
+
+  const result = await new DefaultScheduleRunProcessor(transactions, generator, store, audits).process(manualClaim);
+
+  assert.equal(result.status, 'succeeded');
+  assert.match(correlationId ?? '', /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u);
 });
 
 void test('generator failure rolls back before durable failure is recorded separately', async () => {
@@ -112,7 +171,7 @@ void test('generator failure rolls back before durable failure is recorded separ
   });
 
   await assert.rejects(
-    new DefaultScheduleRunProcessor(transactions, generator, store).process(claim, 'correlation'),
+    new DefaultScheduleRunProcessor(transactions, generator, store, noOpAudits).process(claim, 'correlation'),
     (cause: unknown) => cause instanceof ApplicationError
       && cause.code === 'SCHEDULE_GENERATION_FAILED'
       && cause.status === 503,

@@ -1,5 +1,8 @@
+import { randomUUID } from 'node:crypto';
+
 import { Inject, Injectable } from '@nestjs/common';
 
+import { AuditWriter } from '../../audit/application/audit-writer.js';
 import { TenantTransactionRunner } from '../../common/application/transaction-context.js';
 import { ApplicationError } from '../../common/errors/application.error.js';
 import type {
@@ -20,6 +23,8 @@ export class DefaultScheduleRunProcessor extends ScheduleRunProcessor {
     private readonly generator: ScheduleGenerator,
     @Inject(ScheduleGenerationRunStore)
     private readonly runs: ScheduleGenerationRunStore,
+    @Inject(AuditWriter)
+    private readonly audits: AuditWriter,
   ) {
     super();
   }
@@ -28,7 +33,6 @@ export class DefaultScheduleRunProcessor extends ScheduleRunProcessor {
     claim: ScheduleGenerationRunClaim,
     correlationId?: string,
   ): Promise<ScheduleGenerationRun> {
-    void correlationId;
     try {
       return await this.transactions.run(claim.vendorId, async (transaction) => {
         const counts = await this.generator.generate(
@@ -42,6 +46,18 @@ export class DefaultScheduleRunProcessor extends ScheduleRunProcessor {
           finishedAt: new Date(),
         });
         if (!succeeded) throw this.stateConflict();
+        if (claim.trigger === 'manual' && claim.requestedByUserId) {
+          await this.audits.append(transaction, {
+            id: randomUUID(),
+            vendorId: claim.vendorId,
+            actorUserId: claim.requestedByUserId,
+            action: 'schedule_generation.manual_completed',
+            entityType: 'schedule_generation_run',
+            entityId: claim.id,
+            newValue: { serviceDate: claim.serviceDate, attempt: claim.attempt, counts },
+            correlationId: correlationId ?? randomUUID(),
+          });
+        }
         return succeeded;
       });
     } catch (cause) {

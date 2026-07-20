@@ -84,7 +84,7 @@ async function cleanup(values: Fixture[]) {
   const client = await owner.connect();
   try {
     await client.query('BEGIN'); await client.query('SET CONSTRAINTS ALL DEFERRED');
-    for (const table of ['audit_events','scheduled_deliveries','route_stops','route_stop_plans','route_assignments','routes','subscription_revision_weekdays','subscription_revisions','subscriptions','customer_price_overrides','global_prices','vendor_memberships','delivery_slots','products','units','households']) await client.query(`DELETE FROM ${table} WHERE vendor_id=ANY($1::uuid[])`, [vendors]);
+    for (const table of ['schedule_generation_runs','audit_events','scheduled_deliveries','route_stops','route_stop_plans','route_assignments','routes','subscription_revision_weekdays','subscription_revisions','subscriptions','customer_price_overrides','global_prices','vendor_memberships','delivery_slots','products','units','households']) await client.query(`DELETE FROM ${table} WHERE vendor_id=ANY($1::uuid[])`, [vendors]);
     await client.query('DELETE FROM sessions WHERE user_id=ANY($1::uuid[])', [users]); await client.query('DELETE FROM mfa_factors WHERE user_id=ANY($1::uuid[])', [users]);
     await client.query('DELETE FROM vendors WHERE id=ANY($1::uuid[])', [vendors]); await client.query('DELETE FROM users WHERE id=ANY($1::uuid[])', [users]);
     await client.query('COMMIT');

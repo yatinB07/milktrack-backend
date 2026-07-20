@@ -173,6 +173,22 @@ void test('manual processor failure exposes only a retryable safe run identity',
   );
 });
 
+void test('manual processor terminal failure preserves a safe non-retryable run identity', async () => {
+  const processor: ScheduleRunProcessor = {
+    process: () => Promise.reject(new ApplicationError('SCHEDULE_GENERATION_FAILED', 'internal terminal detail', 503, false)),
+  };
+
+  await requestContextStore.run({ correlationId: '00000000-0000-4000-8000-000000000003', actor }, async () =>
+    assert.rejects(
+      service({ processor }).generateManual(actor, vendorId, { serviceDate: run.serviceDate }),
+      (error: unknown) =>
+        error instanceof ApplicationError && error.code === 'SCHEDULE_GENERATION_FAILED' &&
+        error.status === 503 && !error.retryable && error.runId === run.id &&
+        !error.message.includes('terminal detail'),
+    ),
+  );
+});
+
 void test('run list uses schedule read authorization and preserves filters plus tied cursor page', async () => {
   let authorizationInput: unknown;
   let storeQuery: unknown;
@@ -223,5 +239,5 @@ void test('controller explicitly maps request and query DTO fields', async () =>
 
 void test('queued schedule run response permits attempt zero', () => {
   const source = readFileSync(new URL('../src/scheduling/http/schedule-generation-run.dto.ts', import.meta.url), 'utf8');
-  assert.match(source, /@ApiProperty\(\{ minimum: 0 \}\) attempt!:/);
+  assert.match(source, /@ApiProperty\(\{ type: Number, minimum: 0 \}\) attempt!:/);
 });

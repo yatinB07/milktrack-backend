@@ -99,6 +99,10 @@
           },
           "retryable": {
             "type": "boolean"
+          },
+          "runId": {
+            "format": "uuid",
+            "type": "string"
           }
         },
         "required": [
@@ -1066,6 +1070,18 @@
           "email",
           "displayName",
           "reason"
+        ],
+        "type": "object"
+      },
+      "GenerateManualScheduleRunRequestDto": {
+        "properties": {
+          "serviceDate": {
+            "format": "date",
+            "type": "string"
+          }
+        },
+        "required": [
+          "serviceDate"
         ],
         "type": "object"
       },
@@ -2229,6 +2245,139 @@
         "required": [
           "reason",
           "expectedVersion"
+        ],
+        "type": "object"
+      },
+      "ScheduleGenerationRunCountsResponseDto": {
+        "properties": {
+          "cancelled": {
+            "minimum": 0,
+            "type": "number"
+          },
+          "created": {
+            "minimum": 0,
+            "type": "number"
+          },
+          "existing": {
+            "minimum": 0,
+            "type": "number"
+          },
+          "missingPrice": {
+            "minimum": 0,
+            "type": "number"
+          },
+          "updated": {
+            "minimum": 0,
+            "type": "number"
+          }
+        },
+        "required": [
+          "created",
+          "existing",
+          "updated",
+          "cancelled",
+          "missingPrice"
+        ],
+        "type": "object"
+      },
+      "ScheduleGenerationRunListResponseDto": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ScheduleGenerationRunResponseDto"
+            },
+            "type": "array"
+          },
+          "nextCursor": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
+      "ScheduleGenerationRunResponseDto": {
+        "properties": {
+          "attempt": {
+            "minimum": 0,
+            "type": "number"
+          },
+          "availableAt": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "counts": {
+            "$ref": "#/components/schemas/ScheduleGenerationRunCountsResponseDto"
+          },
+          "createdAt": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "failureCode": {
+            "type": "string"
+          },
+          "failureMessage": {
+            "type": "string"
+          },
+          "finishedAt": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "maxAttempts": {
+            "minimum": 1,
+            "type": "number"
+          },
+          "serviceDate": {
+            "format": "date",
+            "type": "string"
+          },
+          "startedAt": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "queued",
+              "running",
+              "retry_wait",
+              "succeeded",
+              "failed"
+            ],
+            "type": "string"
+          },
+          "trigger": {
+            "enum": [
+              "automatic",
+              "manual",
+              "configuration_change"
+            ],
+            "type": "string"
+          },
+          "triggerLocalDate": {
+            "format": "date",
+            "type": "string"
+          },
+          "updatedAt": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "trigger",
+          "triggerLocalDate",
+          "serviceDate",
+          "status",
+          "attempt",
+          "maxAttempts",
+          "availableAt",
+          "createdAt",
+          "updatedAt"
         ],
         "type": "object"
       },
@@ -11257,6 +11406,262 @@
         ],
         "tags": [
           "Vendor routes"
+        ]
+      }
+    },
+    "/v1/vendors/{vendorId}/schedule-generation-runs": {
+      "get": {
+        "operationId": "ScheduleGenerationRunController_list",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "vendorId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "serviceDate",
+            "required": false,
+            "schema": {
+              "format": "date",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 25,
+              "maximum": 100,
+              "minimum": 1,
+              "type": "number"
+            }
+          },
+          {
+            "in": "query",
+            "name": "trigger",
+            "required": false,
+            "schema": {
+              "enum": [
+                "automatic",
+                "manual",
+                "configuration_change"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "enum": [
+                "queued",
+                "running",
+                "retry_wait",
+                "succeeded",
+                "failed"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScheduleGenerationRunListResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "opaqueBearer": []
+          }
+        ],
+        "tags": [
+          "Schedule generation runs"
+        ]
+      }
+    },
+    "/v1/vendors/{vendorId}/schedule-generation-runs/manual": {
+      "post": {
+        "operationId": "ScheduleGenerationRunController_manual",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "vendorId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GenerateManualScheduleRunRequestDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScheduleGenerationRunResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "opaqueBearer": []
+          }
+        ],
+        "tags": [
+          "Schedule generation runs"
         ]
       }
     },

@@ -75,6 +75,7 @@ after(async () => {
   await app?.close(); const client = await owner.connect();
   try {
     await client.query('BEGIN'); await client.query('SET CONSTRAINTS ALL DEFERRED');
+    await client.query('DELETE FROM schedule_generation_runs WHERE vendor_id=ANY($1::uuid[])', [vendors]);
     await client.query('DELETE FROM audit_events WHERE vendor_id=ANY($1::uuid[])', [vendors]);
     await client.query('DELETE FROM subscription_revision_weekdays WHERE vendor_id=ANY($1::uuid[])', [vendors]);
     await client.query('DELETE FROM subscription_revisions WHERE vendor_id=ANY($1::uuid[])', [vendors]);

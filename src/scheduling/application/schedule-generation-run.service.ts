@@ -73,17 +73,20 @@ export class DefaultScheduleGenerationRunService extends ScheduleGenerationRunSe
       },
     );
 
+    let retryable: boolean;
     try {
       const result = await this.processor.process(claim, context.correlationId);
       if (result.status === 'succeeded') return result;
-    } catch {
+      retryable = result.status === 'retry_wait';
+    } catch (cause) {
       // The processor persists a fenced retry or terminal failure before returning control.
+      retryable = cause instanceof ApplicationError ? cause.retryable : true;
     }
     throw new ApplicationError(
       'SCHEDULE_GENERATION_FAILED',
       'Schedule generation could not be completed',
       503,
-      true,
+      retryable,
       undefined,
       undefined,
       claim.id,
