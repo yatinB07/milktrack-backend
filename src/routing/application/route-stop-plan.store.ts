@@ -10,7 +10,10 @@ export type RouteStopProjection = Readonly<{
   startDate?: string;
   endDate?: string;
   stops: readonly RouteStopRecord[];
+  nextCursor?: string;
 }>;
+export type RouteStopPageQuery = Readonly<{ serviceDate: string; cursor?: string; limit?: number }>;
+export type RouteStopSnapshot = Omit<RouteStopProjection, 'nextCursor'>;
 export type ReplaceRouteStopsInput = Readonly<{
   route: RouteRecord;
   effectiveDate: string;
@@ -20,7 +23,7 @@ export type ReplaceRouteStopsInput = Readonly<{
 }>;
 
 export abstract class RouteStopPlanStore {
-  abstract list(context: TransactionContext, route: RouteRecord, serviceDate: string): Promise<RouteStopProjection>;
-  abstract replace(context: TransactionContext, input: ReplaceRouteStopsInput): Promise<RouteStopProjection>;
+  abstract list(context: TransactionContext, route: RouteRecord, query: RouteStopPageQuery): Promise<RouteStopProjection>;
+  abstract replace(context: TransactionContext, input: ReplaceRouteStopsInput): Promise<Readonly<{ projection: RouteStopProjection; previous: RouteStopSnapshot }>>;
   abstract hasCurrentOrFutureStops(context: TransactionContext, routeId: string, today: string): Promise<boolean>;
 }

@@ -13,8 +13,8 @@ void test('route stop replacement preserves explicit order and canonical dates a
 
 void test('route stop replacement rejects invalid or past dates, duplicate households, and invalid reasons', () => {
   for (const value of ['2026-02-30', '20-07-2026'])
-    assert.throws(() => normalizeRouteStopReplacement(value, [], 'Valid reason', '2026-07-20'), { code: 'INVALID_ROUTE_STOP_DATE' });
-  assert.throws(() => normalizeRouteStopReplacement('2026-07-19', [], 'Valid reason', '2026-07-20'), { code: 'INVALID_ROUTE_STOP_DATE' });
-  assert.throws(() => normalizeRouteStopReplacement('2026-07-20', ['a', 'a'], 'Valid reason', '2026-07-20'), { code: 'DUPLICATE_ROUTE_STOP' });
+    assert.throws(() => normalizeRouteStopReplacement(value, [], 'Valid reason', '2026-07-20'), { code: 'INVALID_ROUTE_DATE' });
+  assert.throws(() => normalizeRouteStopReplacement('2026-07-19', [], 'Valid reason', '2026-07-20'), { code: 'INVALID_ROUTE_DATE' });
+  assert.throws(() => normalizeRouteStopReplacement('2026-07-20', ['a', 'a'], 'Valid reason', '2026-07-20'), { code: 'INVALID_STOP_ORDER' });
   assert.throws(() => normalizeRouteStopReplacement('2026-07-20', [], 'x', '2026-07-20'), { code: 'INVALID_REASON' });
 });

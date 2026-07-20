@@ -20,6 +20,9 @@ CREATE TABLE route_stop_plans (
     REFERENCES routes(vendor_id, id, delivery_slot_id),
   CONSTRAINT route_stop_plans_created_by_fkey FOREIGN KEY (created_by) REFERENCES users(id),
   CONSTRAINT route_stop_plans_period_check CHECK (effective_to IS NULL OR effective_to > effective_from),
+  CONSTRAINT route_stop_plans_no_self_supersession CHECK (
+    superseded_by_plan_id IS NULL OR superseded_by_plan_id <> id
+  ),
   CONSTRAINT route_stop_plans_supersession_check CHECK (
     (superseded_at IS NULL AND superseded_by_plan_id IS NULL AND supersession_reason IS NULL)
     OR (superseded_at IS NOT NULL AND superseded_by_plan_id IS NOT NULL
@@ -29,7 +32,11 @@ CREATE TABLE route_stop_plans (
   CONSTRAINT route_stop_plans_supersession_fkey
     FOREIGN KEY (vendor_id, route_id, superseded_by_plan_id)
     REFERENCES route_stop_plans(vendor_id, route_id, id)
-    DEFERRABLE INITIALLY DEFERRED
+    DEFERRABLE INITIALLY DEFERRED,
+  CONSTRAINT route_stop_plans_no_period_overlap EXCLUDE USING gist (
+    vendor_id WITH =, route_id WITH =,
+    daterange(effective_from, effective_to, '[)') WITH &&
+  ) WHERE (superseded_at IS NULL)
 );
 
 CREATE INDEX route_stop_plans_projection_idx

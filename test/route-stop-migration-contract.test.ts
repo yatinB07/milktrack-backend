@@ -7,6 +7,7 @@ void test('route stop migration defines database-owned effective projections and
   for (const fragment of [
     'CREATE TABLE route_stop_plans', 'CREATE TABLE route_stops',
     'route_stop_plans_vendor_id_route_id_id_key', 'route_stop_plans_supersession_fkey',
+    'route_stop_plans_no_period_overlap', 'route_stop_plans_no_self_supersession',
     'DEFERRABLE INITIALLY DEFERRED', 'route_stops_plan_fkey', 'route_stops_household_fkey',
     'derive_route_stop_plan_fields', 'propagate_route_stop_plan_fields',
     'route_stops_no_sequence_overlap', 'route_stops_no_household_slot_overlap',

@@ -1819,7 +1819,6 @@
               "format": "uuid",
               "type": "string"
             },
-            "maxItems": 100,
             "type": "array"
           },
           "reason": {
@@ -2033,6 +2032,9 @@
           },
           "endDate": {
             "format": "date",
+            "type": "string"
+          },
+          "nextCursor": {
             "type": "string"
           },
           "routeId": {
@@ -10168,6 +10170,25 @@
               "format": "date",
               "type": "string"
             }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 25,
+              "maximum": 100,
+              "minimum": 1,
+              "type": "number"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -10250,7 +10271,9 @@
         "tags": [
           "Vendor routes"
         ]
-      },
+      }
+    },
+    "/v1/vendors/{vendorId}/routes/{routeId}/stops/replace": {
       "post": {
         "operationId": "RouteController_replaceStops",
         "parameters": [

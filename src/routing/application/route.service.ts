@@ -13,7 +13,7 @@ import { ApplicationError } from '../../common/errors/application.error.js';
 import { VendorService } from '../../vendors/application/vendor.service.js';
 import { normalizeRouteCode, normalizeRouteName, normalizeRouteReason } from '../domain/route-rules.js';
 import { normalizeRouteStopReplacement, validateRouteStopDate } from '../domain/route-stop-rules.js';
-import { RouteStopPlanStore, type RouteStopProjection } from './route-stop-plan.store.js';
+import { RouteStopPlanStore, type RouteStopPageQuery, type RouteStopProjection, type RouteStopSnapshot } from './route-stop-plan.store.js';
 import { RouteStore, type RoutePageQuery, type RouteRecord, type RouteStatus } from './route.store.js';
 
 export type CreateRouteCommand = Readonly<{ code: string; name: string; deliverySlotId: string }>;
@@ -30,7 +30,7 @@ export abstract class RouteService {
   abstract reactivate(actor: Actor, vendorId: string, routeId: string, command: RouteVersionReason): Promise<RouteRecord>;
   abstract softDelete(actor: Actor, vendorId: string, routeId: string, command: RouteVersionReason): Promise<void>;
   abstract restore(actor: Actor, vendorId: string, routeId: string, command: RouteVersionReason): Promise<RouteRecord>;
-  abstract listStops(actor: Actor, vendorId: string, routeId: string, serviceDate: string): Promise<RouteStopProjection>;
+  abstract listStops(actor: Actor, vendorId: string, routeId: string, query: RouteStopPageQuery): Promise<RouteStopProjection>;
   abstract replaceStops(actor: Actor, vendorId: string, routeId: string, command: ReplaceRouteStopsCommand): Promise<RouteStopProjection>;
 }
 
@@ -76,7 +76,7 @@ export class DefaultRouteService extends RouteService {
       if (route.status !== 'inactive')
         throw new ApplicationError('ROUTE_DELETE_REQUIRES_INACTIVE', 'Route must be inactive before deletion', 409);
       if (await this.stopPlans.hasCurrentOrFutureStops(tx, routeId, await this.today(tx, vendorId)))
-        throw new ApplicationError('ROUTE_HAS_CURRENT_OR_FUTURE_STOPS', 'Route has current or future stops', 409);
+        throw new ApplicationError('ROUTE_DELETE_REQUIRES_EMPTY', 'Route must have no current or future stops before deletion', 409);
       const change = await this.routes.softDelete(tx, routeId, command.expectedVersion, actor.userId, reason);
       await this.audit(tx, actor, vendorId, routeId, 'route.deleted', change.before, change.after, reason);
     });
@@ -88,23 +88,20 @@ export class DefaultRouteService extends RouteService {
       await this.audit(tx, actor, vendorId, routeId, 'route.restored', change.before, change.after, reason); return change.after;
     });
   }
-  listStops(actor: Actor, vendorId: string, routeId: string, serviceDate: string) {
-    validateRouteStopDate(serviceDate);
+  listStops(actor: Actor, vendorId: string, routeId: string, query: RouteStopPageQuery) {
+    validateRouteStopDate(query.serviceDate);
     return this.execute(actor, vendorId, 'route:read', 'route.stops-list', async (tx) =>
-      this.stopPlans.list(tx, await this.routes.get(tx, routeId), serviceDate));
+      this.stopPlans.list(tx, await this.routes.get(tx, routeId), query));
   }
   replaceStops(actor: Actor, vendorId: string, routeId: string, command: ReplaceRouteStopsCommand) {
     return this.execute(actor, vendorId, 'route:manage', 'route.stops-replace', async (tx) => {
       const normalized = normalizeRouteStopReplacement(command.effectiveDate, command.householdIds, command.reason, await this.today(tx, vendorId));
       const route = await this.routes.lockRoot(tx, routeId, command.expectedVersion);
-      if (route.status !== 'active') throw new ApplicationError('ROUTE_NOT_ACTIVE', 'Route is not active', 409);
+      if (route.status !== 'active') throw new ApplicationError('ROUTE_STATE_CONFLICT', 'Route state does not allow stop replacement', 409);
       await this.catalog.requireRouteDeliverySlot(tx, route.deliverySlotId);
-      for (const householdId of [...normalized.householdIds].sort())
-        await this.households.requireRouteHousehold(tx, householdId);
-      const projection = await this.stopPlans.replace(tx, { route, ...normalized, createdBy: actor.userId });
-      await this.audits.append(tx, { id: randomUUID(), vendorId, actorUserId: actor.userId, action: 'route.stops-replaced',
-        entityType: 'route', entityId: routeId, newValue: { routeVersion: projection.routeVersion, effectiveDate: normalized.effectiveDate,
-          householdIds: normalized.householdIds }, reason: normalized.reason, correlationId: requestContextStore.require().correlationId });
+      if(normalized.householdIds.length>0) await this.households.requireRouteHouseholds(tx,[...normalized.householdIds].sort());
+      const {projection,previous}=await this.stopPlans.replace(tx, { route, ...normalized, createdBy: actor.userId });
+      await this.auditStops(tx,actor,vendorId,route,normalized.effectiveDate,normalized.householdIds,normalized.reason,previous,projection);
       return projection;
     });
   }
@@ -124,6 +121,10 @@ export class DefaultRouteService extends RouteService {
     const today = DateTime.now().setZone(timezone).toISODate();
     if (!today) throw new ApplicationError('VENDOR_TIMEZONE_INVALID', 'Vendor timezone is invalid', 503);
     return today;
+  }
+  private auditStops(tx:TransactionContext,actor:Actor,vendorId:string,route:RouteRecord,effectiveDate:string,householdIds:readonly string[],reason:string,previous:RouteStopSnapshot,projection:RouteStopProjection) {
+    const safe=(ids:readonly string[],value:RouteStopSnapshot|RouteStopProjection,version:number)=>({householdIds:[...ids],effectiveDate,...(value.startDate?{startDate:value.startDate}:{}),...(value.endDate?{endDate:value.endDate}:{}),deliverySlotId:route.deliverySlotId,routeStatus:route.status,routeVersion:version});
+    return this.audits.append(tx,{id:randomUUID(),vendorId,actorUserId:actor.userId,action:'route_stops.replaced',entityType:'route',entityId:route.id,oldValue:safe(previous.stops.map(({householdId})=>householdId),previous,route.version),newValue:safe(householdIds,projection,projection.routeVersion),reason,correlationId:requestContextStore.require().correlationId});
   }
   private audit(tx: TransactionContext, actor: Actor, vendorId: string, routeId: string, action: string, before?: RouteRecord, after?: RouteRecord, reason?: string) {
     const safe = (route: RouteRecord) => ({ code: route.code, name: route.name, deliverySlotId: route.deliverySlotId, status: route.status, version: route.version });

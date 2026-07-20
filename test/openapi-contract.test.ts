@@ -212,7 +212,7 @@ void test('publishes the complete Phase 1 HTTP contract without persistence secr
     '/v1/customer/vendors/{vendorId}/households/{householdId}/subscriptions/{subscriptionId}',
     '/v1/customer/vendors/{vendorId}/households/{householdId}/subscriptions/{subscriptionId}/revisions',
   ];
-  const routePaths = ['/v1/vendors/{vendorId}/routes','/v1/vendors/{vendorId}/routes/{routeId}','/v1/vendors/{vendorId}/routes/{routeId}/deactivate','/v1/vendors/{vendorId}/routes/{routeId}/reactivate','/v1/vendors/{vendorId}/routes/{routeId}/restore','/v1/vendors/{vendorId}/routes/{routeId}/stops'];
+  const routePaths = ['/v1/vendors/{vendorId}/routes','/v1/vendors/{vendorId}/routes/{routeId}','/v1/vendors/{vendorId}/routes/{routeId}/deactivate','/v1/vendors/{vendorId}/routes/{routeId}/reactivate','/v1/vendors/{vendorId}/routes/{routeId}/restore','/v1/vendors/{vendorId}/routes/{routeId}/stops','/v1/vendors/{vendorId}/routes/{routeId}/stops/replace'];
   for (const path of householdPaths) assert.ok(paths[path], `missing ${path}`);
   for (const path of catalogPaths) assert.ok(paths[path], `missing ${path}`);
   for (const path of pricingPaths) assert.ok(paths[path], `missing ${path}`);
@@ -518,13 +518,17 @@ void test('publishes secured route stop projection and atomic replacement contra
   const schemas = object(object(document.components, 'components').schemas, 'schemas');
   const properties = (name: string) => object(object(schemas[name], name).properties, `${name} properties`);
   const path = '/v1/vendors/{vendorId}/routes/{routeId}/stops'; const item = object(paths[path], path);
-  for (const [method, body] of [['get', undefined], ['post', 'ReplaceRouteStopsRequestDto']] as const) {
-    const operation = object(item[method], `${method} ${path}`); assert.deepEqual(operation.security, [{ opaqueBearer: [] }]);
+  const replacements = '/v1/vendors/{vendorId}/routes/{routeId}/stops/replace';
+  assert.equal(item.post,undefined);
+  for (const [operationPath,method, body] of [[path,'get', undefined], [replacements,'post', 'ReplaceRouteStopsRequestDto']] as const) {
+    const operation = object(object(paths[operationPath],operationPath)[method], `${method} ${operationPath}`); assert.deepEqual(operation.security, [{ opaqueBearer: [] }]);
     assert.equal(responseSchema(object(operation.responses, 'responses')['200'], '200').$ref, '#/components/schemas/RouteStopsResponseDto');
     if (body) { const content = object(object(operation.requestBody, 'body').content, 'content'); assert.equal(object(object(content['application/json'], 'json').schema, 'schema').$ref, `#/components/schemas/${body}`); }
   }
+  const getParameters=object(paths[path],path).get as JsonObject;const names=(getParameters.parameters as JsonObject[]).map(({name})=>name).sort();assert.deepEqual(names,['cursor','limit','routeId','serviceDate','vendorId']);
+  assert.equal(object(properties('ReplaceRouteStopsRequestDto').householdIds,'householdIds').maxItems,undefined);
   assert.deepEqual(Object.keys(properties('RouteStopResponseDto')).sort(), ['householdId','id','sequence']);
-  assert.deepEqual(Object.keys(properties('RouteStopsResponseDto')).sort(), ['deliverySlotId','endDate','routeId','routeVersion','serviceDate','startDate','stops']);
+  assert.deepEqual(Object.keys(properties('RouteStopsResponseDto')).sort(), ['deliverySlotId','endDate','nextCursor','routeId','routeVersion','serviceDate','startDate','stops']);
   assert.equal(paths['/v1/vendors/{vendorId}/routes/{routeId}/assignments'], undefined);
 });
 

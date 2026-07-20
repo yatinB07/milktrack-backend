@@ -127,12 +127,16 @@ function toMember(row: HouseholdMemberRow): HouseholdMemberRecord {
 
 @Injectable()
 export class PrismaHouseholdStore {
-  async requireRouteHousehold(context: TransactionContext, householdId: string) {
-    const rows = await unwrapPrismaTransaction(context).$queryRaw<Array<{ id: string }>>(
-      Prisma.sql`SELECT id FROM households WHERE id=${householdId}::uuid AND status='active' AND deleted_at IS NULL FOR UPDATE`,
+  async requireRouteHouseholds(context: TransactionContext, householdIds: readonly string[]) {
+    const ids = [...new Set(householdIds)].sort();
+    if (ids.length === 0) return { householdIds: ids };
+    const rows = await unwrapPrismaTransaction(context).$queryRaw<Array<{ id: string; status: string; deletedAt: Date | null }>>(
+      Prisma.sql`SELECT id,status,deleted_at AS "deletedAt" FROM households WHERE id IN (${Prisma.join(ids.map((id) => Prisma.sql`${id}::uuid`))}) ORDER BY id FOR UPDATE`,
     );
-    if (!rows[0]) throw error("ROUTE_HOUSEHOLD_NOT_AVAILABLE", "Route household is not available", 409);
-    return { householdId: rows[0].id };
+    if (rows.length !== ids.length) throw error("ROUTE_HOUSEHOLD_NOT_FOUND", "Route household was not found", 404);
+    if (rows.some(({ status, deletedAt }) => status !== "active" || deletedAt !== null))
+      throw error("ROUTE_HOUSEHOLD_NOT_AVAILABLE", "Route household is not available", 409);
+    return { householdIds: ids };
   }
   async requireSubscriptionHousehold(context: TransactionContext, householdId: string) {
     const row = await unwrapPrismaTransaction(context).household.findFirst({

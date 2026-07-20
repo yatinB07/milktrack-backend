@@ -24,9 +24,13 @@ async function asTenant(vendorId:string,work:(client:pg.PoolClient)=>Promise<voi
 
 void test('route stop tables publish forced RLS, deferred identity, triggers, exclusions, indexes, and narrow grants',async()=>{
   const tables=['route_stop_plans','route_stops'];const rls=await owner.query<{relname:string;relrowsecurity:boolean;relforcerowsecurity:boolean}>('SELECT relname,relrowsecurity,relforcerowsecurity FROM pg_class WHERE relname=ANY($1::text[])',[tables]);assert.equal(rls.rows.length,2);assert.ok(rls.rows.every(row=>row.relrowsecurity&&row.relforcerowsecurity));
-  for(const name of ['route_stop_plans_supersession_fkey','route_stops_plan_fkey','route_stops_household_fkey','route_stops_no_sequence_overlap','route_stops_no_household_slot_overlap']) assert.equal((await owner.query('SELECT 1 FROM pg_constraint WHERE conname=$1',[name])).rowCount,1);
+  for(const name of ['route_stop_plans_supersession_fkey','route_stop_plans_no_period_overlap','route_stop_plans_no_self_supersession','route_stops_plan_fkey','route_stops_household_fkey','route_stops_no_sequence_overlap','route_stops_no_household_slot_overlap']) assert.equal((await owner.query('SELECT 1 FROM pg_constraint WHERE conname=$1',[name])).rowCount,1);
   for(const name of ['derive_route_stop_plan_fields','propagate_route_stop_plan_fields']) assert.equal((await owner.query('SELECT 1 FROM pg_proc WHERE proname=$1',[name])).rowCount,1);
   assert.equal((await owner.query<{allowed:boolean}>("SELECT has_table_privilege('milktrack_app','route_stops','DELETE') allowed")).rows[0]?.allowed,false);
+});
+
+void test('unsuperseded plan identities cannot overlap even when both plans contain zero stops or supersede themselves',async()=>{
+  const value=await fixture('PLAN');try{const first=await plan(value,value.routeIds[0],'2030-01-01');await assert.rejects(plan(value,value.routeIds[0],'2030-02-01'),/route_stop_plans_no_period_overlap/);await assert.rejects(owner.query("UPDATE route_stop_plans SET superseded_at=now(),superseded_by_plan_id=id,supersession_reason='Self correction',updated_at=now() WHERE id=$1",[first]),/route_stop_plans_no_self_supersession/);}finally{await cleanup([value]);}
 });
 
 void test('database derives finite/open stop bounds and immediately propagates plan closure and supersession',async()=>{
@@ -36,8 +40,8 @@ void test('database derives finite/open stop bounds and immediately propagates p
   }finally{await cleanup([value]);}
 });
 
-void test('partial exclusions reject same-route sequence and cross-route household-slot overlap',async()=>{
-  const value=await fixture('B');try{const first=await plan(value,value.routeIds[0],'2030-01-01');await stop(value,value.routeIds[0],first);const sameRoute=await plan(value,value.routeIds[0],'2030-02-01');await assert.rejects(stop(value,value.routeIds[0],sameRoute),/route_stops_no_sequence_overlap/);const otherRoute=await plan(value,value.routeIds[1],'2030-02-01');await assert.rejects(stop(value,value.routeIds[1],otherRoute),/route_stops_no_household_slot_overlap/);}finally{await cleanup([value]);}
+void test('partial stop exclusions reject cross-route household-slot overlap while plan exclusion owns same-route periods',async()=>{
+  const value=await fixture('B');try{const first=await plan(value,value.routeIds[0],'2030-01-01');await stop(value,value.routeIds[0],first);const otherRoute=await plan(value,value.routeIds[1],'2030-02-01');await assert.rejects(stop(value,value.routeIds[1],otherRoute),/route_stops_no_household_slot_overlap/);}finally{await cleanup([value]);}
 });
 
 void test('runtime route stop access is same-tenant and bidirectionally isolated with no hard delete',async()=>{
