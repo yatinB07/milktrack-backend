@@ -317,6 +317,71 @@ void test('generator/store counts first run, rerun, update, unassignment, cancel
   } finally { await cleanup([value]); }
 });
 
+void test('slot-change reconciliation rolls back its replacement when old-row cancellation fails', async () => {
+  const value = await fixture('slot-change-rollback');
+  const generator = app.get(ScheduleGenerator);
+  const suffix = randomUUID().replaceAll('-', '');
+  const trigger = `reject_old_schedule_cancellation_${suffix}`;
+  const triggerFunction = `reject_old_schedule_cancellation_fn_${suffix}`;
+  const generate = () => transactions.run(value.vendorId, (tx) =>
+    generator.generate(tx, value.vendorId, '2030-01-01'));
+  try {
+    assert.equal((await generate()).created, 1);
+    await owner.query(
+      "UPDATE subscription_revisions SET effective_from='2029-12-31',effective_to='2030-01-01',updated_at=now() WHERE id=$1",
+      [value.revisionId],
+    );
+    await owner.query(
+      "UPDATE subscription_revisions SET effective_from='2030-01-01',updated_at=now() WHERE id=$1",
+      [value.otherRevisionId],
+    );
+    await owner.query(
+      'UPDATE subscription_revision_weekdays SET weekday=2 WHERE subscription_revision_id=$1',
+      [value.otherRevisionId],
+    );
+    const original = await owner.query<{
+      id: string; subscriptionId: string; revisionId: string; householdId: string;
+      productId: string; unitId: string; deliverySlotId: string; routeAssignmentId: string | null;
+      serviceDate: string; plannedQuantity: string; status: string; version: number;
+    }>(`SELECT id,subscription_id AS "subscriptionId",subscription_revision_id AS "revisionId",
+      household_id AS "householdId",product_id AS "productId",unit_id AS "unitId",
+      delivery_slot_id AS "deliverySlotId",route_assignment_id AS "routeAssignmentId",
+      service_date::text AS "serviceDate",planned_quantity::text AS "plannedQuantity",status,version
+      FROM scheduled_deliveries WHERE vendor_id=$1 AND service_date='2030-01-01'`, [value.vendorId]);
+    assert.equal(original.rowCount, 1);
+
+    await owner.query(`CREATE FUNCTION ${triggerFunction}() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN
+        IF OLD.id='${original.rows[0].id}'::uuid AND NEW.status='cancelled' THEN
+          IF NOT EXISTS (
+            SELECT 1 FROM scheduled_deliveries
+            WHERE vendor_id='${value.vendorId}'::uuid AND subscription_id='${value.subscriptionId}'::uuid
+              AND service_date='2030-01-01' AND delivery_slot_id='${value.otherSlotId}'::uuid
+          ) THEN
+            RAISE EXCEPTION 'replacement row was not inserted before cancellation';
+          END IF;
+          RAISE EXCEPTION 'forced old-row cancellation failure';
+        END IF;
+        RETURN NEW;
+      END $$`);
+    await owner.query(`CREATE TRIGGER ${trigger} BEFORE UPDATE ON scheduled_deliveries
+      FOR EACH ROW EXECUTE FUNCTION ${triggerFunction}()`);
+
+    await assert.rejects(generate(), /forced old-row cancellation failure/);
+
+    const persisted = await owner.query<typeof original.rows[number]>(`SELECT id,subscription_id AS "subscriptionId",
+      subscription_revision_id AS "revisionId",household_id AS "householdId",product_id AS "productId",
+      unit_id AS "unitId",delivery_slot_id AS "deliverySlotId",route_assignment_id AS "routeAssignmentId",
+      service_date::text AS "serviceDate",planned_quantity::text AS "plannedQuantity",status,version
+      FROM scheduled_deliveries WHERE vendor_id=$1 AND service_date='2030-01-01'`, [value.vendorId]);
+    assert.deepEqual(persisted.rows, original.rows);
+  } finally {
+    await owner.query(`DROP TRIGGER IF EXISTS ${trigger} ON scheduled_deliveries`);
+    await owner.query(`DROP FUNCTION IF EXISTS ${triggerFunction}()`);
+    await cleanup([value]);
+  }
+});
+
 void test('concurrent repeated generators remain duplicate-safe', { timeout: 5000 }, async () => {
   const value = await fixture('generator-race'); const runner = app.get(TenantTransactionRunner); const generator = app.get(ScheduleGenerator);
   try {
