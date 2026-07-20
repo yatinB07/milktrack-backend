@@ -34,6 +34,9 @@ export class ApiErrorResponseDto {
     additionalProperties: { type: 'array', items: { type: 'string' } },
   })
   fieldErrors?: Readonly<Record<string, readonly string[]>>;
+
+  @ApiPropertyOptional({ type: String, format: 'uuid' })
+  runId?: string;
 }
 
 type HttpResponse = {
@@ -91,6 +94,7 @@ export class ApplicationErrorFilter implements ExceptionFilter {
       ...(error.fieldErrors === undefined
         ? {}
         : { fieldErrors: error.fieldErrors }),
+      ...(error.runId === undefined ? {} : { runId: error.runId }),
     };
 
     if (error.retryAfterSeconds !== undefined) {

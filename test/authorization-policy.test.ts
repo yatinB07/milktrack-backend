@@ -46,6 +46,8 @@ const vendor = {
     'pricing:manage',
     'subscription:read',
     'subscription:manage',
+    'schedule:read',
+    'schedule:manage',
   ],
   vendor_administrator: [
     'membership:read',
@@ -60,6 +62,8 @@ const vendor = {
     'pricing:manage',
     'subscription:read',
     'subscription:manage',
+    'schedule:read',
+    'schedule:manage',
   ],
   delivery_agent: ['delivery:read', 'delivery:record', 'route:self'],
   customer: ['customer:self'],
@@ -226,6 +230,17 @@ void test('route definition operations map only to explicit read and manage perm
   assert.doesNotThrow(() => requireVendorPermission('delivery_agent', 'route:self'));
   assert.throws(() => requireVendorPermission('delivery_agent', 'route:read'), forbidden);
   assert.throws(() => requireVendorPermission('customer', 'route:read'), forbidden);
+});
+
+void test('schedule run operations map only to explicit read and manage permissions', () => {
+  assert.doesNotThrow(() => requireVendorOperation('schedule.run-list', 'schedule:read'));
+  assert.throws(() => requireVendorOperation('schedule.run-list', 'schedule:manage'), forbidden);
+  assert.doesNotThrow(() => requireVendorOperation('schedule.manual-generate', 'schedule:manage'));
+  assert.throws(() => requireVendorOperation('schedule.manual-generate', 'schedule:read'), forbidden);
+  assert.doesNotThrow(() => requireVendorPermission('vendor_owner', 'schedule:manage'));
+  assert.doesNotThrow(() => requireVendorPermission('vendor_administrator', 'schedule:read'));
+  assert.throws(() => requireVendorPermission('delivery_agent', 'schedule:read'), forbidden);
+  assert.throws(() => requireVendorPermission('customer', 'schedule:manage'), forbidden);
 });
 
 void test('catalog vendor operations accept onboarding, trial, and active vendors', async () => {

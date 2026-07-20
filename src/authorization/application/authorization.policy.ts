@@ -24,6 +24,8 @@ export type VendorPermission =
   | 'route:read'
   | 'route:manage'
   | 'route:self'
+  | 'schedule:read'
+  | 'schedule:manage'
   | 'audit:read'
   | 'delivery:read'
   | 'delivery:record'
@@ -57,6 +59,8 @@ const vendorPermissions: Readonly<Record<VendorRole, ReadonlySet<VendorPermissio
     'subscription:manage',
     'route:read',
     'route:manage',
+    'schedule:read',
+    'schedule:manage',
   ]),
   vendor_administrator: new Set([
     'vendor:profile:read',
@@ -73,6 +77,8 @@ const vendorPermissions: Readonly<Record<VendorRole, ReadonlySet<VendorPermissio
     'subscription:manage',
     'route:read',
     'route:manage',
+    'schedule:read',
+    'schedule:manage',
   ]),
   delivery_agent: new Set(['delivery:read', 'delivery:record', 'route:self']),
   customer: new Set(['customer:self']),
@@ -153,6 +159,8 @@ const activeVendorOperations: Readonly<Record<string, VendorPermission>> = {
   'route.assignment-cancel': 'route:manage',
   'route.assignments-self': 'route:self',
   'schedule.self-list': 'delivery:read',
+  'schedule.run-list': 'schedule:read',
+  'schedule.manual-generate': 'schedule:manage',
 };
 
 export const hasPlatformPermission = (

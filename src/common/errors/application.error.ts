@@ -8,6 +8,7 @@ export class ApplicationError extends Error {
     public readonly fieldErrors?: Readonly<
       Record<string, readonly string[]>
     >,
+    public readonly runId?: string,
   ) {
     super(message);
   }

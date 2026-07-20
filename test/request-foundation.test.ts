@@ -47,7 +47,7 @@ class RequestFoundationTestController {
 
   @Get('application-error')
   throwApplicationError(): never {
-    throw new ApplicationError('EXPECTED_ERROR', 'Expected message', 409, true, 3);
+    throw new ApplicationError('EXPECTED_ERROR', 'Expected message', 409, true, 3, undefined, '00000000-0000-4000-8000-000000000099');
   }
 
   @Get('unknown-error')
@@ -247,6 +247,7 @@ void describe('request middleware and application error filter', () => {
       retryable: true,
       correlationId: inboundCorrelationId,
       retryAfterSeconds: 3,
+      runId: '00000000-0000-4000-8000-000000000099',
     });
   });
 
