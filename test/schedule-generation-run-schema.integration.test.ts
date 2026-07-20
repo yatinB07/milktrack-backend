@@ -83,6 +83,33 @@ void test('runtime access is tenant-isolated with narrow grants and no delete', 
         await client.query("SELECT set_config('app.vendor_id',$1,true)", [values[index].vendorId]);
         assert.equal((await client.query('SELECT id FROM schedule_generation_runs WHERE id=$1', [ids[index]])).rowCount, 1);
         assert.equal((await client.query('SELECT id FROM schedule_generation_runs WHERE id=$1', [ids[other]])).rowCount, 0);
+        const runtimeId = randomUUID();
+        assert.equal((await client.query(
+          `INSERT INTO schedule_generation_runs
+             (id,vendor_id,trigger,trigger_local_date,service_date,updated_at)
+           VALUES ($1,$2,'automatic',$3,$4,now()) RETURNING id`,
+          [runtimeId, values[index].vendorId, `2031-01-0${index + 1}`, `2031-02-0${index + 1}`],
+        )).rowCount, 1);
+        await client.query('SAVEPOINT denied_insert');
+        await assert.rejects(client.query(
+          `INSERT INTO schedule_generation_runs
+             (id,vendor_id,trigger,trigger_local_date,service_date,updated_at)
+           VALUES ($1,$2,'automatic',$3,$4,now())`,
+          [randomUUID(), values[other].vendorId, `2031-03-0${index + 1}`, `2031-04-0${index + 1}`],
+        ), /row-level security/);
+        await client.query('ROLLBACK TO SAVEPOINT denied_insert');
+        assert.equal((await client.query(
+          `UPDATE schedule_generation_runs
+           SET available_at=available_at + interval '1 second',updated_at=now()
+           WHERE id=$1 RETURNING id`,
+          [runtimeId],
+        )).rowCount, 1);
+        assert.equal((await client.query(
+          `UPDATE schedule_generation_runs
+           SET available_at=available_at + interval '1 second',updated_at=now()
+           WHERE id=$1 RETURNING id`,
+          [ids[other]],
+        )).rowCount, 0);
         await client.query('SAVEPOINT denied_update');
         await assert.rejects(client.query('UPDATE schedule_generation_runs SET service_date=$2 WHERE id=$1', [ids[index], '2030-01-10']), /permission denied/);
         await client.query('ROLLBACK TO SAVEPOINT denied_update');

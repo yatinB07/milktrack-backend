@@ -30,6 +30,9 @@ void test('migrations safely upgrade legacy data without resetting it', async ()
     '202607200005_subscriptions',
     '202607200006_routes',
     '202607200007_route_stop_plans',
+    '202607200008_route_assignments',
+    '202607200009_scheduled_deliveries',
+    '202607200010_schedule_generation_runs',
   ] as const;
   const migrations = await Promise.all(
     migrationDirectories.map((directory) =>
@@ -145,6 +148,9 @@ void test('migrations safely upgrade legacy data without resetting it', async ()
     await client.query(migrations[14]);
     await client.query(migrations[15]);
     await client.query(migrations[16]);
+    await client.query(migrations[17]);
+    await client.query(migrations[18]);
+    await client.query(migrations[19]);
 
     const session = await client.query<{
       authentication_method: string;
@@ -230,6 +236,11 @@ void test('migrations safely upgrade legacy data without resetting it', async ()
     assert.equal((await client.query('SELECT id FROM delivery_slots WHERE id=$1', [legacySlotId])).rowCount, 1);
     assert.equal((await client.query('SELECT id FROM global_prices WHERE id=$1', [legacyGlobalPriceId])).rowCount, 1);
     assert.equal((await client.query('SELECT id FROM customer_price_overrides WHERE id=$1', [legacyOverrideId])).rowCount, 1);
+    assert.equal((await client.query(
+      `SELECT table_name FROM information_schema.tables
+       WHERE table_schema = $1 AND table_name = 'schedule_generation_runs'`,
+      [schema],
+    )).rowCount, 1);
 
     const anonymousChallengeId = randomUUID();
     await client.query(
