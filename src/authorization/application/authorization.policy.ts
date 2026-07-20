@@ -146,6 +146,8 @@ const activeVendorOperations: Readonly<Record<string, VendorPermission>> = {
   'route.reactivate': 'route:manage',
   'route.delete': 'route:manage',
   'route.restore': 'route:manage',
+  'route.stops-list': 'route:read',
+  'route.stops-replace': 'route:manage',
 };
 
 export const hasPlatformPermission = (

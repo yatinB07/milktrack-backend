@@ -212,11 +212,11 @@ void test('subscription operations map to explicit read, manage, and customer-se
 });
 
 void test('route definition operations map only to explicit read and manage permissions', () => {
-  for (const operation of ['route.list', 'route.get']) {
+  for (const operation of ['route.list', 'route.get', 'route.stops-list']) {
     assert.doesNotThrow(() => requireVendorOperation(operation, 'route:read'));
     assert.throws(() => requireVendorOperation(operation, 'route:manage'), forbidden);
   }
-  for (const operation of ['route.create', 'route.rename', 'route.deactivate', 'route.reactivate', 'route.delete', 'route.restore']) {
+  for (const operation of ['route.create', 'route.rename', 'route.deactivate', 'route.reactivate', 'route.delete', 'route.restore', 'route.stops-replace']) {
     assert.doesNotThrow(() => requireVendorOperation(operation, 'route:manage'));
     assert.throws(() => requireVendorOperation(operation, 'route:read'), forbidden);
   }

@@ -127,6 +127,13 @@ function toMember(row: HouseholdMemberRow): HouseholdMemberRecord {
 
 @Injectable()
 export class PrismaHouseholdStore {
+  async requireRouteHousehold(context: TransactionContext, householdId: string) {
+    const rows = await unwrapPrismaTransaction(context).$queryRaw<Array<{ id: string }>>(
+      Prisma.sql`SELECT id FROM households WHERE id=${householdId}::uuid AND status='active' AND deleted_at IS NULL FOR UPDATE`,
+    );
+    if (!rows[0]) throw error("ROUTE_HOUSEHOLD_NOT_AVAILABLE", "Route household is not available", 409);
+    return { householdId: rows[0].id };
+  }
   async requireSubscriptionHousehold(context: TransactionContext, householdId: string) {
     const row = await unwrapPrismaTransaction(context).household.findFirst({
       where: { id: householdId }, select: { id: true, status: true, deletedAt: true },

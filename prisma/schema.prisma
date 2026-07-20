@@ -99,6 +99,8 @@ model User {
   subscriptionRevisionsCreated SubscriptionRevision[] @relation("SubscriptionRevisionCreator")
   subscriptionsDeleted Subscription[] @relation("SubscriptionDeleter")
   routesDeleted Route[] @relation("RouteDeleter")
+  routeStopPlansCreated RouteStopPlan[] @relation("RouteStopPlanCreator")
+  routeStopsCreated RouteStop[] @relation("RouteStopCreator")
 
   @@map("users")
 }
@@ -250,6 +252,7 @@ model Vendor {
   subscriptions     Subscription[]
   subscriptionRevisions SubscriptionRevision[]
   routes Route[]
+  routeStopPlans RouteStopPlan[]
 
   @@map("vendors")
 }
@@ -303,6 +306,7 @@ model Household {
   members        HouseholdMember[]
   priceOverrides CustomerPriceOverride[]
   subscriptions Subscription[]
+  routeStops RouteStop[]
 
   @@unique([vendorId, id])
   @@index([vendorId, createdAt, id])
@@ -516,12 +520,68 @@ model Route {
   vendor         Vendor        @relation(fields: [vendorId], references: [id])
   deliverySlot   DeliverySlot  @relation(fields: [vendorId, deliverySlotId], references: [vendorId, id])
   deleter        User?         @relation("RouteDeleter", fields: [deletedBy], references: [id])
+  stopPlans      RouteStopPlan[]
 
   @@unique([vendorId, id])
   @@unique([vendorId, id, deliverySlotId])
   @@index([vendorId, status, createdAt(sort: Desc), id(sort: Desc)])
   @@index([vendorId, deliverySlotId, status])
   @@map("routes")
+}
+
+model RouteStopPlan {
+  id                 String          @id @db.Uuid
+  vendorId           String          @map("vendor_id") @db.Uuid
+  routeId            String          @map("route_id") @db.Uuid
+  deliverySlotId     String          @map("delivery_slot_id") @db.Uuid
+  effectiveFrom      DateTime        @map("effective_from") @db.Date
+  effectiveTo        DateTime?       @map("effective_to") @db.Date
+  createdBy          String          @map("created_by") @db.Uuid
+  supersededAt       DateTime?       @map("superseded_at") @db.Timestamptz(6)
+  supersededByPlanId String?         @map("superseded_by_plan_id") @db.Uuid
+  supersessionReason String?         @map("supersession_reason")
+  createdAt          DateTime        @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt          DateTime        @updatedAt @map("updated_at") @db.Timestamptz(6)
+  route              Route           @relation(fields: [vendorId, routeId, deliverySlotId], references: [vendorId, id, deliverySlotId])
+  vendor             Vendor          @relation(fields: [vendorId], references: [id])
+  creator            User            @relation("RouteStopPlanCreator", fields: [createdBy], references: [id])
+  supersededBy       RouteStopPlan?   @relation("RouteStopPlanSupersession", fields: [vendorId, routeId, supersededByPlanId], references: [vendorId, routeId, id])
+  supersededPlans    RouteStopPlan[]  @relation("RouteStopPlanSupersession")
+  stops              RouteStop[]
+
+  @@unique([vendorId, id])
+  @@unique([vendorId, routeId, id])
+  @@unique([vendorId, routeId, id, deliverySlotId])
+  @@index([vendorId, routeId, effectiveFrom, id])
+  @@index([vendorId, routeId, createdAt(sort: Desc), id(sort: Desc)])
+  @@map("route_stop_plans")
+}
+
+model RouteStop {
+  id                 String         @id @db.Uuid
+  vendorId           String         @map("vendor_id") @db.Uuid
+  routeId            String         @map("route_id") @db.Uuid
+  planId             String         @map("plan_id") @db.Uuid
+  householdId        String         @map("household_id") @db.Uuid
+  deliverySlotId     String         @map("delivery_slot_id") @db.Uuid
+  sequence           Int
+  effectiveFrom      DateTime       @map("effective_from") @db.Date
+  effectiveTo        DateTime?      @map("effective_to") @db.Date
+  createdBy          String         @map("created_by") @db.Uuid
+  supersededAt       DateTime?      @map("superseded_at") @db.Timestamptz(6)
+  supersededByPlanId String?        @map("superseded_by_plan_id") @db.Uuid
+  supersessionReason String?        @map("supersession_reason")
+  createdAt          DateTime       @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt          DateTime       @updatedAt @map("updated_at") @db.Timestamptz(6)
+  plan               RouteStopPlan  @relation(fields: [vendorId, routeId, planId], references: [vendorId, routeId, id])
+  household          Household      @relation(fields: [vendorId, householdId], references: [vendorId, id])
+  creator            User           @relation("RouteStopCreator", fields: [createdBy], references: [id])
+
+  @@unique([vendorId, id])
+  @@index([vendorId, routeId, effectiveFrom, sequence, id])
+  @@index([vendorId, householdId, deliverySlotId, effectiveFrom])
+  @@index([vendorId, routeId, planId, sequence, id])
+  @@map("route_stops")
 }
 
 model OwnerEnrollment {

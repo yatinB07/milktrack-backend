@@ -65,6 +65,7 @@ export type HouseholdMemberPage = Readonly<{
   nextCursor?: string;
 }>;
 export abstract class HouseholdService {
+  abstract requireRouteHousehold(tx: TransactionContext, householdId: string): Promise<Readonly<{ householdId: string }>>;
   abstract requireSubscriptionHousehold(tx: TransactionContext, householdId: string): Promise<Readonly<{ householdId: string }>>;
   abstract requireCustomerSubscriptionHousehold(tx: TransactionContext, actor: Actor, vendorId: string, householdId: string): Promise<Readonly<{ householdId: string }>>;
   abstract requirePricingHousehold(tx: TransactionContext, householdId: string): Promise<Readonly<{ householdId: string }>>;
@@ -172,6 +173,9 @@ export class PrismaHouseholdService extends HouseholdService {
     @Inject(AuditWriter) private readonly audits: AuditWriter,
   ) {
     super();
+  }
+  requireRouteHousehold(tx: TransactionContext, householdId: string) {
+    return this.households.requireRouteHousehold(tx, householdId);
   }
   requireSubscriptionHousehold(tx: TransactionContext, householdId: string) {
     return this.households.requireSubscriptionHousehold(tx, householdId);
