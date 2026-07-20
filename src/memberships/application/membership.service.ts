@@ -39,8 +39,11 @@ export type CustomerMembershipSummary = Readonly<{
   displayName?: string;
   phone?: string;
 }>;
+export type RouteAgentSummary = Readonly<{ membershipId: string }>;
 
 export abstract class MembershipService {
+  abstract requireRouteAgent(tx: TransactionContext, vendorId: string, membershipId: string): Promise<RouteAgentSummary>;
+  abstract resolveSelfRouteAgent(tx: TransactionContext, vendorId: string, userId: string): Promise<RouteAgentSummary>;
   abstract requireActiveCustomerMembership(
     tx: TransactionContext,
     vendorId: string,
@@ -135,6 +138,14 @@ export class PrismaMembershipService extends MembershipService {
     private readonly audits: AuditWriter,
   ) {
     super();
+  }
+
+  requireRouteAgent(tx: TransactionContext, vendorId: string, membershipId: string) {
+    return this.memberships.requireRouteAgent(tx, vendorId, membershipId);
+  }
+
+  resolveSelfRouteAgent(tx: TransactionContext, vendorId: string, userId: string) {
+    return this.memberships.resolveSelfRouteAgent(tx, vendorId, userId);
   }
 
   requireActiveCustomerMembership(

@@ -74,7 +74,7 @@ const vendorPermissions: Readonly<Record<VendorRole, ReadonlySet<VendorPermissio
     'route:read',
     'route:manage',
   ]),
-  delivery_agent: new Set(['delivery:read', 'delivery:record']),
+  delivery_agent: new Set(['delivery:read', 'delivery:record', 'route:self']),
   customer: new Set(['customer:self']),
 };
 
@@ -148,6 +148,10 @@ const activeVendorOperations: Readonly<Record<string, VendorPermission>> = {
   'route.restore': 'route:manage',
   'route.stops-list': 'route:read',
   'route.stops-replace': 'route:manage',
+  'route.assignments-list': 'route:read',
+  'route.assignment-put': 'route:manage',
+  'route.assignment-cancel': 'route:manage',
+  'route.assignments-self': 'route:self',
 };
 
 export const hasPlatformPermission = (

@@ -19,7 +19,7 @@ void test('reactivation locks and version-checks the route before validating its
     changeStatus: () => { order.push('route-change'); return Promise.resolve({ before: route, after: { ...route, status: 'active', version: 3 } }); },
   };
   const catalog = { requireRouteDeliverySlot: () => { order.push('slot-lock'); return Promise.resolve({ deliverySlotId: 'slot' }); } };
-  const service = new DefaultRouteService(authorization as never, routes as never, {} as never, catalog as never, {} as never, {} as never, audits);
+  const service = new DefaultRouteService(authorization as never, routes as never, {} as never, {} as never, catalog as never, {} as never, {} as never, {} as never, audits);
   await requestContextStore.run({ correlationId: '00000000-0000-4000-8000-000000000003' }, () => service.reactivate(actor, 'vendor', 'route', { expectedVersion: 2, reason: 'Resume route' }));
   assert.deepEqual(order, ['route-lock', 'slot-lock', 'route-change']);
 });
@@ -29,7 +29,7 @@ void test('create normalizes route identity and audits only the safe persisted p
   const routes = { create: (_tx: TransactionContext, input: unknown) => { created = input; return Promise.resolve({ ...(input as object), createdAt: new Date(), updatedAt: new Date() }); } };
   const catalog = { requireRouteDeliverySlot: () => Promise.resolve({ deliverySlotId: 'slot' }) };
   const audit = { append: (_tx: TransactionContext, value: unknown) => { event = value; return Promise.resolve(); } };
-  const service = new DefaultRouteService(authorization as never, routes as never, {} as never, catalog as never, {} as never, {} as never, audit);
+  const service = new DefaultRouteService(authorization as never, routes as never, {} as never, {} as never, catalog as never, {} as never, {} as never, {} as never, audit);
   await requestContextStore.run({ correlationId: '00000000-0000-4000-8000-000000000003' }, () => service.create(actor, 'vendor', { code: ' am_1 ', name: ' Morning ', deliverySlotId: 'slot' }));
   assert.equal((created as { code: string }).code, 'AM_1'); assert.equal((created as { name: string }).name, 'Morning');
   assert.deepEqual(Object.keys((event as { newValue: object }).newValue).sort(), ['code', 'deliverySlotId', 'name', 'status', 'version']);

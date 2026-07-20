@@ -212,7 +212,7 @@ void test('publishes the complete Phase 1 HTTP contract without persistence secr
     '/v1/customer/vendors/{vendorId}/households/{householdId}/subscriptions/{subscriptionId}',
     '/v1/customer/vendors/{vendorId}/households/{householdId}/subscriptions/{subscriptionId}/revisions',
   ];
-  const routePaths = ['/v1/vendors/{vendorId}/routes','/v1/vendors/{vendorId}/routes/{routeId}','/v1/vendors/{vendorId}/routes/{routeId}/deactivate','/v1/vendors/{vendorId}/routes/{routeId}/reactivate','/v1/vendors/{vendorId}/routes/{routeId}/restore','/v1/vendors/{vendorId}/routes/{routeId}/stops','/v1/vendors/{vendorId}/routes/{routeId}/stops/replace'];
+  const routePaths = ['/v1/vendors/{vendorId}/routes','/v1/vendors/{vendorId}/routes/{routeId}','/v1/vendors/{vendorId}/routes/{routeId}/deactivate','/v1/vendors/{vendorId}/routes/{routeId}/reactivate','/v1/vendors/{vendorId}/routes/{routeId}/restore','/v1/vendors/{vendorId}/routes/{routeId}/stops','/v1/vendors/{vendorId}/routes/{routeId}/stops/replace','/v1/vendors/{vendorId}/routes/{routeId}/assignments','/v1/vendors/{vendorId}/routes/{routeId}/assignments/{serviceDate}','/v1/vendors/{vendorId}/routes/{routeId}/assignments/{serviceDate}/cancel','/v1/agent/vendors/{vendorId}/route-assignments'];
   for (const path of householdPaths) assert.ok(paths[path], `missing ${path}`);
   for (const path of catalogPaths) assert.ok(paths[path], `missing ${path}`);
   for (const path of pricingPaths) assert.ok(paths[path], `missing ${path}`);
@@ -492,7 +492,7 @@ void test('publishes the effective-dated subscription contract with customer-saf
   assert.equal(customerParameters.some(({ name, in: location }) => name === 'householdId' && location === 'query'), false);
 });
 
-void test('publishes secured explicit route-definition contracts without later routing endpoints', async () => {
+void test('publishes secured explicit route-definition contracts', async () => {
   const { document } = await readDocument(); const paths = object(document.paths, 'paths');
   const operations = [
     ['get','/v1/vendors/{vendorId}/routes','200','RouteListResponseDto',undefined],
@@ -510,10 +510,9 @@ void test('publishes secured explicit route-definition contracts without later r
     for (const errorStatus of ['400','401','403','404','409','503']) assert.equal(responseSchema(responses[errorStatus], `${path} ${errorStatus}`).$ref, '#/components/schemas/ApiErrorResponseDto');
     if (bodyName) { const content = object(object(operation.requestBody, 'body').content, 'content'); assert.equal(object(object(content['application/json'], 'json').schema, 'schema').$ref, `#/components/schemas/${bodyName}`); }
   }
-  assert.equal(paths['/v1/vendors/{vendorId}/routes/{routeId}/assignments'], undefined);
 });
 
-void test('publishes secured route stop projection and atomic replacement contracts without assignments', async () => {
+void test('publishes secured route stop projection and atomic replacement contracts', async () => {
   const { document } = await readDocument(); const paths = object(document.paths, 'paths');
   const schemas = object(object(document.components, 'components').schemas, 'schemas');
   const properties = (name: string) => object(object(schemas[name], name).properties, `${name} properties`);
@@ -529,7 +528,15 @@ void test('publishes secured route stop projection and atomic replacement contra
   assert.equal(object(properties('ReplaceRouteStopsRequestDto').householdIds,'householdIds').maxItems,undefined);
   assert.deepEqual(Object.keys(properties('RouteStopResponseDto')).sort(), ['householdId','id','sequence']);
   assert.deepEqual(Object.keys(properties('RouteStopsResponseDto')).sort(), ['deliverySlotId','endDate','nextCursor','routeId','routeVersion','serviceDate','startDate','stops']);
-  assert.equal(paths['/v1/vendors/{vendorId}/routes/{routeId}/assignments'], undefined);
+});
+
+void test('publishes exact-date vendor and agent-self assignment contracts', async()=>{
+  const {document}=await readDocument();const paths=object(document.paths,'paths');
+  const list='/v1/vendors/{vendorId}/routes/{routeId}/assignments',item='/v1/vendors/{vendorId}/routes/{routeId}/assignments/{serviceDate}',cancel=`${item}/cancel`,self='/v1/agent/vendors/{vendorId}/route-assignments';
+  assert.deepEqual(Object.keys(object(paths[list],list)),['get']);assert.deepEqual(Object.keys(object(paths[item],item)),['put']);assert.deepEqual(Object.keys(object(paths[cancel],cancel)),['post']);assert.deepEqual(Object.keys(object(paths[self],self)),['get']);
+  const put=object(object(paths[item],item).put,'put');const responses=object(put.responses,'responses');
+  assert.equal(responseSchema(responses['200'],'200').$ref,'#/components/schemas/RouteAssignmentMutationResponseDto');assert.equal(responseSchema(responses['201'],'201').$ref,'#/components/schemas/RouteAssignmentMutationResponseDto');
+  for(const path of[list,self]){const get=object(object(paths[path],path).get,'get');const limit=(get.parameters as JsonObject[]).find(({name})=>name==='limit');assert(limit);assert.deepEqual(object(limit.schema,'limit schema'),{minimum:1,maximum:100,default:25,type:'number'});}
 });
 
 void test('publishes the additive vendor catalog contract', async () => {

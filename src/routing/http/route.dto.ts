@@ -2,6 +2,7 @@ import { Type } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { IsArray, IsIn, IsInt, IsOptional, IsString, IsUUID, Length, Max, Min } from 'class-validator';
 import type { RouteRecord } from '../application/route.store.js';
+import type { RouteAssignmentMutation, RouteAssignmentRecord } from '../application/route-assignment.store.js';
 
 const code = /^[A-Za-z0-9_-]{2,32}$/;
 export class RoutePageQueryDto {
@@ -55,4 +56,35 @@ export class RouteStopsResponseDto {
   @ApiProperty({ type: () => RouteStopResponseDto, isArray: true }) stops!: RouteStopResponseDto[];
   @ApiPropertyOptional({ type: String }) nextCursor?: string;
 }
+export class RouteAssignmentPageQueryDto {
+  @IsOptional() @IsString() cursor?: string;
+  @ApiPropertyOptional({ default: 25, minimum: 1, maximum: 100 }) @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(100) limit?: number;
+  @ApiPropertyOptional({ type: String, format: 'date' }) @IsOptional() @IsString() fromDate?: string;
+  @ApiPropertyOptional({ type: String, format: 'date' }) @IsOptional() @IsString() toDate?: string;
+  @ApiPropertyOptional({ enum: ['assigned','cancelled'] }) @IsOptional() @IsIn(['assigned','cancelled']) status?: 'assigned'|'cancelled';
+}
+export class AgentRouteAssignmentQueryDto {
+  @ApiProperty({ type: String, format: 'date' }) @IsString() serviceDate!: string;
+  @IsOptional() @IsString() cursor?: string;
+  @ApiPropertyOptional({ default: 25, minimum: 1, maximum: 100 }) @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(100) limit?: number;
+}
+export class AssignRouteRequestDto {
+  @ApiProperty({ type: String, format: 'uuid' }) @IsUUID('4') agentMembershipId!: string;
+  @Type(() => Number) @IsInt() @Min(1) expectedVersion!: number;
+  @ApiProperty({ type: String, minLength: 3, maxLength: 500 }) @IsString() reason!: string;
+}
+export class RouteAssignmentResponseDto {
+  @ApiProperty({ type: String, format: 'uuid' }) id!: string;
+  @ApiProperty({ type: String, format: 'uuid' }) routeId!: string;
+  @ApiProperty({ type: String, format: 'uuid' }) deliverySlotId!: string;
+  @ApiProperty({ type: String, format: 'uuid' }) agentMembershipId!: string;
+  @ApiProperty({ type: String, format: 'date' }) serviceDate!: string;
+  @ApiProperty({ enum: ['assigned','cancelled'] }) status!: string;
+  @ApiProperty({ type: String, format: 'date-time' }) createdAt!: string;
+  @ApiProperty({ type: String, format: 'date-time' }) updatedAt!: string;
+}
+export class RouteAssignmentMutationResponseDto extends RouteAssignmentResponseDto { @ApiProperty({ type: Number, minimum: 1 }) routeVersion!: number; }
+export class RouteAssignmentListResponseDto { @ApiProperty({ type:()=>RouteAssignmentResponseDto,isArray:true }) items!:RouteAssignmentResponseDto[]; @ApiPropertyOptional({type:String}) nextCursor?:string; }
+export const toRouteAssignmentResponse=(value:RouteAssignmentRecord):RouteAssignmentResponseDto=>({...value,createdAt:value.createdAt.toISOString(),updatedAt:value.updatedAt.toISOString()});
+export const toRouteAssignmentMutationResponse=(value:RouteAssignmentMutation):RouteAssignmentMutationResponseDto=>({...toRouteAssignmentResponse(value.assignment),routeVersion:value.routeVersion});
 export const toRouteResponse = (route: RouteRecord): RouteResponseDto => ({ ...route, createdAt: route.createdAt.toISOString(), updatedAt: route.updatedAt.toISOString() });

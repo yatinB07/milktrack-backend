@@ -5,7 +5,7 @@ import { CursorCodec } from '../../common/cursor/cursor.js';
 import type { VendorRole } from '../../common/context/request-context.js';
 import { ApplicationError } from '../../common/errors/application.error.js';
 import { unwrapPrismaTransaction } from '../../database/infrastructure/prisma-transaction-context.js';
-import type { CustomerMembershipSummary } from '../application/membership.service.js';
+import type { CustomerMembershipSummary, RouteAgentSummary } from '../application/membership.service.js';
 
 export type MembershipRecord = Readonly<{
   id: string;
@@ -56,6 +56,29 @@ function conflict(): ApplicationError {
 @Injectable()
 export class PrismaMembershipStore {
   private readonly cursors = new CursorCodec();
+
+  async requireRouteAgent(context: TransactionContext, vendorId: string, membershipId: string): Promise<RouteAgentSummary> {
+    const tx = unwrapPrismaTransaction(context);
+    const locked = await tx.$queryRaw<Array<{ id: string; role: string; status: string; endedAt: Date | null }>>`
+      SELECT id, role::text, status::text, ended_at AS "endedAt"
+      FROM vendor_memberships
+      WHERE id=${membershipId}::uuid AND vendor_id=${vendorId}::uuid AND deleted_at IS NULL
+      FOR UPDATE`;
+    const membership = locked[0];
+    if (!membership) throw new ApplicationError('ROUTE_AGENT_NOT_FOUND', 'Route agent was not found', 404);
+    if (membership.role !== 'delivery_agent' || membership.status !== 'active' || membership.endedAt)
+      throw new ApplicationError('ROUTE_AGENT_NOT_AVAILABLE', 'Route agent is not available', 409);
+    return { membershipId: membership.id };
+  }
+
+  async resolveSelfRouteAgent(context: TransactionContext, vendorId: string, userId: string): Promise<RouteAgentSummary> {
+    const membership = await unwrapPrismaTransaction(context).vendorMembership.findFirst({
+      where: { vendorId, userId, role: 'delivery_agent', status: 'active', endedAt: null, deletedAt: null },
+      select: { id: true },
+    });
+    if (!membership) throw new ApplicationError('FORBIDDEN', 'You are not allowed to perform this action', 403);
+    return { membershipId: membership.id };
+  }
 
   async requireActiveCustomerMembership(
     context: TransactionContext,

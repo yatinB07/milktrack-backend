@@ -101,6 +101,8 @@ model User {
   routesDeleted Route[] @relation("RouteDeleter")
   routeStopPlansCreated RouteStopPlan[] @relation("RouteStopPlanCreator")
   routeStopsCreated RouteStop[] @relation("RouteStopCreator")
+  routeAssignmentsCreated RouteAssignment[] @relation("RouteAssignmentCreator")
+  routeAssignmentsUpdated RouteAssignment[] @relation("RouteAssignmentUpdater")
 
   @@map("users")
 }
@@ -253,6 +255,7 @@ model Vendor {
   subscriptionRevisions SubscriptionRevision[]
   routes Route[]
   routeStopPlans RouteStopPlan[]
+  routeAssignments RouteAssignment[]
 
   @@map("vendors")
 }
@@ -274,6 +277,7 @@ model VendorMembership {
   user            User             @relation(fields: [userId], references: [id])
   ownerEnrollment OwnerEnrollment?
   householdMembers HouseholdMember[]
+  routeAssignments RouteAssignment[]
 
   @@unique([vendorId, id])
   @@index([vendorId, status, id])
@@ -386,6 +390,7 @@ model DeliverySlot {
   vendor         Vendor   @relation(fields: [vendorId], references: [id])
   subscriptionRevisions SubscriptionRevision[]
   routes Route[]
+  routeAssignments RouteAssignment[]
 
   @@unique([vendorId, id])
   @@unique([vendorId, code])
@@ -521,6 +526,7 @@ model Route {
   deliverySlot   DeliverySlot  @relation(fields: [vendorId, deliverySlotId], references: [vendorId, id])
   deleter        User?         @relation("RouteDeleter", fields: [deletedBy], references: [id])
   stopPlans      RouteStopPlan[]
+  assignments    RouteAssignment[]
 
   @@unique([vendorId, id])
   @@unique([vendorId, id, deliverySlotId])
@@ -582,6 +588,34 @@ model RouteStop {
   @@index([vendorId, householdId, deliverySlotId, effectiveFrom])
   @@index([vendorId, routeId, planId, sequence, id])
   @@map("route_stops")
+}
+
+model RouteAssignment {
+  id                String           @id @db.Uuid
+  vendorId          String           @map("vendor_id") @db.Uuid
+  routeId           String           @map("route_id") @db.Uuid
+  deliverySlotId    String           @map("delivery_slot_id") @db.Uuid
+  agentMembershipId String           @map("agent_membership_id") @db.Uuid
+  serviceDate       DateTime         @map("service_date") @db.Date
+  status            String           @default("assigned")
+  createdBy         String           @map("created_by") @db.Uuid
+  updatedBy         String           @map("updated_by") @db.Uuid
+  cancelledAt       DateTime?        @map("cancelled_at") @db.Timestamptz(6)
+  cancellationReason String?         @map("cancellation_reason")
+  createdAt         DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt         DateTime         @updatedAt @map("updated_at") @db.Timestamptz(6)
+  vendor            Vendor           @relation(fields: [vendorId], references: [id])
+  route             Route            @relation(fields: [vendorId, routeId, deliverySlotId], references: [vendorId, id, deliverySlotId])
+  deliverySlot      DeliverySlot     @relation(fields: [vendorId, deliverySlotId], references: [vendorId, id])
+  agentMembership   VendorMembership @relation(fields: [vendorId, agentMembershipId], references: [vendorId, id])
+  creator           User             @relation("RouteAssignmentCreator", fields: [createdBy], references: [id])
+  updater           User             @relation("RouteAssignmentUpdater", fields: [updatedBy], references: [id])
+
+  @@unique([vendorId, id])
+  @@unique([vendorId, routeId, serviceDate])
+  @@index([vendorId, routeId, serviceDate(sort: Desc), id(sort: Desc)])
+  @@index([vendorId, agentMembershipId, serviceDate(sort: Desc), id(sort: Desc)])
+  @@map("route_assignments")
 }
 
 model OwnerEnrollment {
