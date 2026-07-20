@@ -56,6 +56,26 @@ services:
       retries: 30
       start_period: 5s
 
+  worker:
+    build:
+      context: .
+      target: development
+    command: ["npm", "run", "start:worker:dev"]
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgresql://milktrack_app:milktrack_app_local@postgres:5432/milktrack}
+      AUTH_HMAC_KEY: ${AUTH_HMAC_KEY}
+      MFA_ENCRYPTION_KEY: ${MFA_ENCRYPTION_KEY}
+      SESSION_TTL_SECONDS: ${SESSION_TTL_SECONDS:-2592000}
+      APP_ENV: ${APP_ENV:-development}
+      OTP_PROVIDER: ${OTP_PROVIDER:-local}
+      POLL_INTERVAL_MS: ${POLL_INTERVAL_MS:-5000}
+      CONCURRENCY: ${CONCURRENCY:-4}
+      SHUTDOWN_TIMEOUT_MS: ${SHUTDOWN_TIMEOUT_MS:-60000}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    stop_grace_period: 70s
+
   integration:
     profiles: ["test"]
     build:

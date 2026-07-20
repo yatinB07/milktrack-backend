@@ -29,7 +29,8 @@ services="$(
 )"
 expected_services="backend
 migrate
-postgres"
+postgres
+worker"
 [ "$services" = "$expected_services" ]
 ! grep -q '^  integration:$' "$config_file"
 
@@ -47,7 +48,8 @@ test_services="$(
 expected_test_services="backend
 integration
 migrate
-postgres"
+postgres
+worker"
 [ "$test_services" = "$expected_test_services" ]
 
 grep -q '^  postgres_data:$' "$config_file"
@@ -73,6 +75,27 @@ printf '%s\n' "$backend" | grep -q 'postgresql://milktrack_app:'
 ! printf '%s\n' "$backend" | grep -q 'postgresql://milktrack_owner:'
 ! printf '%s\n' "$backend" | grep -q 'TEST_OWNER_DATABASE_URL:'
 ! printf '%s\n' "$backend" | grep -q 'MIGRATION_DATABASE_URL:'
+
+worker="$(service_block worker)"
+printf '%s\n' "$worker" | grep -q 'command:'
+printf '%s\n' "$worker" | grep -q '^      - npm$'
+printf '%s\n' "$worker" | grep -q '^      - start:worker:dev$'
+printf '%s\n' "$worker" | grep -q 'target: development$'
+printf '%s\n' "$worker" | grep -q '^      migrate:$'
+printf '%s\n' "$worker" | grep -q 'condition: service_completed_successfully$'
+printf '%s\n' "$worker" | grep -q 'postgresql://milktrack_app:'
+printf '%s\n' "$worker" | grep -q 'POLL_INTERVAL_MS:'
+printf '%s\n' "$worker" | grep -q 'CONCURRENCY:'
+printf '%s\n' "$worker" | grep -q 'SHUTDOWN_TIMEOUT_MS:'
+printf '%s\n' "$worker" | grep -q 'stop_grace_period: 1m10s$'
+! printf '%s\n' "$worker" | grep -q '^    ports:$'
+! printf '%s\n' "$worker" | grep -q '^    healthcheck:$'
+! printf '%s\n' "$worker" | grep -q 'postgresql://milktrack_owner:'
+! printf '%s\n' "$worker" | grep -q 'TEST_OWNER_DATABASE_URL:'
+! printf '%s\n' "$worker" | grep -q 'MIGRATION_DATABASE_URL:'
+! printf '%s\n' "$worker" | grep -q 'BYPASSRLS'
+! printf '%s\n' "$worker" | grep -q 'TRUST_PROXY_CIDRS:'
+[ "$(printf '%s\n' "$worker" | grep -Ec '^      (POLL_INTERVAL_MS|CONCURRENCY|SHUTDOWN_TIMEOUT_MS):')" -eq 3 ]
 
 integration="$(
   awk '
