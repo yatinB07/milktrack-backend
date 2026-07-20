@@ -45,3 +45,18 @@ void test('slot changes cancel old rows and create new rows while finalized subs
   assert.deepEqual(finalized.cancelled, []);
   assert.deepEqual(finalized.existing.map(({ id }) => id), ['delivery-1']);
 });
+
+void test('finalized subscription counts only its finalized blocking delivery as existing', () => {
+  const reconciliation = planScheduleReconciliation(
+    [
+      existing({ id: 'cancelled-old-slot', status: 'cancelled' }),
+      existing({ id: 'finalized-current-slot', deliverySlotId: 'slot-2', finalized: true }),
+    ],
+    [target({ deliverySlotId: 'slot-2' })],
+  );
+
+  assert.deepEqual(reconciliation.created, []);
+  assert.deepEqual(reconciliation.updated, []);
+  assert.deepEqual(reconciliation.cancelled, []);
+  assert.deepEqual(reconciliation.existing.map(({ id }) => id), ['finalized-current-slot']);
+});

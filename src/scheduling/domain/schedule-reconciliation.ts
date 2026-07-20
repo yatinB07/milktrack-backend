@@ -45,7 +45,7 @@ export const planScheduleReconciliation = (
   const targetKeys = new Set<string>();
   const result: ScheduleReconciliation = {
     created: [],
-    existing: current.filter(({ subscriptionId }) => finalizedSubscriptions.has(subscriptionId)),
+    existing: current.filter(({ finalized }) => finalized),
     updated: [],
     cancelled: [],
   };
