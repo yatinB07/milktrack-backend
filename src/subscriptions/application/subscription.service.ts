@@ -108,7 +108,7 @@ export class DefaultSubscriptionService extends SubscriptionService {
       const { routeId, routeServiceDate, ...baseQuery } = query;
       let storeQuery: SubscriptionStorePageQuery = baseQuery;
       if (routeId && routeServiceDate) {
-        const route = (await this.routing.project(tx, vendorId, routeServiceDate)).find((candidate) => candidate.routeId === routeId);
+        const route = await this.routing.projectRoute(tx, vendorId, routeId, routeServiceDate);
         if (!route) throw new ApplicationError('ROUTE_NOT_FOUND', 'Route was not found', 404);
         storeQuery = { ...baseQuery, route: {
           serviceDate: routeServiceDate,

@@ -18,7 +18,10 @@ const authorization = {
 const vendors = { getSubscriptionTimezone: () => Promise.resolve({ timezone: 'Asia/Kolkata' }) };
 const audits = { append: () => Promise.resolve() };
 const regeneration = { write: () => Promise.resolve() };
-const routing = { project: () => Promise.resolve([]) };
+const routing = {
+  project: () => Promise.resolve([]),
+  projectRoute: () => Promise.resolve(undefined),
+};
 
 void test('create validates active dependencies and passes canonical configuration to the aggregate port', async () => {
   const calls: string[] = []; let created: unknown;

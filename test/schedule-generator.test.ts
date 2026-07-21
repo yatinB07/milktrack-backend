@@ -26,7 +26,7 @@ void test('generator locks first, batches projections, maps exact slot/household
   const routing: RoutingScheduleService = { project: () => {
     calls.push('routing');
     return Promise.resolve([{ routeId: 'route', routeVersion: 1, deliverySlotId: 'slot1', stops: [{ stopId: 'stop', householdId: 'h1', sequence: 1 }], assignment: { assignmentId: 'assignment', agentMembershipId: 'agent' } }]);
-  } };
+  }, projectRoute: () => Promise.resolve(undefined) };
   const prices: SchedulingPriceService = { resolveMany: (_tx, _vendor, _date, candidates) => {
     calls.push(`prices:${candidates.length}`);
     return Promise.resolve(candidates.map((candidate, index) => ({ ...candidate, status: index === 0 ? 'resolved' as const : 'missing' as const })));

@@ -27,6 +27,16 @@ type Row = {
   createdAt: Date;
   updatedAt: Date;
 };
+type ScheduleRow = {
+  routeId: string;
+  routeVersion: number;
+  deliverySlotId: string;
+  assignmentId: string | null;
+  agentMembershipId: string | null;
+  stopId: string | null;
+  householdId: string | null;
+  sequence: number | null;
+};
 
 @Injectable()
 export class PrismaRouteAssignmentStore extends RouteAssignmentStore {
@@ -161,16 +171,6 @@ export class PrismaRouteAssignmentStore extends RouteAssignmentStore {
     vendorId: string,
     serviceDate: string,
   ): Promise<readonly RouteScheduleProjection[]> {
-    type ScheduleRow = {
-      routeId: string;
-      routeVersion: number;
-      deliverySlotId: string;
-      assignmentId: string | null;
-      agentMembershipId: string | null;
-      stopId: string | null;
-      householdId: string | null;
-      sequence: number | null;
-    };
     const rows = await unwrapPrismaTransaction(context).$queryRaw<ScheduleRow[]>(Prisma.sql`
       SELECT r.id AS "routeId",r.version AS "routeVersion",r.delivery_slot_id AS "deliverySlotId",
         a.id AS "assignmentId",a.agent_membership_id AS "agentMembershipId",s.id AS "stopId",s.household_id AS "householdId",s.sequence
@@ -180,6 +180,29 @@ export class PrismaRouteAssignmentStore extends RouteAssignmentStore {
       LEFT JOIN route_stops s ON s.plan_id=p.id AND s.superseded_at IS NULL
       WHERE r.vendor_id=${vendorId}::uuid AND r.status='active' AND r.deleted_at IS NULL
       ORDER BY r.id,s.sequence,s.id`);
+    return this.projections(rows);
+  }
+
+  async projectRoute(
+    context: TransactionContext,
+    vendorId: string,
+    routeId: string,
+    serviceDate: string,
+  ): Promise<RouteScheduleProjection | undefined> {
+    const rows = await unwrapPrismaTransaction(context).$queryRaw<ScheduleRow[]>(Prisma.sql`
+      SELECT r.id AS "routeId",r.version AS "routeVersion",r.delivery_slot_id AS "deliverySlotId",
+        a.id AS "assignmentId",a.agent_membership_id AS "agentMembershipId",s.id AS "stopId",s.household_id AS "householdId",s.sequence
+      FROM routes r
+      LEFT JOIN route_assignments a ON a.route_id=r.id AND a.service_date=${serviceDate}::date AND a.status='assigned'
+      LEFT JOIN LATERAL (SELECT id FROM route_stop_plans WHERE route_id=r.id AND superseded_at IS NULL AND effective_from<=${serviceDate}::date AND (effective_to IS NULL OR effective_to>${serviceDate}::date) ORDER BY effective_from DESC,id DESC LIMIT 1) p ON true
+      LEFT JOIN route_stops s ON s.plan_id=p.id AND s.superseded_at IS NULL
+      WHERE r.vendor_id=${vendorId}::uuid AND r.id=${routeId}::uuid
+        AND r.status='active' AND r.deleted_at IS NULL
+      ORDER BY s.sequence,s.id`);
+    return this.projections(rows)[0];
+  }
+
+  private projections(rows: readonly ScheduleRow[]): readonly RouteScheduleProjection[] {
     const routes = new Map<string, RouteScheduleProjection>();
     for (const row of rows) {
       const existing = routes.get(row.routeId);

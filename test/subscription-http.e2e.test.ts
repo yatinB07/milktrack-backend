@@ -213,6 +213,9 @@ void test('vendor subscription route filter uses effective stops, applicable rev
   const second=await json<{items:Subscription[];nextCursor?:string}>(await api(`${base}?routeId=${routeId}&routeServiceDate=${serviceDate}&productId=${current.productId}&limit=2&cursor=${encodeURIComponent(first.nextCursor)}`,current.ownerToken),200);assert.deepEqual(second.items.map(({id})=>id),matchingIds.slice(2));assert.equal(second.nextCursor,undefined);
   for(const query of [`productId=${futureProductId}`,`deliverySlotId=${secondSlotId}`]) assert.deepEqual((await json<{items:Subscription[]}>(await api(`${base}?routeId=${routeId}&routeServiceDate=${serviceDate}&${query}`,current.ownerToken),200)).items,[]);
   assert.deepEqual((await json<{items:Subscription[]}>(await api(`${base}?routeId=${emptyRouteId}&routeServiceDate=${serviceDate}`,current.ownerToken),200)).items,[]);
+  await owner.query("UPDATE routes SET status='inactive',updated_at=now() WHERE id=$1",[emptyRouteId]);
+  await error(await api(`${base}?routeId=${emptyRouteId}&routeServiceDate=${serviceDate}`,current.ownerToken),404,'ROUTE_NOT_FOUND');
+  await error(await api(`${base}?routeId=${randomUUID()}&routeServiceDate=${serviceDate}`,current.ownerToken),404,'ROUTE_NOT_FOUND');
   await error(await api(`${base}?routeId=${foreignRouteId}&routeServiceDate=${serviceDate}`,current.ownerToken),404,'ROUTE_NOT_FOUND');
   await error(await api(`/v1/vendors/${other.vendorId}/subscriptions?routeId=${routeId}&routeServiceDate=${serviceDate}`,current.ownerToken),403,'FORBIDDEN');
 });

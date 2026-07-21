@@ -10,6 +10,12 @@ export abstract class RoutingScheduleService {
     vendorId: string,
     serviceDate: string,
   ): Promise<readonly RouteScheduleProjection[]>;
+  abstract projectRoute(
+    tx: TransactionContext,
+    vendorId: string,
+    routeId: string,
+    serviceDate: string,
+  ): Promise<RouteScheduleProjection | undefined>;
 }
 
 @Injectable()
@@ -20,5 +26,10 @@ export class DefaultRoutingScheduleService extends RoutingScheduleService {
   project(tx: TransactionContext, vendorId: string, serviceDate: string) {
     validateRouteAssignmentDate(serviceDate);
     return this.assignments.schedule(tx, vendorId, serviceDate);
+  }
+
+  projectRoute(tx: TransactionContext, vendorId: string, routeId: string, serviceDate: string) {
+    validateRouteAssignmentDate(serviceDate);
+    return this.assignments.projectRoute(tx, vendorId, routeId, serviceDate);
   }
 }

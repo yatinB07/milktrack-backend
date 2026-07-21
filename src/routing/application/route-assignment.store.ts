@@ -53,4 +53,10 @@ export abstract class RouteAssignmentStore {
     vendorId: string,
     serviceDate: string,
   ): Promise<readonly RouteScheduleProjection[]>;
+  abstract projectRoute(
+    tx: TransactionContext,
+    vendorId: string,
+    routeId: string,
+    serviceDate: string,
+  ): Promise<RouteScheduleProjection | undefined>;
 }
