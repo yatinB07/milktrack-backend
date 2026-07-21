@@ -162,6 +162,19 @@ COMPOSE_PROJECT_NAME=milktrack-retained-contract bash test/retained-volume-contr
 COMPOSE_PROJECT_NAME=milktrack-retained-contract docker compose --env-file .env down -v --remove-orphans
 ```
 
+Phase 2 backend release gates:
+
+```bash
+npm run test:migration-drift
+npm run test:openapi-compatibility
+P2_VOLUME_GATE=1 npm run test:schedule-volume
+```
+
+Migration drift and supported-client compatibility run in normal CI. The
+200,000-subscription schedule-volume gate is an explicit release check: it
+creates a unique disposable Compose project, refuses default/development project
+markers, and removes only its own volume.
+
 `test/security-release.sh` creates an isolated temporary database volume,
 validates the migration path and retained records, and runs the release-blocking
 RLS, cross-tenant, privilege, session, authentication, and audit checks. It

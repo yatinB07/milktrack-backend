@@ -41,6 +41,9 @@ jobs:
       - name: Validate Prisma schema
         run: npm run db:validate
 
+      - name: Check migration drift
+        run: npm run test:migration-drift
+
       - name: Start empty PostgreSQL
         run: docker compose --env-file .env.example up -d --wait --wait-timeout 120 postgres
 
@@ -55,6 +58,9 @@ jobs:
 
       - name: Check OpenAPI drift
         run: docker compose --env-file .env.example run --rm backend npm run openapi:check
+
+      - name: Check supported-client compatibility
+        run: npm run test:openapi-compatibility
 
       - name: Validate Compose contract
         run: bash test/compose-contract.sh

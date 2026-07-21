@@ -9,6 +9,7 @@ const readme = await readFile('README.md', 'utf8');
 const packageJson = JSON.parse(await readFile('package.json', 'utf8')) as {
   dependencies: Record<string, string>;
   devDependencies: Record<string, string>;
+  scripts: Record<string, string>;
 };
 
 void test('CI runs Phase 1 release gates in order without a host database URL', () => {
@@ -16,11 +17,13 @@ void test('CI runs Phase 1 release gates in order without a host database URL', 
     'Install dependencies',
     'Verify application',
     'Validate Prisma schema',
+    'Check migration drift',
     'Start empty PostgreSQL',
     'Deploy migrations',
     'Run integration tests',
     'Run security release gate',
     'Check OpenAPI drift',
+    'Check supported-client compatibility',
     'Validate Compose contract',
     'Build production image',
     'Audit production dependencies',
@@ -39,6 +42,27 @@ void test('CI runs Phase 1 release gates in order without a host database URL', 
   assert.match(workflow, /timeout-minutes: 25/);
   assert.match(workflow, /if: always\(\)/);
   assert.match(workflow, /docker compose[^\n]* down -v --remove-orphans/);
+});
+
+void test('CI enforces migration and supported-client compatibility without the manual volume gate', () => {
+  assert.equal(
+    packageJson.scripts['test:migration-drift'],
+    'sh test/migration-drift-contract.sh',
+  );
+  assert.equal(
+    packageJson.scripts['test:openapi-compatibility'],
+    'sh test/openapi-supported-client-compatibility.sh',
+  );
+  assert.equal(
+    packageJson.scripts['test:schedule-volume'],
+    'sh test/schedule-generation-volume.sh',
+  );
+  assert.match(workflow, /name: Check migration drift\s+run: npm run test:migration-drift/);
+  assert.match(
+    workflow,
+    /name: Check supported-client compatibility\s+run: npm run test:openapi-compatibility/,
+  );
+  assert.doesNotMatch(workflow, /test:schedule-volume|schedule-generation-volume/);
 });
 
 void test('tagged CI publishes the versioned OpenAPI artifact after verification', () => {

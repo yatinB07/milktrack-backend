@@ -21,6 +21,9 @@
     "start:worker:dev": "node --import tsx src/worker.ts",
     "test": "node --import tsx --test test/health.e2e.test.ts test/validation.e2e.test.ts $(find test -name '*.test.ts' ! -name '*.integration.test.ts' ! -name '*.e2e.test.ts' -print)",
     "test:integration": "node --import tsx --test $(find test -type f \\( -name '*.integration.test.ts' -o -name '*.e2e.test.ts' \\) ! -name 'security-release.integration.test.ts' -print)",
+    "test:migration-drift": "sh test/migration-drift-contract.sh",
+    "test:openapi-compatibility": "sh test/openapi-supported-client-compatibility.sh",
+    "test:schedule-volume": "sh test/schedule-generation-volume.sh",
     "test:security": "node -e \"for (const name of ['SECURITY_SENTINEL_USER_ID','SECURITY_SENTINEL_VENDOR_ID','SECURITY_SENTINEL_MEMBERSHIP_ID','SECURITY_SENTINEL_AUDIT_ID','SECURITY_SENTINEL_SESSION_ID']) if (!process.env[name]) throw new Error('Missing required security sentinel environment variable: ' + name)\" && node --import tsx --test --test-concurrency=1 test/security-release.integration.test.ts test/security-schema.integration.test.ts test/tenant-transaction.integration.test.ts test/authorization-policy.integration.test.ts test/authentication.integration.test.ts",
     "typecheck": "tsc --noEmit",
     "verify": "npm run lint && npm run typecheck && npm test && npm run build"
