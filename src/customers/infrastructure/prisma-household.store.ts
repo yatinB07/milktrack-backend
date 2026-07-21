@@ -170,16 +170,19 @@ export class PrismaHouseholdStore {
     });
     return rows.map(toRouteHouseholdSummary);
   }
-  async requireRouteHouseholds(context: TransactionContext, householdIds: readonly string[]) {
+  async requireRouteHouseholdSummaries(context: TransactionContext, householdIds: readonly string[]) {
     const ids = [...new Set(householdIds)].sort();
-    if (ids.length === 0) return { householdIds: ids };
-    const rows = await unwrapPrismaTransaction(context).$queryRaw<Array<{ id: string; status: string; deletedAt: Date | null }>>(
-      Prisma.sql`SELECT id,status,deleted_at AS "deletedAt" FROM households WHERE id IN (${Prisma.join(ids.map((id) => Prisma.sql`${id}::uuid`))}) ORDER BY id FOR UPDATE`,
+    if (ids.length === 0) return [];
+    const rows = await unwrapPrismaTransaction(context).$queryRaw<Array<Prisma.HouseholdGetPayload<{ select: typeof routeHouseholdSummarySelect }> & { deletedAt: Date | null }>>(
+      Prisma.sql`SELECT id,account_number AS "accountNumber",name,address_line_1 AS "addressLine1",
+        address_line_2 AS "addressLine2",locality,city,region,postal_code AS "postalCode",
+        country_code AS "countryCode",latitude,longitude,status,deleted_at AS "deletedAt"
+        FROM households WHERE id IN (${Prisma.join(ids.map((id) => Prisma.sql`${id}::uuid`))}) ORDER BY id FOR UPDATE`,
     );
     if (rows.length !== ids.length) throw error("ROUTE_HOUSEHOLD_NOT_FOUND", "Route household was not found", 404);
     if (rows.some(({ status, deletedAt }) => status !== "active" || deletedAt !== null))
       throw error("ROUTE_HOUSEHOLD_NOT_AVAILABLE", "Route household is not available", 409);
-    return { householdIds: ids };
+    return rows.map(toRouteHouseholdSummary);
   }
   async requireSubscriptionHousehold(context: TransactionContext, householdId: string) {
     const row = await unwrapPrismaTransaction(context).household.findFirst({

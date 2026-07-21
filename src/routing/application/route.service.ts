@@ -132,11 +132,13 @@ export class DefaultRouteService extends RouteService {
       const route = await this.routes.lockRoot(tx, routeId, command.expectedVersion);
       if (route.status !== 'active') throw new ApplicationError('ROUTE_STATE_CONFLICT', 'Route state does not allow stop replacement', 409);
       await this.catalog.requireRouteDeliverySlot(tx, route.deliverySlotId);
-      if(normalized.householdIds.length>0) await this.households.requireRouteHouseholds(tx,[...normalized.householdIds].sort());
+      const households = normalized.householdIds.length > 0
+        ? await this.households.requireRouteHouseholdSummaries(tx, [...normalized.householdIds].sort())
+        : [];
       const {projection,previous}=await this.stopPlans.replace(tx, { route, ...normalized, createdBy: actor.userId });
       await this.auditStops(tx,actor,vendorId,route,normalized.effectiveDate,normalized.householdIds,normalized.reason,previous,projection);
       await this.regenerate(tx, vendorId, today, dates, actor.userId);
-      return this.enrichStops(tx, projection);
+      return this.attachStopHouseholds(projection, households);
     });
   }
   listAssignments(actor: Actor, vendorId: string, routeId: string, query: RouteAssignmentPageQuery) {
@@ -253,6 +255,9 @@ export class DefaultRouteService extends RouteService {
   private async enrichStops(tx: TransactionContext, projection: RouteStopProjection): Promise<RouteStopResult> {
     const householdIds = [...new Set(projection.stops.map(({ householdId }) => householdId))].sort();
     const households = await this.households.getRouteHouseholdSummaries(tx, householdIds);
+    return this.attachStopHouseholds(projection, households);
+  }
+  private attachStopHouseholds(projection: RouteStopProjection, households: readonly RouteHouseholdSummary[]): RouteStopResult {
     const byId = new Map(households.map((household) => [household.id, household]));
     const stops = projection.stops.map((stop) => {
       const household = byId.get(stop.householdId);

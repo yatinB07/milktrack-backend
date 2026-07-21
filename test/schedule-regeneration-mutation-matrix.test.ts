@@ -110,7 +110,7 @@ for (const operation of ['deactivate', 'reactivate', 'softDelete', 'restore', 'r
     const service = new DefaultRouteService(
       authorization as never, routes as never, stopPlans as never, assignments as never,
       { requireRouteDeliverySlot: () => Promise.resolve({}) } as never,
-      { requireRouteHouseholds: () => Promise.resolve(), getRouteHouseholdSummaries: () => Promise.resolve([]) } as never,
+      { requireRouteHouseholdSummaries: () => Promise.resolve([]) } as never,
       { requireRouteAgent: () => Promise.resolve({}) } as never,
       vendors as never, audits, scheduleDates, writer,
     );
