@@ -24,6 +24,8 @@ type PersistedSession = Readonly<{
 
 type AuthenticationMethod = 'phone_otp' | 'administrator_mfa';
 
+class PhoneEligibilityLostError extends Error {}
+
 const NIL_USER_ID = '00000000-0000-0000-0000-000000000000';
 
 type AuditInput = Readonly<{
@@ -154,108 +156,115 @@ export class PrismaIdentityStore {
     authenticationMethod: 'phone_otp';
     correlationId: string;
   }>): Promise<'success' | 'failed'> {
-    return this.prisma.$transaction(async (tx) => {
-      const locked = await tx.$queryRaw<{ id: string }[]>`
-        SELECT id FROM otp_challenges WHERE token_hash = ${input.tokenHash} FOR UPDATE`;
-      if (!locked[0]) return 'failed';
-      const challenge = await tx.otpChallenge.findUnique({
-        where: { id: locked[0].id },
-        select: {
-          id: true,
-          identityId: true,
-          codeHash: true,
-          expiresAt: true,
-          attemptCount: true,
-          consumedAt: true,
-          identity: { select: { id: true, userId: true, verifiedAt: true } },
-        },
-      });
-      if (
-        !challenge ||
-        challenge.consumedAt ||
-        challenge.expiresAt <= input.now ||
-        challenge.attemptCount >= OtpCodes.policy.maximumAttempts
-      ) {
-        return 'failed';
-      }
-      if (!input.verifyCode(challenge.codeHash)) {
-        const attempts = challenge.attemptCount + 1;
+    try {
+      return await this.prisma.$transaction(async (tx) => {
+        const locked = await tx.$queryRaw<{ id: string }[]>`
+          SELECT id FROM otp_challenges WHERE token_hash = ${input.tokenHash} FOR UPDATE`;
+        if (!locked[0]) return 'failed';
+        const challenge = await tx.otpChallenge.findUnique({
+          where: { id: locked[0].id },
+          select: {
+            id: true,
+            identityId: true,
+            codeHash: true,
+            expiresAt: true,
+            attemptCount: true,
+            consumedAt: true,
+            identity: { select: { id: true, userId: true, verifiedAt: true } },
+          },
+        });
+        if (
+          !challenge ||
+          challenge.consumedAt ||
+          challenge.expiresAt <= input.now ||
+          challenge.attemptCount >= OtpCodes.policy.maximumAttempts
+        ) {
+          return 'failed';
+        }
+        if (!input.verifyCode(challenge.codeHash)) {
+          const attempts = challenge.attemptCount + 1;
+          await tx.otpChallenge.update({
+            where: { id: challenge.id },
+            data: { attemptCount: attempts },
+          });
+          if (attempts === OtpCodes.policy.maximumAttempts && challenge.identity) {
+            await this.audit(tx, {
+              userId: challenge.identity.userId,
+              action: 'auth.otp_locked',
+              entityId: challenge.id,
+              correlationId: input.correlationId,
+              deviceId: input.session.deviceId,
+            });
+          }
+          return 'failed';
+        }
+        if (!challenge.identity) {
+          await tx.otpChallenge.update({
+            where: { id: challenge.id },
+            data: { consumedAt: input.now },
+          });
+          return 'failed';
+        }
+        await this.sessionUserLock(tx, challenge.identity.userId);
+        if (!(await this.isEligiblePhoneUser(
+          tx,
+          challenge.identity.userId,
+          challenge.identity.verifiedAt ? ['active'] : ['invited'],
+        ))) {
+          await tx.otpChallenge.update({
+            where: { id: challenge.id },
+            data: { consumedAt: input.now },
+          });
+          return 'failed';
+        }
         await tx.otpChallenge.update({
           where: { id: challenge.id },
-          data: { attemptCount: attempts },
+          data: { consumedAt: input.now },
         });
-        if (attempts === OtpCodes.policy.maximumAttempts && challenge.identity) {
+        if (!challenge.identity.verifiedAt) {
+          await tx.userIdentity.update({
+            where: { id: challenge.identity.id },
+            data: { verifiedAt: input.now },
+          });
           await this.audit(tx, {
             userId: challenge.identity.userId,
-            action: 'auth.otp_locked',
-            entityId: challenge.id,
+            action: 'auth.phone_identity_verified',
+            entityId: challenge.identity.id,
             correlationId: input.correlationId,
+            ipHash: input.session.ipHash,
             deviceId: input.session.deviceId,
           });
         }
-        return 'failed';
-      }
-      if (!challenge.identity) {
-        await tx.otpChallenge.update({
-          where: { id: challenge.id },
-          data: { consumedAt: input.now },
-        });
-        return 'failed';
-      }
-      await this.sessionUserLock(tx, challenge.identity.userId);
-      if (!(await this.isEligiblePhoneUser(
-        tx,
-        challenge.identity.userId,
-        challenge.identity.verifiedAt ? ['active'] : ['invited'],
-      ))) {
-        await tx.otpChallenge.update({
-          where: { id: challenge.id },
-          data: { consumedAt: input.now },
-        });
-        return 'failed';
-      }
-      await tx.otpChallenge.update({
-        where: { id: challenge.id },
-        data: { consumedAt: input.now },
-      });
-      if (!challenge.identity.verifiedAt) {
-        await tx.userIdentity.update({
-          where: { id: challenge.identity.id },
-          data: { verifiedAt: input.now },
-        });
-        await this.audit(tx, {
+        await this.authority.activateInvitedPhoneMemberships(wrapPrismaTransaction(tx), {
           userId: challenge.identity.userId,
-          action: 'auth.phone_identity_verified',
-          entityId: challenge.identity.id,
+          at: input.now,
           correlationId: input.correlationId,
           ipHash: input.session.ipHash,
           deviceId: input.session.deviceId,
         });
-      }
-      await this.authority.activateInvitedPhoneMemberships(wrapPrismaTransaction(tx), {
-        userId: challenge.identity.userId,
-        at: input.now,
-        correlationId: input.correlationId,
-        ipHash: input.session.ipHash,
-        deviceId: input.session.deviceId,
+        if (!(await this.isEligiblePhoneUser(tx, challenge.identity.userId))) {
+          throw new PhoneEligibilityLostError();
+        }
+        await this.createSession(
+          tx,
+          challenge.identity.userId,
+          input.session,
+          input.authenticationMethod,
+        );
+        await this.audit(tx, {
+          userId: challenge.identity.userId,
+          action: 'auth.session_created',
+          entityId: input.session.id,
+          correlationId: input.correlationId,
+          ipHash: input.session.ipHash,
+          deviceId: input.session.deviceId,
+        });
+        return 'success';
       });
-      if (!(await this.isEligiblePhoneUser(tx, challenge.identity.userId))) return 'failed';
-      await this.createSession(
-        tx,
-        challenge.identity.userId,
-        input.session,
-        input.authenticationMethod,
-      );
-      await this.audit(tx, {
-        userId: challenge.identity.userId,
-        action: 'auth.session_created',
-        entityId: input.session.id,
-        correlationId: input.correlationId,
-        ipHash: input.session.ipHash,
-        deviceId: input.session.deviceId,
-      });
-      return 'success';
-    });
+    } catch (error) {
+      if (error instanceof PhoneEligibilityLostError) return 'failed';
+      throw error;
+    }
   }
 
   async startAdministratorSignIn(input: Readonly<{

@@ -8797,6 +8797,16 @@
               }
             },
             "description": ""
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": "Security audit unavailable (SECURITY_AUDIT_UNAVAILABLE)"
           }
         },
         "security": [

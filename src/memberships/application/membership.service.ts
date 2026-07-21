@@ -251,6 +251,13 @@ export class PrismaMembershipService extends MembershipService {
     return this.authorization.execute(
       { actor, vendorId, permission: 'membership:manage', operation: 'membership.create' },
       async (tx) => {
+        if (command.role === 'customer' || command.role === 'delivery_agent') {
+          throw new ApplicationError(
+            'MEMBERSHIP_ONBOARDING_REQUIRED',
+            'Customer and delivery agent memberships must use the onboarding endpoint',
+            409,
+          );
+        }
         if (command.role === 'vendor_owner') {
           await this.memberships.lockVendor(tx);
           await this.requireOwner(tx, actor);

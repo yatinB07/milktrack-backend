@@ -750,6 +750,7 @@ void test("vendor household discovery composes validated search, status, tenant,
   const activeIds = Array.from({ length: 5 }, () => randomUUID());
   const inactiveIds = Array.from({ length: 3 }, () => randomUUID()).sort().reverse();
   const nonSearchableId = randomUUID();
+  const literalWildcardId = randomUUID();
   const deletedId = randomUUID();
   const otherVendorHouseholdId = randomUUID();
 
@@ -769,6 +770,12 @@ void test("vendor household discovery composes validated search, status, tenant,
        (id,vendor_id,account_number,name,address_line_1,address_line_2,locality,city,region,postal_code,country_code,status,notes,created_at,updated_at)
      VALUES ($1,$2,'ACCOUNT-6','Ordinary','Road','Hidden-Marker','Hidden-Marker','City','Hidden-Marker','10006','IN','active','Hidden-Marker',$3,$3)`,
     [nonSearchableId, vendorId, createdAt],
+  );
+  await ownerPool.query(
+    `INSERT INTO households
+       (id,vendor_id,account_number,name,address_line_1,city,region,postal_code,country_code,status,created_at,updated_at)
+     VALUES ($1,$2,'LITERAL-%_\\-SEARCH','Literal wildcard','Road','City','Region','10007','IN','active',$3,$3)`,
+    [literalWildcardId, vendorId, createdAt],
   );
   await ownerPool.query(
     `INSERT INTO households
@@ -809,10 +816,20 @@ void test("vendor household discovery composes validated search, status, tenant,
   ).json()) as { items: { id: string }[] };
   assert.deepEqual(restrictedSearch.items, []);
 
+  for (const term of ['%', '_', '\\']) {
+    const response = await api(
+      `/v1/vendors/${vendorId}/households?search=${encodeURIComponent(term)}`,
+      token,
+    );
+    assert.equal(response.status, 200);
+    const page = (await response.json()) as { items: { id: string }[] };
+    assert.deepEqual(page.items.map(({ id }) => id), [literalWildcardId]);
+  }
+
   const defaultPage = (await (
     await api(`/v1/vendors/${vendorId}/households`, token)
   ).json()) as { items: { id: string; status: string }[] };
-  assert.equal(defaultPage.items.length, activeIds.length + 1);
+  assert.equal(defaultPage.items.length, activeIds.length + 2);
   assert.ok(defaultPage.items.every(({ status }) => status === "active"));
 
   const firstResponse = await api(

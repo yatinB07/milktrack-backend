@@ -181,15 +181,16 @@ export class PrismaHouseholdStore {
     const tx = unwrapPrismaTransaction(context);
     const limit = this.cursors.parseLimit(query.limit);
     const cursor = query.cursor ? this.cursors.decode(query.cursor) : undefined;
+    const search = query.search?.replace(/[\\%_]/g, "\\$&");
     const filters: Prisma.HouseholdWhereInput[] = [];
-    if (query.search)
+    if (search)
       filters.push({
         OR: [
-          { accountNumber: { contains: query.search, mode: "insensitive" } },
-          { name: { contains: query.search, mode: "insensitive" } },
-          { addressLine1: { contains: query.search, mode: "insensitive" } },
-          { city: { contains: query.search, mode: "insensitive" } },
-          { postalCode: { contains: query.search, mode: "insensitive" } },
+          { accountNumber: { contains: search, mode: "insensitive" } },
+          { name: { contains: search, mode: "insensitive" } },
+          { addressLine1: { contains: search, mode: "insensitive" } },
+          { city: { contains: search, mode: "insensitive" } },
+          { postalCode: { contains: search, mode: "insensitive" } },
         ],
       });
     if (cursor)

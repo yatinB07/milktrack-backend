@@ -176,6 +176,13 @@ void test('publishes the vendor-scoped member onboarding and enriched directory 
     'onboarding operation',
   );
   assert.deepEqual(operation.security, [{ opaqueBearer: [] }]);
+  const responses = object(operation.responses, 'onboarding responses');
+  const unavailable = object(responses['503'], 'onboarding audit-unavailable response');
+  assert.match(String(unavailable.description), /SECURITY_AUDIT_UNAVAILABLE/u);
+  assert.deepEqual(
+    responseSchema(unavailable, 'onboarding audit-unavailable response'),
+    { $ref: '#/components/schemas/ApiErrorResponseDto' },
+  );
 
   const schemas = object(
     object(object(document.components, 'components').schemas, 'schemas'),

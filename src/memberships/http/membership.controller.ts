@@ -144,6 +144,11 @@ export class MembershipController {
 
   @Post('onboard')
   @ApiCreatedResponse({ type: MembershipDirectoryResponseDto })
+  @ApiResponse({
+    status: 503,
+    type: ApiErrorResponseDto,
+    description: 'Security audit unavailable (SECURITY_AUDIT_UNAVAILABLE)',
+  })
   async onboard(
     @Param('vendorId', uuidPipe) vendorId: string,
     @Body() request: OnboardMembershipRequestDto,

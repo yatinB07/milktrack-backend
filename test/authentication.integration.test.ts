@@ -508,6 +508,72 @@ void test('an invite-acceptance audit failure rolls back identity, membership, c
   }
 });
 
+void test('concurrent invitation ending rolls back phone verification and challenge consumption', async () => {
+  const fixture = await insertPhoneFixture('+919876500043');
+  await ownerPool.query('UPDATE user_identities SET verified_at = NULL WHERE id = $1', [fixture.identityId]);
+  await ownerPool.query(
+    "UPDATE vendor_memberships SET status = 'invited', joined_at = NULL WHERE id = $1",
+    [fixture.membershipId],
+  );
+  const { prisma, delivery, service } = createService();
+  const blocker = await ownerPool.connect();
+  try {
+    const challenge = await service.requestPhoneOtp({ phone: fixture.phone, purpose: 'sign_in' });
+    const code = delivery.takeLastCodeForTest(fixture.phone);
+    assert.ok(code);
+    await blocker.query('BEGIN');
+    await blocker.query('SELECT id FROM vendor_memberships WHERE id = $1 FOR UPDATE', [fixture.membershipId]);
+
+    const verification = service.verifyPhoneOtp({
+      challengeToken: challenge.challengeToken,
+      code,
+      deviceId: 'concurrent-invitation-end',
+    });
+    const rejected = assert.rejects(verification, expectAuthenticationFailure);
+    await waitForLockWaiters(1);
+    await blocker.query(
+      "UPDATE vendor_memberships SET status = 'ended', ended_at = now(), updated_at = now() WHERE id = $1",
+      [fixture.membershipId],
+    );
+    await blocker.query('COMMIT');
+    await rejected;
+
+    const state = await ownerPool.query<{
+      verified_at: Date | null;
+      status: string;
+      consumed_at: Date | null;
+      sessions: string;
+      verification_audits: string;
+      invitation_audits: string;
+    }>(
+      `SELECT ui.verified_at, vm.status::text, oc.consumed_at,
+              (SELECT count(*)::text FROM sessions WHERE user_id = $1) AS sessions,
+              (SELECT count(*)::text FROM audit_events
+               WHERE actor_user_id = $1 AND action = 'auth.phone_identity_verified') AS verification_audits,
+              (SELECT count(*)::text FROM audit_events
+               WHERE entity_id = vm.id AND action = 'membership.invitation_accepted') AS invitation_audits
+       FROM user_identities ui
+       JOIN vendor_memberships vm ON vm.user_id = ui.user_id
+       JOIN otp_challenges oc ON oc.identity_id = ui.id
+       WHERE ui.id = $2 AND vm.id = $3 AND oc.token_hash = $4`,
+      [fixture.userId, fixture.identityId, fixture.membershipId, tokenHash(challenge.challengeToken)],
+    );
+    assert.deepEqual(state.rows[0], {
+      verified_at: null,
+      status: 'ended',
+      consumed_at: null,
+      sessions: '0',
+      verification_audits: '0',
+      invitation_audits: '0',
+    });
+  } finally {
+    await blocker.query('ROLLBACK');
+    blocker.release();
+    await prisma.$disconnect();
+    await cleanupFixture(fixture);
+  }
+});
+
 void test('authentication audits exist and audit failure rolls back challenge and session state', async () => {
   const fixture = await insertPhoneFixture('+919876500023');
   const { prisma, delivery, service } = createService();

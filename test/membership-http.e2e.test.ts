@@ -421,6 +421,48 @@ void describe('membership and user lifecycle HTTP API', () => {
     }
   });
 
+  void it('requires customer and delivery-agent creation to use onboarding', async () => {
+    const seed: Seed = { vendorIds: [], userIds: [] };
+    const ownerId = await insertUser(seed, 'Vendor Owner');
+    const vendorId = await insertVendor(seed);
+    await insertMembership({ vendorId, userId: ownerId, role: 'vendor_owner' });
+    const token = await issueSession(ownerId);
+
+    try {
+      for (const role of ['customer', 'delivery_agent'] as const) {
+        const targetId = await insertUser(seed, `Legacy ${role}`);
+        const response = await request(baseUrl, token, `/v1/vendors/${vendorId}/memberships`, {
+          method: 'POST',
+          body: JSON.stringify({ userId: targetId, role }),
+        });
+        const body = (await response.json()) as {
+          code?: string;
+          message?: string;
+          retryable?: boolean;
+          correlationId?: string;
+        };
+        assert.equal(response.status, 409, JSON.stringify(body));
+        assert.deepEqual(body, {
+          code: 'MEMBERSHIP_ONBOARDING_REQUIRED',
+          message: 'Customer and delivery agent memberships must use the onboarding endpoint',
+          retryable: false,
+          correlationId: body.correlationId,
+        });
+        assert.equal(
+          (
+            await ownerPool.query(
+              'SELECT id FROM vendor_memberships WHERE vendor_id = $1 AND user_id = $2',
+              [vendorId, targetId],
+            )
+          ).rowCount,
+          0,
+        );
+      }
+    } finally {
+      await cleanup(seed);
+    }
+  });
+
   void it('creates, changes, ends, deletes, and restores memberships with owner and audit rules', async () => {
     const seed: Seed = { vendorIds: [], userIds: [] };
     const ownerId = await insertUser(seed, 'Vendor Owner');
@@ -471,7 +513,7 @@ void describe('membership and user lifecycle HTTP API', () => {
         `/v1/vendors/${vendorId}/memberships`,
         {
           method: 'POST',
-          body: JSON.stringify({ userId: targetId, role: 'customer' }),
+          body: JSON.stringify({ userId: targetId, role: 'vendor_administrator' }),
         },
       );
       assert.equal(created.status, 201);
@@ -489,7 +531,7 @@ void describe('membership and user lifecycle HTTP API', () => {
         `/v1/vendors/${vendorId}/memberships`,
         {
           method: 'POST',
-          body: JSON.stringify({ userId: targetId, role: 'customer' }),
+          body: JSON.stringify({ userId: targetId, role: 'vendor_administrator' }),
         },
       );
       assert.equal(duplicate.status, 409);
@@ -501,11 +543,11 @@ void describe('membership and user lifecycle HTTP API', () => {
         `/v1/vendors/${vendorId}/memberships/${createdBody.id}`,
         {
           method: 'PATCH',
-          body: JSON.stringify({ role: 'delivery_agent' }),
+          body: JSON.stringify({ role: 'vendor_owner' }),
         },
       );
       assert.equal(updated.status, 200);
-      assert.equal(((await updated.json()) as { role: string }).role, 'delivery_agent');
+      assert.equal(((await updated.json()) as { role: string }).role, 'vendor_owner');
 
       const ended = await request(
         baseUrl,
@@ -522,7 +564,7 @@ void describe('membership and user lifecycle HTTP API', () => {
         `/v1/vendors/${vendorId}/memberships`,
         {
           method: 'POST',
-          body: JSON.stringify({ userId: targetId, role: 'customer' }),
+          body: JSON.stringify({ userId: targetId, role: 'vendor_administrator' }),
         },
       );
       assert.equal(restoredCandidate.status, 201);
@@ -540,7 +582,7 @@ void describe('membership and user lifecycle HTTP API', () => {
         baseUrl,
         ownerToken,
         `/v1/vendors/${vendorId}/memberships/${restoredCandidateId}`,
-        { method: 'DELETE', body: JSON.stringify({ reason: 'Duplicate customer record' }) },
+        { method: 'DELETE', body: JSON.stringify({ reason: 'Duplicate administrator record' }) },
       );
       assert.equal(deleted.status, 204);
       const deletion = await ownerPool.query<{
@@ -554,7 +596,7 @@ void describe('membership and user lifecycle HTTP API', () => {
       );
       assert.ok(deletion.rows[0]?.deleted_at);
       assert.equal(deletion.rows[0]?.deleted_by, ownerId);
-      assert.equal(deletion.rows[0]?.deletion_reason, 'Duplicate customer record');
+      assert.equal(deletion.rows[0]?.deletion_reason, 'Duplicate administrator record');
 
       const restored = await request(
         baseUrl,
