@@ -83,5 +83,5 @@ void test('route services derive lifecycle without returning persistence deletio
   const service = new DefaultRouteService(authorization as never, { list: () => Promise.resolve({ items: [persisted] }) } as never, {} as never, {} as never, {} as never, {} as never, {} as never, {} as never, audits, scheduleDates, regeneration);
   const page = await requestContextStore.run({ correlationId: '00000000-0000-4000-8000-000000000003' }, () => service.list(actor, 'vendor', { lifecycle: 'deleted' }));
   assert.equal(page.items[0]?.lifecycle, 'deleted');
-  assert.equal('deletedAt' in page.items[0]!, false);
+  assert.equal('deletedAt' in (page.items[0] ?? {}), false);
 });
