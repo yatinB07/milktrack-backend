@@ -1,5 +1,5 @@
 import { Body, Controller, Delete, Get, HttpCode, Inject, Param, ParseUUIDPipe, Post, Query, UseGuards } from '@nestjs/common';
-import { ApiBearerAuth, ApiResponse, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 
 import { requestContextStore } from '../../common/context/request-context.js';
 import { ApiErrorResponseDto } from '../../common/errors/application-error.filter.js';
@@ -20,14 +20,14 @@ const errors = [400, 401, 403, 404, 409, 503];
 @Controller('vendors/:vendorId/subscriptions')
 export class VendorSubscriptionController {
   constructor(@Inject(SubscriptionService) private readonly subscriptions: SubscriptionService) {}
-  @Get() @ApiResponse({ status: 200, type: SubscriptionListResponseDto }) async list(@Param('vendorId', ParseUUIDPipe) vendorId: string, @Query() query: SubscriptionPageQueryDto) {
+  @Get() @ApiOperation({ summary: 'List subscriptions in the selected lifecycle' }) @ApiResponse({ status: 200, type: SubscriptionListResponseDto }) async list(@Param('vendorId', ParseUUIDPipe) vendorId: string, @Query() query: SubscriptionPageQueryDto) {
     const page = await this.subscriptions.list(requestContextStore.requireActor(), vendorId, { ...query, lifecycle: query.lifecycle ?? 'current' });
     return { items: page.items.map(toSubscriptionResponse), ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}) };
   }
   @Post() @ApiResponse({ status: 201, type: SubscriptionResponseDto }) async create(@Param('vendorId', ParseUUIDPipe) vendorId: string, @Body() body: CreateSubscriptionRequestDto) {
     return toSubscriptionResponse(await this.subscriptions.create(requestContextStore.requireActor(), vendorId, body));
   }
-  @Get(':subscriptionId') @ApiResponse({ status: 200, type: SubscriptionResponseDto }) async get(@Param('vendorId', ParseUUIDPipe) vendorId: string, @Param('subscriptionId', ParseUUIDPipe) subscriptionId: string, @Query() query: LifecycleQueryDto) {
+  @Get(':subscriptionId') @ApiOperation({ summary: 'Read a subscription in the selected lifecycle' }) @ApiResponse({ status: 200, type: SubscriptionResponseDto }) async get(@Param('vendorId', ParseUUIDPipe) vendorId: string, @Param('subscriptionId', ParseUUIDPipe) subscriptionId: string, @Query() query: LifecycleQueryDto) {
     return toSubscriptionResponse(await this.subscriptions.get(requestContextStore.requireActor(), vendorId, subscriptionId, query.lifecycle ?? 'current'));
   }
   @Get(':subscriptionId/revisions') @ApiResponse({ status: 200, type: SubscriptionHistoryResponseDto }) async history(@Param('vendorId', ParseUUIDPipe) vendorId: string, @Param('subscriptionId', ParseUUIDPipe) subscriptionId: string, @Query() query: SubscriptionHistoryQueryDto) {

@@ -10,7 +10,7 @@ const code = /^[A-Za-z0-9_-]{2,32}$/;
 export class RoutePageQueryDto extends LifecycleQueryDto {
   @IsOptional() @IsString() cursor?: string;
   @ApiPropertyOptional({ default: 25, minimum: 1, maximum: 100 }) @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(100) limit?: number;
-  @ApiPropertyOptional({ enum: ['active', 'inactive'], default: 'active' }) @IsOptional() @IsIn(['active', 'inactive']) status?: 'active' | 'inactive';
+  @ApiPropertyOptional({ enum: ['active', 'inactive'] }) @IsOptional() @IsIn(['active', 'inactive']) status?: 'active' | 'inactive';
   @ApiPropertyOptional({ type: String, format: 'uuid' }) @IsOptional() @IsUUID() deliverySlotId?: string;
   @IsOptional() @IsString() @Length(1, 100) search?: string;
 }

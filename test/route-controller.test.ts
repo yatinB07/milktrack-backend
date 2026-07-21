@@ -4,6 +4,7 @@ import test from 'node:test';
 import type { Actor } from '../src/common/context/request-context.js';
 import { requestContextStore } from '../src/common/context/request-context.js';
 import { RouteController } from '../src/routing/http/route.controller.js';
+import { RoutePageQueryDto } from '../src/routing/http/route.dto.js';
 
 const actor: Actor = { userId: '00000000-0000-4000-8000-000000000001', sessionId: '00000000-0000-4000-8000-000000000002', displayName: 'Owner', authenticationMethod: 'administrator_mfa', platformRoles: [], memberships: [] };
 
@@ -34,4 +35,16 @@ void test('route controller normalizes root lifecycle reads without exposing del
     assert.equal('deletionReason' in detail, false);
   });
   assert.deepEqual(calls.map((args) => args.at(-1)), [{ lifecycle: 'current' }, 'deleted']);
+});
+
+void test('route list status schema does not promise one lifecycle default', () => {
+  const status = Reflect.getMetadata('swagger/apiModelProperties', RoutePageQueryDto.prototype, 'status') as { default?: unknown };
+  assert.equal(status.default, undefined);
+});
+
+void test('route root lifecycle operations publish summaries', () => {
+  assert.deepEqual(
+    ['list', 'get'].map((key) => (Reflect.getMetadata('swagger/apiOperation', RouteController.prototype[key as 'list' | 'get']) as { summary?: string } | undefined)?.summary),
+    ['List routes in the selected lifecycle', 'Read a route in the selected lifecycle'],
+  );
 });

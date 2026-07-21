@@ -1,5 +1,5 @@
 import { Body, Controller, Delete, Get, HttpCode, Inject, Param, ParseUUIDPipe, Patch, Post, Put, Query, Res, UseGuards } from '@nestjs/common';
-import { ApiBearerAuth, ApiResponse, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { requestContextStore } from '../../common/context/request-context.js';
 import { ApiErrorResponseDto } from '../../common/errors/application-error.filter.js';
 import { ActorGuard } from '../../identity/http/actor.guard.js';
@@ -29,9 +29,9 @@ import { LifecycleQueryDto } from '../../common/http/record-lifecycle.dto.js';
 @Controller('vendors/:vendorId/routes')
 export class RouteController {
   constructor(@Inject(RouteService) private readonly routes: RouteService) {}
-  @Get() @ApiResponse({ status: 200, type: RouteListResponseDto }) async list(@Param('vendorId', ParseUUIDPipe) vendorId: string, @Query() query: RoutePageQueryDto) { const page = await this.routes.list(requestContextStore.requireActor(), vendorId, { ...query, lifecycle: query.lifecycle ?? 'current' }); return { items: page.items.map(toRouteResponse), ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}) }; }
+  @Get() @ApiOperation({ summary: 'List routes in the selected lifecycle' }) @ApiResponse({ status: 200, type: RouteListResponseDto }) async list(@Param('vendorId', ParseUUIDPipe) vendorId: string, @Query() query: RoutePageQueryDto) { const page = await this.routes.list(requestContextStore.requireActor(), vendorId, { ...query, lifecycle: query.lifecycle ?? 'current' }); return { items: page.items.map(toRouteResponse), ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}) }; }
   @Post() @ApiResponse({ status: 201, type: RouteResponseDto }) async create(@Param('vendorId', ParseUUIDPipe) vendorId: string, @Body() body: CreateRouteRequestDto) { return toRouteResponse(await this.routes.create(requestContextStore.requireActor(), vendorId, body)); }
-  @Get(':routeId') @ApiResponse({ status: 200, type: RouteResponseDto }) async get(@Param('vendorId', ParseUUIDPipe) vendorId: string, @Param('routeId', ParseUUIDPipe) routeId: string, @Query() query: LifecycleQueryDto) { return toRouteResponse(await this.routes.get(requestContextStore.requireActor(), vendorId, routeId, query.lifecycle ?? 'current')); }
+  @Get(':routeId') @ApiOperation({ summary: 'Read a route in the selected lifecycle' }) @ApiResponse({ status: 200, type: RouteResponseDto }) async get(@Param('vendorId', ParseUUIDPipe) vendorId: string, @Param('routeId', ParseUUIDPipe) routeId: string, @Query() query: LifecycleQueryDto) { return toRouteResponse(await this.routes.get(requestContextStore.requireActor(), vendorId, routeId, query.lifecycle ?? 'current')); }
   @Get(':routeId/stops') @ApiResponse({ status: 200, type: RouteStopsResponseDto }) listStops(@Param('vendorId', ParseUUIDPipe) vendorId: string, @Param('routeId', ParseUUIDPipe) routeId: string, @Query() query: RouteStopsQueryDto) { return this.routes.listStops(requestContextStore.requireActor(), vendorId, routeId, query); }
   @Post(':routeId/stops/replace') @HttpCode(200) @ApiResponse({ status: 200, type: RouteStopsResponseDto }) replaceStops(@Param('vendorId', ParseUUIDPipe) vendorId: string, @Param('routeId', ParseUUIDPipe) routeId: string, @Body() body: ReplaceRouteStopsRequestDto) { return this.routes.replaceStops(requestContextStore.requireActor(), vendorId, routeId, body); }
   @Get(':routeId/assignments')

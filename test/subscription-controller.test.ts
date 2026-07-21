@@ -51,6 +51,13 @@ void test('vendor controller normalizes lifecycle only for subscription roots', 
   assert.deepEqual(calls.map((args) => args.at(-1)), [{ lifecycle: 'current' }, 'deleted']);
 });
 
+void test('vendor subscription root lifecycle operations publish summaries', () => {
+  assert.deepEqual(
+    ['list', 'get'].map((key) => (Reflect.getMetadata('swagger/apiOperation', VendorSubscriptionController.prototype[key as 'list' | 'get']) as { summary?: string } | undefined)?.summary),
+    ['List subscriptions in the selected lifecycle', 'Read a subscription in the selected lifecycle'],
+  );
+});
+
 void test('customer controller returns household-bound safe revision history', async () => {
   let args: unknown[] = [];
   const { createdBy: _createdBy, supersessionReason: _supersessionReason, ...safeRevision } = revision;
