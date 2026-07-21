@@ -173,6 +173,9 @@ export class UserResponseDto {
   @ApiProperty({ type: String })
   locale!: string;
 
+  @ApiProperty({ type: String, enum: recordLifecycles })
+  lifecycle!: RecordLifecycle;
+
   @ApiProperty({ type: String, format: 'date-time' })
   createdAt!: Date;
 
@@ -181,6 +184,29 @@ export class UserResponseDto {
 
   @ApiPropertyOptional({ type: String, format: 'date-time' })
   deactivatedAt?: Date;
+}
+
+export class ListUsersQueryDto extends LifecycleQueryDto {
+  @ApiPropertyOptional({ type: String })
+  @IsOptional()
+  @IsString()
+  cursor?: string;
+
+  @ApiPropertyOptional({ type: Number, default: 25, minimum: 1, maximum: 100 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(100)
+  limit?: number;
+}
+
+export class PlatformUserListResponseDto {
+  @ApiProperty({ type: () => [UserResponseDto] })
+  items!: UserResponseDto[];
+
+  @ApiPropertyOptional({ type: String })
+  nextCursor?: string;
 }
 
 export class EstablishVendorOwnerRequestDto {

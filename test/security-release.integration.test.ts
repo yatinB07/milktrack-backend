@@ -18,6 +18,9 @@ import { PrismaService } from '../src/database/infrastructure/prisma.service.js'
 import { PrismaTenantTransactionRunner } from '../src/database/infrastructure/prisma-tenant-transaction.runner.js';
 import { PrismaMembershipService } from '../src/memberships/application/membership.service.js';
 import { PrismaMembershipStore } from '../src/memberships/infrastructure/prisma-membership.store.js';
+import { DefaultUserLifecycleService } from '../src/identity/application/user-lifecycle.service.js';
+import { PrismaUserLifecycleStore } from '../src/identity/infrastructure/prisma-user-lifecycle.store.js';
+import { PrismaIdentityAuthorizationAdapter } from '../src/authorization/infrastructure/prisma-identity-authorization.adapter.js';
 
 const runtimePool = new pg.Pool({ connectionString: process.env.DATABASE_URL });
 const ownerPool = new pg.Pool({
@@ -30,6 +33,7 @@ const fixture = {
   ownerA: randomUUID(),
   ownerB: randomUUID(),
   platformAdministrator: randomUUID(),
+  userLifecycleTarget: randomUUID(),
   membershipA: randomUUID(),
   membershipB: randomUUID(),
   membershipBDeleted: randomUUID(),
@@ -77,8 +81,9 @@ async function seed(): Promise<void> {
     `INSERT INTO users (id, display_name, updated_at)
      VALUES ($1, 'Task 13 Owner A', now()),
             ($2, 'Task 13 Owner B', now()),
-            ($3, 'Task 13 Platform Administrator', now())`,
-    [fixture.ownerA, fixture.ownerB, fixture.platformAdministrator],
+            ($3, 'Task 13 Platform Administrator', now()),
+            ($4, 'Task 13 User Lifecycle Target', now())`,
+    [fixture.ownerA, fixture.ownerB, fixture.platformAdministrator, fixture.userLifecycleTarget],
   );
   await ownerPool.query(
     `INSERT INTO vendors
@@ -166,7 +171,7 @@ async function seed(): Promise<void> {
 
 async function cleanup(): Promise<void> {
   const vendorIds = [fixture.vendorA, fixture.vendorB];
-  const userIds = [fixture.ownerA, fixture.ownerB, fixture.platformAdministrator];
+  const userIds = [fixture.ownerA, fixture.ownerB, fixture.platformAdministrator, fixture.userLifecycleTarget];
   await ownerPool.query(
     `DELETE FROM audit_events
      WHERE id = ANY($1::uuid[]) OR vendor_id = ANY($2::uuid[])
@@ -466,6 +471,73 @@ void describe('Task 13 cross-tenant security release gate', () => {
         foreignRows.rows.find(({ id }) => id === fixture.membershipBEnded)?.status,
         'ended',
       );
+    } finally {
+      await prisma.$disconnect();
+    }
+  });
+
+  void it('enforces user-manager assurance and lifecycle separation for global user discovery', async () => {
+    const prisma = new PrismaService();
+    const service = new DefaultUserLifecycleService(
+      new PrismaUserLifecycleStore(prisma, new PrismaIdentityAuthorizationAdapter()),
+    );
+    const administrator = actor(fixture.platformAdministrator, ['platform_administrator']);
+    const phoneOnlyAdministrator = {
+      ...administrator,
+      authenticationMethod: 'phone_otp' as const,
+    };
+    const nonAdministrator = actor(fixture.ownerA);
+
+    try {
+      for (const denied of [phoneOnlyAdministrator, nonAdministrator]) {
+        await assert.rejects(
+          service.list(denied, { lifecycle: 'current' }),
+          isApplicationError('FORBIDDEN', 403),
+        );
+      }
+
+      const current = await service.list(administrator, { lifecycle: 'current', limit: 100 });
+      assert.ok(current.items.some(({ id, lifecycle }) =>
+        id === fixture.userLifecycleTarget && lifecycle === 'current'));
+
+      await requestContextStore.run(
+        { correlationId: randomUUID(), actor: administrator },
+        () => service.softDelete(
+          administrator,
+          fixture.userLifecycleTarget,
+          'Task 13 lifecycle discovery deletion',
+        ),
+      );
+      const deleted = await service.list(administrator, { lifecycle: 'deleted', limit: 100 });
+      assert.ok(deleted.items.some(({ id, lifecycle }) =>
+        id === fixture.userLifecycleTarget && lifecycle === 'deleted'));
+      assert.equal(
+        (await service.get(administrator, fixture.userLifecycleTarget, 'deleted')).lifecycle,
+        'deleted',
+      );
+      await assert.rejects(
+        service.get(administrator, fixture.userLifecycleTarget, 'current'),
+        isApplicationError('USER_NOT_FOUND', 404),
+      );
+
+      const restored = await requestContextStore.run(
+        { correlationId: randomUUID(), actor: administrator },
+        () => service.restore(
+          administrator,
+          fixture.userLifecycleTarget,
+          'Task 13 lifecycle discovery restore',
+        ),
+      );
+      assert.equal(restored.lifecycle, 'current');
+      const deactivated = await requestContextStore.run(
+        { correlationId: randomUUID(), actor: administrator },
+        () => service.deactivate(
+          administrator,
+          fixture.userLifecycleTarget,
+          'Task 13 lifecycle discovery deactivation',
+        ),
+      );
+      assert.equal(deactivated.lifecycle, 'current');
     } finally {
       await prisma.$disconnect();
     }

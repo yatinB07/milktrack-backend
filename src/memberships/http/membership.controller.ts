@@ -41,6 +41,7 @@ import {
   CompleteOwnerEnrollmentResponseDto,
   CreateMembershipRequestDto,
   EstablishVendorOwnerRequestDto,
+  ListUsersQueryDto,
   ListMembershipsQueryDto,
   MembershipPageResponseDto,
   MembershipDirectoryResponseDto,
@@ -52,6 +53,7 @@ import {
   StartOwnerEnrollmentResponseDto,
   UpdateMembershipRoleRequestDto,
   UserResponseDto,
+  PlatformUserListResponseDto,
   VendorOwnerOnboardingResponseDto,
   VendorOwnerOnboardingStatusResponseDto,
 } from './membership.dto.js';
@@ -95,6 +97,7 @@ function userResponse(result: UserResult): UserResponseDto {
     displayName: result.displayName,
     status: result.status,
     locale: result.locale,
+    lifecycle: result.lifecycle,
     createdAt: result.createdAt,
     updatedAt: result.updatedAt,
     ...(result.deactivatedAt ? { deactivatedAt: result.deactivatedAt } : {}),
@@ -268,6 +271,32 @@ export class UserLifecycleController {
     @Inject(UserLifecycleService)
     private readonly users: UserLifecycleService,
   ) {}
+
+  @Get()
+  @ApiOkResponse({ type: PlatformUserListResponseDto })
+  async list(@Query() query: ListUsersQueryDto): Promise<PlatformUserListResponseDto> {
+    const page = await this.users.list(requestContextStore.requireActor(), {
+      ...query,
+      lifecycle: query.lifecycle ?? 'current',
+    });
+    return {
+      items: page.items.map(userResponse),
+      ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}),
+    };
+  }
+
+  @Get(':id')
+  @ApiOkResponse({ type: UserResponseDto })
+  async get(
+    @Param('id', uuidPipe) userId: string,
+    @Query() query: LifecycleQueryDto,
+  ): Promise<UserResponseDto> {
+    return userResponse(await this.users.get(
+      requestContextStore.requireActor(),
+      userId,
+      query.lifecycle ?? 'current',
+    ));
+  }
 
   @Delete(':id')
   @HttpCode(204)
@@ -486,6 +515,18 @@ for (const method of ['softDelete', 'restore', 'deactivate'] as const) {
     method,
   );
 }
+Reflect.defineMetadata(
+  'design:paramtypes',
+  [ListUsersQueryDto],
+  UserLifecycleController.prototype,
+  'list',
+);
+Reflect.defineMetadata(
+  'design:paramtypes',
+  [String, LifecycleQueryDto],
+  UserLifecycleController.prototype,
+  'get',
+);
 Reflect.defineMetadata(
   'design:paramtypes',
   [String],

@@ -2,10 +2,15 @@ import { Inject, Injectable } from '@nestjs/common';
 
 import { UserLifecycleAuthorizationPort } from '../../authorization/application/identity-authorization.port.js';
 import { PrismaService } from '../../database/infrastructure/prisma.service.js';
+import { CursorCodec } from '../../common/cursor/cursor.js';
+import type { RecordLifecycle } from '../../common/application/record-lifecycle.js';
 import { wrapPrismaTransaction } from '../../database/infrastructure/prisma-transaction-context.js';
 import type { Prisma } from '../../generated/prisma/client.js';
 import {
   type UserLifecycleUnitOfWork,
+  type PlatformUserDiscoveryQuery,
+  type UserLifecycleRecord,
+  type UserLifecycleRecordPage,
   UserLifecycleStore,
 } from '../application/user-lifecycle.service.js';
 
@@ -22,12 +27,51 @@ const userFields = {
 
 @Injectable()
 export class PrismaUserLifecycleStore extends UserLifecycleStore {
+  private readonly cursors = new CursorCodec();
+
   constructor(
     @Inject(PrismaService) private readonly prisma: PrismaService,
     @Inject(UserLifecycleAuthorizationPort)
     private readonly authority: UserLifecycleAuthorizationPort,
   ) {
     super();
+  }
+
+  async listUsers(query: PlatformUserDiscoveryQuery): Promise<UserLifecycleRecordPage> {
+    const limit = this.cursors.parseLimit(query.limit);
+    const cursor = query.cursor ? this.cursors.decode(query.cursor) : undefined;
+    const rows = await this.prisma.user.findMany({
+      where: {
+        deletedAt: query.lifecycle === 'current' ? null : { not: null },
+        ...(cursor ? {
+          OR: [
+            { createdAt: { lt: cursor.createdAt } },
+            { createdAt: cursor.createdAt, id: { lt: cursor.id } },
+          ],
+        } : {}),
+      },
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      take: limit + 1,
+      select: userFields,
+    });
+    const items = rows.slice(0, limit);
+    const last = items.at(-1);
+    return {
+      items,
+      ...(rows.length > limit && last
+        ? { nextCursor: this.cursors.encode({ createdAt: last.createdAt, id: last.id }) }
+        : {}),
+    };
+  }
+
+  findUser(userId: string, lifecycle: RecordLifecycle): Promise<UserLifecycleRecord | null> {
+    return this.prisma.user.findFirst({
+      where: {
+        id: userId,
+        deletedAt: lifecycle === 'current' ? null : { not: null },
+      },
+      select: userFields,
+    });
   }
 
   run<T>(

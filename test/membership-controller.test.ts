@@ -178,6 +178,7 @@ void test('user lifecycle controller maps restored users to the public DTO shape
     displayName: 'Test Customer',
     status: 'active' as const,
     locale: 'en-IN',
+    lifecycle: 'current' as const,
     createdAt: at,
     updatedAt: at,
   };
@@ -198,6 +199,8 @@ void test('user lifecycle protects the last active platform administrator', asyn
   let mutations = 0;
   const targetId = '00000000-0000-4000-8000-000000000006';
   const store = {
+    listUsers: () => Promise.reject(new Error('not used')),
+    findUser: () => Promise.reject(new Error('not used')),
     run: (operation) =>
       operation({
         lockSessionUser: () => Promise.resolve(),

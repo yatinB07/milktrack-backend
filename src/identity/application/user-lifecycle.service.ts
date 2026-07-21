@@ -8,15 +8,36 @@ import {
   requestContextStore,
 } from '../../common/context/request-context.js';
 import { ApplicationError } from '../../common/errors/application.error.js';
+import {
+  type RecordLifecycle,
+  recordLifecycleOf,
+} from '../../common/application/record-lifecycle.js';
 
 export type UserResult = Readonly<{
   id: string;
   displayName: string;
   status: 'active' | 'suspended' | 'deactivated';
   locale: string;
+  lifecycle: RecordLifecycle;
   deactivatedAt?: Date;
   createdAt: Date;
   updatedAt: Date;
+}>;
+
+export type PlatformUserDiscoveryQuery = Readonly<{
+  cursor?: string;
+  limit?: number;
+  lifecycle: RecordLifecycle;
+}>;
+
+export type PlatformUserPage = Readonly<{
+  items: readonly UserResult[];
+  nextCursor?: string;
+}>;
+
+export type UserLifecycleRecordPage = Readonly<{
+  items: readonly UserLifecycleRecord[];
+  nextCursor?: string;
 }>;
 
 export type UserLifecycleRecord = Readonly<{
@@ -63,12 +84,16 @@ export interface UserLifecycleUnitOfWork {
 }
 
 export abstract class UserLifecycleStore {
+  abstract listUsers(query: PlatformUserDiscoveryQuery): Promise<UserLifecycleRecordPage>;
+  abstract findUser(userId: string, lifecycle: RecordLifecycle): Promise<UserLifecycleRecord | null>;
   abstract run<T>(
     operation: (unit: UserLifecycleUnitOfWork) => Promise<T>,
   ): Promise<T>;
 }
 
 export abstract class UserLifecycleService {
+  abstract list(actor: Actor, query: PlatformUserDiscoveryQuery): Promise<PlatformUserPage>;
+  abstract get(actor: Actor, userId: string, lifecycle: RecordLifecycle): Promise<UserResult>;
   abstract softDelete(actor: Actor, userId: string, reason: string): Promise<void>;
   abstract restore(actor: Actor, userId: string, reason: string): Promise<UserResult>;
   abstract deactivate(actor: Actor, userId: string, reason: string): Promise<UserResult>;
@@ -80,6 +105,7 @@ function result(record: UserLifecycleRecord): UserResult {
     displayName: record.displayName,
     status: record.status,
     locale: record.locale,
+    lifecycle: recordLifecycleOf(record.deletedAt),
     ...(record.deactivatedAt ? { deactivatedAt: record.deactivatedAt } : {}),
     createdAt: record.createdAt,
     updatedAt: record.updatedAt,
@@ -117,6 +143,22 @@ export class DefaultUserLifecycleService extends UserLifecycleService {
     @Inject(UserLifecycleStore) private readonly store: UserLifecycleStore,
   ) {
     super();
+  }
+
+  async list(actor: Actor, query: PlatformUserDiscoveryQuery): Promise<PlatformUserPage> {
+    requireUserManager(actor);
+    const page = await this.store.listUsers(query);
+    return {
+      items: page.items.map(result),
+      ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}),
+    };
+  }
+
+  async get(actor: Actor, userId: string, lifecycle: RecordLifecycle): Promise<UserResult> {
+    requireUserManager(actor);
+    const user = await this.store.findUser(userId, lifecycle);
+    if (!user) throw new ApplicationError('USER_NOT_FOUND', 'User was not found', 404);
+    return result(user);
   }
 
   async softDelete(actor: Actor, userId: string, reason: string): Promise<void> {
