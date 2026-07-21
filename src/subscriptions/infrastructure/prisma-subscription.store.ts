@@ -68,8 +68,8 @@ export class PrismaSubscriptionStore extends SubscriptionStore {
     const filters: Prisma.Sql[] = [Prisma.sql`s.deleted_at IS NULL`];
     if (householdId) filters.push(Prisma.sql`s.household_id=${householdId}::uuid`);
     if (cursor) filters.push(Prisma.sql`(s.created_at < ${cursor.createdAt} OR (s.created_at=${cursor.createdAt} AND s.id < ${cursor.id}::uuid))`);
-    if (query.productId) filters.push(Prisma.sql`EXISTS (SELECT 1 FROM subscription_revisions f WHERE f.subscription_id=s.id AND f.superseded_at IS NULL AND f.product_id=${query.productId}::uuid)`);
-    if (query.deliverySlotId) filters.push(Prisma.sql`EXISTS (SELECT 1 FROM subscription_revisions f WHERE f.subscription_id=s.id AND f.superseded_at IS NULL AND f.delivery_slot_id=${query.deliverySlotId}::uuid)`);
+    if (query.productId && !query.route) filters.push(Prisma.sql`EXISTS (SELECT 1 FROM subscription_revisions f WHERE f.subscription_id=s.id AND f.superseded_at IS NULL AND f.product_id=${query.productId}::uuid)`);
+    if (query.deliverySlotId && !query.route) filters.push(Prisma.sql`EXISTS (SELECT 1 FROM subscription_revisions f WHERE f.subscription_id=s.id AND f.superseded_at IS NULL AND f.delivery_slot_id=${query.deliverySlotId}::uuid)`);
     if (query.route) {
       filters.push(query.route.householdIds.length === 0
         ? Prisma.sql`FALSE`
@@ -79,6 +79,8 @@ export class PrismaSubscriptionStore extends SubscriptionStore {
         JOIN subscription_revision_weekdays w ON w.vendor_id=f.vendor_id AND w.subscription_revision_id=f.id
         WHERE f.subscription_id=s.id AND f.superseded_at IS NULL AND f.status='active'
           AND f.delivery_slot_id=${query.route.deliverySlotId}::uuid
+          ${query.productId ? Prisma.sql`AND f.product_id=${query.productId}::uuid` : Prisma.empty}
+          ${query.deliverySlotId ? Prisma.sql`AND f.delivery_slot_id=${query.deliverySlotId}::uuid` : Prisma.empty}
           AND f.effective_from<=${query.route.serviceDate}::date
           AND (f.effective_to IS NULL OR f.effective_to>${query.route.serviceDate}::date)
           AND w.weekday=EXTRACT(ISODOW FROM ${query.route.serviceDate}::date)
