@@ -33,6 +33,7 @@ void test('migrations safely upgrade legacy data without resetting it', async ()
     '202607200008_route_assignments',
     '202607200009_scheduled_deliveries',
     '202607200010_schedule_generation_runs',
+    '202607210001_authentication_authority_lookup',
   ] as const;
   const migrations = await Promise.all(
     migrationDirectories.map((directory) =>
@@ -151,6 +152,7 @@ void test('migrations safely upgrade legacy data without resetting it', async ()
     await client.query(migrations[17]);
     await client.query(migrations[18]);
     await client.query(migrations[19]);
+    await client.query(migrations[20]);
 
     const session = await client.query<{
       authentication_method: string;
@@ -345,6 +347,93 @@ void test('Phase 1 tables, soft-delete columns, forced RLS and runtime role exis
     'SELECT rolbypassrls, rolsuper FROM pg_roles WHERE rolname = current_user',
   );
   assert.deepEqual(role.rows[0], { rolbypassrls: false, rolsuper: false });
+});
+
+void test('authentication authority functions expose narrow contracts only to runtime', async () => {
+  const functions = await ownerPool.query<{
+    name: string;
+    security_definer: boolean;
+    configuration: string[] | null;
+    public_execute: boolean;
+    runtime_execute: boolean;
+  }>(
+    `SELECT p.proname AS name,
+            p.prosecdef AS security_definer,
+            p.proconfig AS configuration,
+            EXISTS (
+              SELECT 1
+              FROM aclexplode(COALESCE(p.proacl, acldefault('f', p.proowner))) acl
+              WHERE acl.grantee = 0 AND acl.privilege_type = 'EXECUTE'
+            ) AS public_execute,
+            has_function_privilege('milktrack_app', p.oid, 'EXECUTE') AS runtime_execute
+     FROM pg_proc p
+     JOIN pg_namespace n ON n.oid = p.pronamespace
+     WHERE n.nspname = 'public'
+       AND p.proname = ANY($1::text[])
+     ORDER BY p.proname`,
+    [[
+      'activate_invited_phone_memberships',
+      'authentication_authority_memberships',
+      'has_phone_auth_membership',
+    ]],
+  );
+  assert.deepEqual(
+    functions.rows.map(({ name, security_definer, configuration, public_execute, runtime_execute }) => ({
+      name,
+      security_definer,
+      configuration,
+      public_execute,
+      runtime_execute,
+    })),
+    [
+      'activate_invited_phone_memberships',
+      'authentication_authority_memberships',
+      'has_phone_auth_membership',
+    ].map((name) => ({
+      name,
+      security_definer: true,
+      configuration: ['search_path=pg_catalog, public'],
+      public_execute: false,
+      runtime_execute: true,
+    })),
+  );
+
+  const index = await ownerPool.query<{ definition: string }>(
+    `SELECT indexdef AS definition FROM pg_indexes
+     WHERE schemaname = 'public'
+       AND indexname = 'vendor_memberships_user_id_status_vendor_id_auth_idx'`,
+  );
+  assert.equal(index.rowCount, 1);
+  assert.match(index.rows[0].definition, /\(user_id, status, vendor_id\)/);
+  assert.match(index.rows[0].definition, /ended_at IS NULL.*deleted_at IS NULL/);
+
+  const unknownUserId = randomUUID();
+  const client = await pool.connect();
+  try {
+    assert.deepEqual(
+      (await client.query(
+        'SELECT * FROM authentication_authority_memberships($1, true, true, true)',
+        [unknownUserId],
+      )).rows,
+      [],
+    );
+    assert.deepEqual(
+      (await client.query(
+        'SELECT has_phone_auth_membership($1, true, true)',
+        [unknownUserId],
+      )).rows,
+      [{ has_phone_auth_membership: false }],
+    );
+    assert.deepEqual(
+      (await client.query(
+        'SELECT * FROM activate_invited_phone_memberships($1, now(), $2, NULL, NULL)',
+        [unknownUserId, randomUUID()],
+      )).rows,
+      [],
+    );
+  } finally {
+    client.release();
+  }
 });
 
 void test('owner enrollment storage is tenant-forced and its resolver exposes only exact eligible handles', async () => {

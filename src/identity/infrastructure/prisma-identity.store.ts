@@ -978,6 +978,7 @@ export class PrismaIdentityStore {
       where: { id: userId, status: 'active', deletedAt: null },
       select: { id: true },
     });
+    if (!user) return false;
     const hasPhoneMembership = await this.authority.hasPhoneMembership(
       wrapPrismaTransaction(tx),
       userId,
@@ -988,8 +989,7 @@ export class PrismaIdentityStore {
       userId,
       ['onboarding', 'trial', 'active'],
     );
-    return user !== null &&
-      authenticationAuthority.platformRoles.length === 0 &&
+    return authenticationAuthority.platformRoles.length === 0 &&
       hasPhoneMembership &&
       !authenticationAuthority.memberships.some(({ role }) =>
         role === 'vendor_owner' || role === 'vendor_administrator',

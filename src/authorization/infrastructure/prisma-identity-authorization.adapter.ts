@@ -1,5 +1,3 @@
-import { randomUUID } from 'node:crypto';
-
 import { Injectable } from '@nestjs/common';
 
 import type { TransactionContext } from '../../common/application/transaction-context.js';
@@ -12,8 +10,6 @@ import {
   type UserLifecycleAuthorizationPort,
 } from '../application/identity-authorization.port.js';
 
-const phoneMembershipVendorStatuses = ['trial', 'active'] as const;
-
 @Injectable()
 export class PrismaIdentityAuthorizationAdapter
   extends AuthenticationAuthorityPort
@@ -25,28 +21,14 @@ export class PrismaIdentityAuthorizationAdapter
     statuses: readonly ('active' | 'invited')[],
   ): Promise<boolean> {
     const tx = unwrapPrismaTransaction(context);
-    const vendors = await tx.vendor.findMany({
-      where: { status: { in: [...phoneMembershipVendorStatuses] }, deletedAt: null },
-      select: { id: true },
-    });
-    for (const { id } of vendors) {
-      await tx.$executeRaw`SELECT set_config('app.vendor_id', ${id}, true)`;
-      const count = await tx.vendorMembership.count({
-        where: {
-          userId,
-          role: { in: ['customer', 'delivery_agent'] },
-          status: { in: [...statuses] },
-          endedAt: null,
-          deletedAt: null,
-        },
-      });
-      if (count > 0) {
-        await tx.$executeRaw`SELECT set_config('app.vendor_id', '', true)`;
-        return true;
-      }
-    }
-    await tx.$executeRaw`SELECT set_config('app.vendor_id', '', true)`;
-    return false;
+    const [result] = await tx.$queryRaw<{ has_membership: boolean }[]>`
+      SELECT has_phone_auth_membership(
+        ${userId}::uuid,
+        ${statuses.includes('active')}::boolean,
+        ${statuses.includes('invited')}::boolean
+      ) AS has_membership
+    `;
+    return result?.has_membership ?? false;
   }
 
   async activateInvitedPhoneMemberships(
@@ -60,55 +42,17 @@ export class PrismaIdentityAuthorizationAdapter
     }>,
   ): Promise<number> {
     const tx = unwrapPrismaTransaction(context);
-    const vendors = await tx.vendor.findMany({
-      where: { status: { in: [...phoneMembershipVendorStatuses] }, deletedAt: null },
-      select: { id: true },
-      orderBy: { id: 'asc' },
-    });
-    let activated = 0;
-    for (const { id: vendorId } of vendors) {
-      await tx.$executeRaw`SELECT set_config('app.vendor_id', ${vendorId}, true)`;
-      const invitations = await tx.vendorMembership.findMany({
-        where: {
-          userId: input.userId,
-          role: { in: ['customer', 'delivery_agent'] },
-          status: 'invited',
-          endedAt: null,
-          deletedAt: null,
-        },
-        select: { id: true },
-        orderBy: { id: 'asc' },
-      });
-      for (const invitation of invitations) {
-        const updated = await tx.vendorMembership.updateMany({
-          where: {
-            id: invitation.id,
-            status: 'invited',
-            endedAt: null,
-            deletedAt: null,
-          },
-          data: { status: 'active', joinedAt: input.at },
-        });
-        if (updated.count !== 1) continue;
-        activated += 1;
-        await tx.auditEvent.create({
-          data: {
-            id: randomUUID(),
-            vendorId,
-            actorUserId: input.userId,
-            action: 'membership.invitation_accepted',
-            entityType: 'vendor_membership',
-            entityId: invitation.id,
-            newValue: { status: 'active' },
-            correlationId: input.correlationId,
-            deviceId: input.deviceId,
-            ipHash: input.ipHash,
-          },
-        });
-      }
-    }
-    await tx.$executeRaw`SELECT set_config('app.vendor_id', '', true)`;
-    return activated;
+    const activated = await tx.$queryRaw<{ membership_id: string; vendor_id: string }[]>`
+      SELECT membership_id, vendor_id
+      FROM activate_invited_phone_memberships(
+        ${input.userId}::uuid,
+        ${input.at}::timestamptz,
+        ${input.correlationId}::uuid,
+        ${input.deviceId ?? null}::text,
+        ${input.ipHash ?? null}::text
+      )
+    `;
+    return activated.length;
   }
 
   async snapshot(
@@ -121,35 +65,28 @@ export class PrismaIdentityAuthorizationAdapter
       where: { userId, revokedAt: null },
       select: { role: true },
     });
-    const vendors = await tx.vendor.findMany({
-      where: { status: { in: [...vendorStatuses] }, deletedAt: null },
-      select: { id: true, displayName: true },
-    });
-    const memberships: ActorMembership[] = [];
-    // ponytail: Phase 1 scans vendors through existing RLS; replace only when profiling justifies a reviewed lookup function.
-    for (const vendor of vendors) {
-      await tx.$queryRaw`SELECT set_config('app.vendor_id', ${vendor.id}, true)`;
-      const rows = await tx.$queryRaw<{
-        id: string;
-        vendor_id: string;
-        role: VendorRole;
-        status: ActorMembership['status'];
-      }[]>`
-        SELECT id, vendor_id, role, status FROM vendor_memberships
-        WHERE vendor_id = ${vendor.id}::uuid AND user_id = ${userId}::uuid
-          AND status = 'active' AND ended_at IS NULL AND deleted_at IS NULL
-      `;
-      memberships.push(
-        ...rows.map((row) => ({
-          id: row.id,
-          vendorId: row.vendor_id,
-          vendorName: vendor.displayName,
-          role: row.role,
-          status: row.status,
-        })),
-      );
-    }
-    await tx.$queryRaw`SELECT set_config('app.vendor_id', '', true)`;
+    const rows = await tx.$queryRaw<{
+      membership_id: string;
+      vendor_id: string;
+      vendor_name: string;
+      membership_role: VendorRole;
+      membership_status: ActorMembership['status'];
+    }[]>`
+      SELECT membership_id, vendor_id, vendor_name, membership_role, membership_status
+      FROM authentication_authority_memberships(
+        ${userId}::uuid,
+        ${vendorStatuses.includes('onboarding')}::boolean,
+        ${vendorStatuses.includes('trial')}::boolean,
+        ${vendorStatuses.includes('active')}::boolean
+      )
+    `;
+    const memberships: ActorMembership[] = rows.map((row) => ({
+      id: row.membership_id,
+      vendorId: row.vendor_id,
+      vendorName: row.vendor_name,
+      role: row.membership_role,
+      status: row.membership_status,
+    }));
     return {
       platformRoles: platformRoles.map(({ role }) => role),
       memberships,

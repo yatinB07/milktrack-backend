@@ -30,9 +30,17 @@ void test('Identity infrastructure delegates tenant membership activation throug
     new URL('../src/authorization/infrastructure/prisma-identity-authorization.adapter.ts', import.meta.url),
     'utf8',
   );
-  assert.match(authority, /status: 'invited'/u);
-  assert.match(authority, /endedAt: null/u);
-  assert.match(authority, /deletedAt: null/u);
+  assert.match(authority, /activate_invited_phone_memberships/u);
+  const migration = await readFile(
+    new URL(
+      '../prisma/migrations/202607210001_authentication_authority_lookup/migration.sql',
+      import.meta.url,
+    ),
+    'utf8',
+  );
+  assert.match(migration, /vm\.status = 'invited'/u);
+  assert.match(migration, /vm\.ended_at IS NULL/u);
+  assert.match(migration, /vm\.deleted_at IS NULL/u);
 });
 
 void test('membership ending accepts a current invited membership', async () => {
