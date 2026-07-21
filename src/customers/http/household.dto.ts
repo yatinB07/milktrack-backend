@@ -38,7 +38,7 @@ export class HouseholdDiscoveryQueryDto extends HouseholdPageQueryDto {
   @Matches(/\S/)
   search?: string;
 
-  @ApiPropertyOptional({ enum: ["active", "inactive"], default: "active" })
+  @ApiPropertyOptional({ enum: ["active", "inactive"] })
   @IsOptional()
   @IsIn(["active", "inactive"])
   status?: "active" | "inactive";

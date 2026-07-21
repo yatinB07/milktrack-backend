@@ -117,6 +117,16 @@ void test('household lifecycle query rejects unsupported values', async () => {
   assert.equal(errors[0]?.property, 'lifecycle');
 });
 
+void test('household lifecycle status metadata does not advertise an unconditional default', () => {
+  const status = Reflect.getMetadata(
+    'swagger/apiModelProperties',
+    HouseholdDiscoveryQueryDto.prototype,
+    'status',
+  ) as { default?: string; enum?: string[] };
+  assert.deepEqual(status.enum, ['active', 'inactive']);
+  assert.equal(status.default, undefined);
+});
+
 void test('household service selects lifecycle authorization and redacts deletion metadata', async () => {
   const requests: TenantAuthorizationInput[] = [];
   const tx = Object.freeze({}) as TransactionContext;

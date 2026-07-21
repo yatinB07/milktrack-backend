@@ -12,6 +12,7 @@ import {
   PrismaCatalogService,
 } from '../src/catalog/application/catalog.service.js';
 import {
+  CatalogPageQueryDto,
   ProductPageQueryDto,
 } from '../src/catalog/http/catalog.dto.js';
 import { ProductController } from '../src/catalog/http/product.controller.js';
@@ -141,6 +142,23 @@ void test('product lifecycle query rejects unsupported values', async () => {
   const errors = await validate(query);
   assert.equal(errors.length, 1);
   assert.equal(errors[0]?.property, 'lifecycle');
+});
+
+void test('product status metadata is conditional while shared catalog status remains active-defaulted', () => {
+  const productStatus = Reflect.getMetadata(
+    'swagger/apiModelProperties',
+    ProductPageQueryDto.prototype,
+    'status',
+  ) as { default?: string; enum?: string[] };
+  const catalogStatus = Reflect.getMetadata(
+    'swagger/apiModelProperties',
+    CatalogPageQueryDto.prototype,
+    'status',
+  ) as { default?: string; enum?: string[] };
+
+  assert.deepEqual(productStatus.enum, ['active', 'inactive']);
+  assert.equal(productStatus.default, undefined);
+  assert.equal(catalogStatus.default, 'active');
 });
 
 void test('product service selects lifecycle authorization and redacts deletion metadata', async () => {

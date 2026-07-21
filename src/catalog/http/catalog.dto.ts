@@ -1,6 +1,6 @@
 import { Type } from 'class-transformer';
 import { IsIn, IsInt, IsOptional, IsString, IsUUID, Length, Matches, Max, Min } from 'class-validator';
-import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional, OmitType } from '@nestjs/swagger';
 import type { ProductResult } from '../application/catalog.service.js';
 import type { DeliverySlotRecord, UnitRecord } from '../infrastructure/prisma-catalog.store.js';
 import { type RecordLifecycle, recordLifecycles } from '../../common/application/record-lifecycle.js';
@@ -13,7 +13,12 @@ export class CatalogPageQueryDto {
   @ApiPropertyOptional({ enum: ['active', 'inactive'], default: 'active' }) @IsOptional() @IsIn(['active', 'inactive']) status?: 'active' | 'inactive';
   @IsOptional() @IsString() @Length(1, 160) search?: string;
 }
-export class ProductPageQueryDto extends CatalogPageQueryDto {
+export class ProductPageQueryDto extends OmitType(CatalogPageQueryDto, ['status'] as const) {
+  @ApiPropertyOptional({ enum: ['active', 'inactive'] })
+  @IsOptional()
+  @IsIn(['active', 'inactive'])
+  status?: 'active' | 'inactive';
+
   @ApiPropertyOptional({ enum: recordLifecycles, default: 'current' })
   @IsOptional()
   @IsIn(recordLifecycles)
