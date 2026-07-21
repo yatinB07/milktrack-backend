@@ -65,7 +65,9 @@ export class PrismaSubscriptionStore extends SubscriptionStore {
     const tx = unwrapPrismaTransaction(context); const limit = this.cursors.parseLimit(query.limit);
     const cursor = query.cursor ? this.cursors.decode(query.cursor) : undefined;
     const householdId = routeHouseholdId ?? query.householdId;
-    const filters: Prisma.Sql[] = [Prisma.sql`s.deleted_at IS NULL`];
+    const filters: Prisma.Sql[] = [];
+    const lifecycleFilter = query.lifecycle === 'deleted' ? Prisma.sql`s.deleted_at IS NOT NULL` : Prisma.sql`s.deleted_at IS NULL`;
+    filters.push(lifecycleFilter);
     if (householdId) filters.push(Prisma.sql`s.household_id=${householdId}::uuid`);
     if (cursor) filters.push(Prisma.sql`(s.created_at < ${cursor.createdAt} OR (s.created_at=${cursor.createdAt} AND s.id < ${cursor.id}::uuid))`);
     if (query.productId && !query.route) filters.push(Prisma.sql`EXISTS (SELECT 1 FROM subscription_revisions f WHERE f.subscription_id=s.id AND f.superseded_at IS NULL AND f.product_id=${query.productId}::uuid)`);
@@ -108,9 +110,9 @@ export class PrismaSubscriptionStore extends SubscriptionStore {
     return { items: visible, ...(next ? { nextCursor: this.cursors.encode({ createdAt: next.createdAt, id: next.id }) } : {}) };
   }
 
-  async get(context: TransactionContext, subscriptionId: string, householdId?: string) {
+  async get(context: TransactionContext, subscriptionId: string, lifecycle: 'current' | 'deleted', householdId?: string) {
     const row = await unwrapPrismaTransaction(context).subscription.findFirst({
-      where: { id: subscriptionId, deletedAt: null, ...(householdId ? { householdId } : {}) }, include: aggregateInclude,
+      where: { id: subscriptionId, deletedAt: lifecycle === 'deleted' ? { not: null } : null, ...(householdId ? { householdId } : {}) }, include: aggregateInclude,
     });
     if (!row) throw error('SUBSCRIPTION_NOT_FOUND', 'Subscription was not found', 404);
     return this.aggregate(row);
@@ -257,7 +259,7 @@ export class PrismaSubscriptionStore extends SubscriptionStore {
   private aggregate(row: AggregateRow): SubscriptionAggregateRecord {
     return {
       id: row.id, vendorId: row.vendorId, householdId: row.householdId, version: row.version,
-      ...(row.deletedAt ? { deletedAt: row.deletedAt } : {}), ...(row.deletedBy ? { deletedBy: row.deletedBy } : {}),
+      deletedAt: row.deletedAt, ...(row.deletedBy ? { deletedBy: row.deletedBy } : {}),
       ...(row.deletionReason ? { deletionReason: row.deletionReason } : {}), createdAt: row.createdAt, updatedAt: row.updatedAt,
       revisions: row.revisions.map((revision) => this.revision(revision)),
     };

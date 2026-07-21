@@ -64,12 +64,14 @@ void test('route-filtered subscription lookup uses one exact route projection on
     routeServiceDate: '2099-07-20',
     productId: '00000000-0000-4000-8000-000000000021',
     limit: 1,
+    lifecycle: 'current',
   });
 
   assert.deepEqual(calls, [[tx, '00000000-0000-4000-8000-000000000020', route.routeId, '2099-07-20']]);
   assert.deepEqual(storeQuery, {
     productId: '00000000-0000-4000-8000-000000000021',
     limit: 1,
+    lifecycle: 'current',
     route: {
       serviceDate: '2099-07-20',
       deliverySlotId: route.deliverySlotId,
@@ -99,6 +101,7 @@ void test('missing exact route preserves ROUTE_NOT_FOUND', async () => {
     service.list(actor, '00000000-0000-4000-8000-000000000020', {
       routeId: '00000000-0000-4000-8000-000000000010',
       routeServiceDate: '2099-07-20',
+      lifecycle: 'current',
     }),
     (error: unknown) => error instanceof ApplicationError
       && error.code === 'ROUTE_NOT_FOUND'

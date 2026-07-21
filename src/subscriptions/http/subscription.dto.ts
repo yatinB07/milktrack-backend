@@ -5,12 +5,14 @@ import { DateTime } from 'luxon';
 
 import type { CustomerSubscriptionResult, SubscriptionResult } from '../application/subscription.service.js';
 import type { CustomerSubscriptionRevision, SubscriptionRevisionRecord } from '../application/subscription.store.js';
+import { LifecycleQueryDto } from '../../common/http/record-lifecycle.dto.js';
+import { recordLifecycles } from '../../common/application/record-lifecycle.js';
 
 const date = /^\d{4}-\d{2}-\d{2}$/;
 const quantity = /^\d+(?:\.\d{1,3})?$/;
 const statuses = ['future', 'active', 'paused', 'cancelled', 'completed'] as const;
 
-export class SubscriptionPageQueryDto {
+export class SubscriptionPageQueryDto extends LifecycleQueryDto {
   @IsOptional() @IsString() cursor?: string;
   @ApiPropertyOptional({ default: 25, minimum: 1, maximum: 100 }) @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(100) limit?: number;
   @IsOptional() @IsUUID() householdId?: string;
@@ -31,6 +33,7 @@ export class CustomerSubscriptionPageQueryDto {
   @IsOptional() @IsUUID() deliverySlotId?: string;
   @ApiPropertyOptional({ type: String, enum: statuses }) @IsOptional() @IsIn(statuses) status?: typeof statuses[number];
 }
+export class CustomerSubscriptionDetailQueryDto {}
 export class CreateSubscriptionRequestDto {
   @IsUUID() householdId!: string; @IsUUID() productId!: string; @IsUUID() unitId!: string; @IsUUID() deliverySlotId!: string;
   @ApiProperty({ type: String, pattern: quantity.source }) @IsString() @Matches(quantity) quantity!: string;
@@ -77,6 +80,7 @@ export class CustomerSubscriptionRevisionResponseDto {
 export class SubscriptionResponseDto {
   @ApiProperty({ type: String, format: 'uuid' }) id!: string; @ApiProperty({ type: String, format: 'uuid' }) vendorId!: string; @ApiProperty({ type: String, format: 'uuid' }) householdId!: string;
   version!: number; @ApiProperty({ type: String, enum: statuses }) status!: string; @ApiPropertyOptional({ type: Number }) supersededRevisionCount?: number;
+  @ApiProperty({ enum: recordLifecycles }) lifecycle!: string;
   @ApiProperty({ type: () => SubscriptionRevisionResponseDto, isArray: true }) revisions!: SubscriptionRevisionResponseDto[];
   @ApiProperty({ type: String, format: 'date-time' }) createdAt!: string; @ApiProperty({ type: String, format: 'date-time' }) updatedAt!: string;
 }
@@ -100,7 +104,7 @@ export function toCustomerSubscriptionRevisionResponse(value: CustomerSubscripti
   return { ...revision, weekdays: [...value.weekdays], startDate: effectiveFrom, ...(effectiveTo ? { endDate: inclusiveEndDate(effectiveTo) } : {}), ...(supersededAt ? { supersededAt: supersededAt.toISOString() } : {}), createdAt: value.createdAt.toISOString(), updatedAt: value.updatedAt.toISOString() };
 }
 export function toSubscriptionResponse(value: SubscriptionResult): SubscriptionResponseDto {
-  return { id: value.id, vendorId: value.vendorId, householdId: value.householdId, version: value.version, status: value.status,
+  return { id: value.id, vendorId: value.vendorId, householdId: value.householdId, version: value.version, status: value.status, lifecycle: value.lifecycle,
     ...(value.supersededRevisionCount === undefined ? {} : { supersededRevisionCount: value.supersededRevisionCount }), revisions: value.revisions.map(toSubscriptionRevisionResponse),
     createdAt: value.createdAt.toISOString(), updatedAt: value.updatedAt.toISOString() };
 }

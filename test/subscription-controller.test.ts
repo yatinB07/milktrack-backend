@@ -36,6 +36,21 @@ void test('vendor controller maps explicit subscription dates and mutation super
   assert.equal(response.supersededRevisionCount, 2);
 });
 
+void test('vendor controller normalizes lifecycle only for subscription roots', async () => {
+  const calls: unknown[][] = [];
+  const deleted = { ...result, lifecycle: 'deleted' as const };
+  const service = { list: (...args: unknown[]) => { calls.push(args); return Promise.resolve({ items: [deleted] }); }, get: (...args: unknown[]) => { calls.push(args); return Promise.resolve(deleted); } };
+  const controller = new VendorSubscriptionController(service as never);
+  await requestContextStore.run({ correlationId: '00000000-0000-4000-8000-000000000003', actor }, async () => {
+    const page = await controller.list(revision.vendorId, {});
+    const detail = await controller.get(revision.vendorId, revision.subscriptionId, { lifecycle: 'deleted' });
+    assert.equal(page.items[0]?.lifecycle, 'deleted');
+    assert.equal(detail.lifecycle, 'deleted');
+    assert.equal('deletedAt' in detail, false);
+  });
+  assert.deepEqual(calls.map((args) => args.at(-1)), [{ lifecycle: 'current' }, 'deleted']);
+});
+
 void test('customer controller returns household-bound safe revision history', async () => {
   let args: unknown[] = [];
   const { createdBy: _createdBy, supersessionReason: _supersessionReason, ...safeRevision } = revision;

@@ -4,6 +4,7 @@ import test from 'node:test';
 import type { TransactionContext } from '../src/common/application/transaction-context.js';
 import type { Actor } from '../src/common/context/request-context.js';
 import { requestContextStore } from '../src/common/context/request-context.js';
+import { ApplicationError } from '../src/common/errors/application.error.js';
 import { DefaultSubscriptionService } from '../src/subscriptions/application/subscription.service.js';
 
 const tx = {} as TransactionContext;
@@ -104,7 +105,34 @@ void test('customer list/history stay household-scoped and remove administrative
     assert.equal('createdBy' in history.items[0], false);
     assert.equal('supersessionReason' in history.items[0], false);
   });
-  assert.deepEqual(listArguments.slice(1), [{ status: 'cancelled', limit: 25 }, listArguments[2], 'household']);
+  assert.deepEqual(listArguments.slice(1), [{ status: 'cancelled', limit: 25, lifecycle: 'current' }, listArguments[2], 'household']);
+});
+
+void test('subscription roots pass lifecycle while customer views stay current-only and omit deletion metadata', async () => {
+  const calls: unknown[][] = [];
+  const aggregate = { id: 'subscription', vendorId: 'vendor', householdId: 'household', version: 2, deletedAt: new Date('2026-07-20T00:00:00Z'), createdAt: new Date(), updatedAt: new Date(), revisions: [] };
+  const store = { list: (...args: unknown[]) => { calls.push(['list', ...args]); return Promise.resolve({ items: [aggregate] }); }, get: (...args: unknown[]) => { calls.push(['get', ...args]); return Promise.resolve(aggregate); } };
+  const households = { requireCustomerSubscriptionHousehold: () => Promise.resolve({ householdId: 'household' }) };
+  const service = new DefaultSubscriptionService(authorization as never, store as never, {} as never, households as never, vendors as never, audits, scheduleDates, regeneration, routing);
+  await requestContextStore.run({ correlationId: '00000000-0000-4000-8000-000000000003' }, async () => {
+    const deleted = await service.list(actor, 'vendor', { lifecycle: 'deleted' });
+    await service.get(actor, 'vendor', 'subscription', 'deleted');
+    const customer = await service.listCustomer({ ...actor, authenticationMethod: 'phone_otp' }, 'vendor', 'household', {});
+    assert.equal(deleted.items[0]?.lifecycle, 'deleted');
+    assert.equal('deletedAt' in (deleted.items[0] ?? {}), false);
+    assert.equal('lifecycle' in (customer.items[0] ?? {}), false);
+  });
+  assert.deepEqual(calls.filter(([kind]) => kind === 'list').map(([, , query]) => (query as { lifecycle: string }).lifecycle), ['deleted', 'current']);
+  assert.deepEqual(calls.filter(([kind]) => kind === 'get').map(([, , , lifecycle]) => lifecycle), ['deleted']);
+});
+
+void test('subscription readers can read current roots but not deleted roots', async () => {
+  const calls: Array<{ permission: string; operation: string }> = [];
+  const authorization = { execute: (input: { permission: string; operation: string }, work: (value: TransactionContext) => Promise<unknown>) => { calls.push(input); return input.permission === 'subscription:manage' ? Promise.reject(new ApplicationError('FORBIDDEN', 'You are not allowed to perform this action', 403)) : work(tx); } };
+  const aggregate = { id: 'subscription', vendorId: 'vendor', householdId: 'household', version: 1, deletedAt: null, createdAt: new Date(), updatedAt: new Date(), revisions: [] };
+  const service = new DefaultSubscriptionService(authorization as never, { list: () => Promise.resolve({ items: [aggregate] }), get: () => Promise.resolve(aggregate) } as never, {} as never, {} as never, vendors as never, audits, scheduleDates, regeneration, routing);
+  await requestContextStore.run({ correlationId: '00000000-0000-4000-8000-000000000003' }, async () => { assert.equal((await service.list(actor, 'vendor', { lifecycle: 'current' })).items.length, 1); assert.equal((await service.get(actor, 'vendor', 'subscription', 'current')).id, 'subscription'); await assert.rejects(service.list(actor, 'vendor', { lifecycle: 'deleted' }), (cause: unknown) => cause instanceof ApplicationError && cause.status === 403); await assert.rejects(service.get(actor, 'vendor', 'subscription', 'deleted'), (cause: unknown) => cause instanceof ApplicationError && cause.status === 403); });
+  assert.deepEqual(calls.map(({ permission, operation }) => [permission, operation]), [['subscription:read', 'subscription.list'], ['subscription:read', 'subscription.get'], ['subscription:manage', 'subscription.deleted-list'], ['subscription:manage', 'subscription.deleted-get']]);
 });
 
 void test('mutation audit records the exact replacement and superseded revision IDs with the old safe plan', async () => {

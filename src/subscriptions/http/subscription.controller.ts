@@ -6,12 +6,13 @@ import { ApiErrorResponseDto } from '../../common/errors/application-error.filte
 import { ActorGuard } from '../../identity/http/actor.guard.js';
 import { SubscriptionService } from '../application/subscription.service.js';
 import {
-  CreateSubscriptionRequestDto, CustomerSubscriptionHistoryResponseDto, CustomerSubscriptionListResponseDto, CustomerSubscriptionPageQueryDto,
+  CreateSubscriptionRequestDto, CustomerSubscriptionDetailQueryDto, CustomerSubscriptionHistoryResponseDto, CustomerSubscriptionListResponseDto, CustomerSubscriptionPageQueryDto,
   CustomerSubscriptionResponseDto, ModifySubscriptionRequestDto, SubscriptionHistoryQueryDto, SubscriptionHistoryResponseDto,
   SubscriptionListResponseDto, SubscriptionPageQueryDto, SubscriptionResponseDto, SubscriptionTransitionRequestDto,
   SubscriptionVersionReasonRequestDto, toCustomerSubscriptionResponse, toCustomerSubscriptionRevisionResponse,
   toSubscriptionResponse, toSubscriptionRevisionResponse,
 } from './subscription.dto.js';
+import { LifecycleQueryDto } from '../../common/http/record-lifecycle.dto.js';
 
 const errors = [400, 401, 403, 404, 409, 503];
 
@@ -20,14 +21,14 @@ const errors = [400, 401, 403, 404, 409, 503];
 export class VendorSubscriptionController {
   constructor(@Inject(SubscriptionService) private readonly subscriptions: SubscriptionService) {}
   @Get() @ApiResponse({ status: 200, type: SubscriptionListResponseDto }) async list(@Param('vendorId', ParseUUIDPipe) vendorId: string, @Query() query: SubscriptionPageQueryDto) {
-    const page = await this.subscriptions.list(requestContextStore.requireActor(), vendorId, query);
+    const page = await this.subscriptions.list(requestContextStore.requireActor(), vendorId, { ...query, lifecycle: query.lifecycle ?? 'current' });
     return { items: page.items.map(toSubscriptionResponse), ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}) };
   }
   @Post() @ApiResponse({ status: 201, type: SubscriptionResponseDto }) async create(@Param('vendorId', ParseUUIDPipe) vendorId: string, @Body() body: CreateSubscriptionRequestDto) {
     return toSubscriptionResponse(await this.subscriptions.create(requestContextStore.requireActor(), vendorId, body));
   }
-  @Get(':subscriptionId') @ApiResponse({ status: 200, type: SubscriptionResponseDto }) async get(@Param('vendorId', ParseUUIDPipe) vendorId: string, @Param('subscriptionId', ParseUUIDPipe) subscriptionId: string) {
-    return toSubscriptionResponse(await this.subscriptions.get(requestContextStore.requireActor(), vendorId, subscriptionId));
+  @Get(':subscriptionId') @ApiResponse({ status: 200, type: SubscriptionResponseDto }) async get(@Param('vendorId', ParseUUIDPipe) vendorId: string, @Param('subscriptionId', ParseUUIDPipe) subscriptionId: string, @Query() query: LifecycleQueryDto) {
+    return toSubscriptionResponse(await this.subscriptions.get(requestContextStore.requireActor(), vendorId, subscriptionId, query.lifecycle ?? 'current'));
   }
   @Get(':subscriptionId/revisions') @ApiResponse({ status: 200, type: SubscriptionHistoryResponseDto }) async history(@Param('vendorId', ParseUUIDPipe) vendorId: string, @Param('subscriptionId', ParseUUIDPipe) subscriptionId: string, @Query() query: SubscriptionHistoryQueryDto) {
     const page = await this.subscriptions.history(requestContextStore.requireActor(), vendorId, subscriptionId, query);
@@ -55,7 +56,8 @@ export class CustomerSubscriptionController {
     const page = await this.subscriptions.listCustomer(requestContextStore.requireActor(), vendorId, householdId, query);
     return { items: page.items.map(toCustomerSubscriptionResponse), ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}) };
   }
-  @Get(':subscriptionId') @ApiResponse({ status: 200, type: CustomerSubscriptionResponseDto }) async get(@Param('vendorId', ParseUUIDPipe) vendorId: string, @Param('householdId', ParseUUIDPipe) householdId: string, @Param('subscriptionId', ParseUUIDPipe) subscriptionId: string) {
+  @Get(':subscriptionId') @ApiResponse({ status: 200, type: CustomerSubscriptionResponseDto }) async get(@Param('vendorId', ParseUUIDPipe) vendorId: string, @Param('householdId', ParseUUIDPipe) householdId: string, @Param('subscriptionId', ParseUUIDPipe) subscriptionId: string, @Query() query: CustomerSubscriptionDetailQueryDto) {
+    void query;
     return toCustomerSubscriptionResponse(await this.subscriptions.getCustomer(requestContextStore.requireActor(), vendorId, householdId, subscriptionId));
   }
   @Get(':subscriptionId/revisions') @ApiResponse({ status: 200, type: CustomerSubscriptionHistoryResponseDto }) async history(@Param('vendorId', ParseUUIDPipe) vendorId: string, @Param('householdId', ParseUUIDPipe) householdId: string, @Param('subscriptionId', ParseUUIDPipe) subscriptionId: string, @Query() query: SubscriptionHistoryQueryDto) {
@@ -68,11 +70,11 @@ for (const controller of [VendorSubscriptionController, CustomerSubscriptionCont
   for (const status of errors) ApiResponse({ status, type: ApiErrorResponseDto })(controller);
 
 for (const [key, types] of [
-  ['list', [String, SubscriptionPageQueryDto]], ['create', [String, CreateSubscriptionRequestDto]], ['get', [String, String]],
+  ['list', [String, SubscriptionPageQueryDto]], ['create', [String, CreateSubscriptionRequestDto]], ['get', [String, String, LifecycleQueryDto]],
   ['history', [String, String, SubscriptionHistoryQueryDto]], ['modify', [String, String, ModifySubscriptionRequestDto]],
   ['pause', [String, String, SubscriptionTransitionRequestDto]], ['resume', [String, String, SubscriptionTransitionRequestDto]],
   ['cancel', [String, String, SubscriptionTransitionRequestDto]], ['softDelete', [String, String, SubscriptionVersionReasonRequestDto]],
   ['restore', [String, String, SubscriptionVersionReasonRequestDto]],
 ] as const) Reflect.defineMetadata('design:paramtypes', types, VendorSubscriptionController.prototype, key);
-for (const [key, types] of [['list', [String, String, CustomerSubscriptionPageQueryDto]], ['get', [String, String, String]], ['history', [String, String, String, SubscriptionHistoryQueryDto]]] as const)
+for (const [key, types] of [['list', [String, String, CustomerSubscriptionPageQueryDto]], ['get', [String, String, String, CustomerSubscriptionDetailQueryDto]], ['history', [String, String, String, SubscriptionHistoryQueryDto]]] as const)
   Reflect.defineMetadata('design:paramtypes', types, CustomerSubscriptionController.prototype, key);

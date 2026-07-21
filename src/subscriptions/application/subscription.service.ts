@@ -6,6 +6,7 @@ import { AuditWriter } from '../../audit/application/audit-writer.js';
 import { TenantAuthorizationExecutor } from '../../authorization/application/tenant-authorization.executor.js';
 import { CatalogService } from '../../catalog/application/catalog.service.js';
 import type { TransactionContext } from '../../common/application/transaction-context.js';
+import { recordLifecycleOf, type RecordLifecycle } from '../../common/application/record-lifecycle.js';
 import type { Actor } from '../../common/context/request-context.js';
 import { requestContextStore } from '../../common/context/request-context.js';
 import { ApplicationError } from '../../common/errors/application.error.js';
@@ -42,17 +43,17 @@ export type ModifySubscriptionCommand = Omit<CreateSubscriptionCommand, 'househo
 }>;
 export type SubscriptionTransitionCommand = Readonly<{ effectiveDate: string; expectedVersion: number; reason: string }>;
 export type SubscriptionVersionReason = Readonly<{ expectedVersion: number; reason: string }>;
-export type SubscriptionResult = SubscriptionAggregateRecord & Readonly<{
-  status: 'future' | SubscriptionOperationalStatus | 'completed'; supersededRevisionCount?: number;
+export type SubscriptionResult = Omit<SubscriptionAggregateRecord, 'deletedAt' | 'deletedBy' | 'deletionReason'> & Readonly<{
+  status: 'future' | SubscriptionOperationalStatus | 'completed'; lifecycle: RecordLifecycle; supersededRevisionCount?: number;
 }>;
-export type CustomerSubscriptionResult = Omit<SubscriptionResult, 'deletedAt' | 'deletedBy' | 'deletionReason' | 'revisions'> & Readonly<{
+export type CustomerSubscriptionResult = Omit<SubscriptionResult, 'deletedAt' | 'deletedBy' | 'deletionReason' | 'lifecycle' | 'revisions'> & Readonly<{
   revisions: readonly CustomerSubscriptionRevision[];
 }>;
 
 export abstract class SubscriptionService {
   abstract create(actor: Actor, vendorId: string, command: CreateSubscriptionCommand): Promise<SubscriptionResult>;
   abstract list(actor: Actor, vendorId: string, query: SubscriptionPageQuery): Promise<Readonly<{ items: readonly SubscriptionResult[]; nextCursor?: string }>>;
-  abstract get(actor: Actor, vendorId: string, subscriptionId: string): Promise<SubscriptionResult>;
+  abstract get(actor: Actor, vendorId: string, subscriptionId: string, lifecycle: RecordLifecycle): Promise<SubscriptionResult>;
   abstract history(actor: Actor, vendorId: string, subscriptionId: string, query: Pick<SubscriptionPageQuery, 'cursor' | 'limit'>): Promise<SubscriptionHistoryPage>;
   abstract modify(actor: Actor, vendorId: string, subscriptionId: string, command: ModifySubscriptionCommand): Promise<SubscriptionResult>;
   abstract pause(actor: Actor, vendorId: string, subscriptionId: string, command: SubscriptionTransitionCommand): Promise<SubscriptionResult>;
@@ -60,7 +61,7 @@ export abstract class SubscriptionService {
   abstract cancel(actor: Actor, vendorId: string, subscriptionId: string, command: SubscriptionTransitionCommand): Promise<SubscriptionResult>;
   abstract softDelete(actor: Actor, vendorId: string, subscriptionId: string, command: SubscriptionVersionReason): Promise<void>;
   abstract restore(actor: Actor, vendorId: string, subscriptionId: string, command: SubscriptionVersionReason): Promise<SubscriptionResult>;
-  abstract listCustomer(actor: Actor, vendorId: string, householdId: string, query: SubscriptionPageQuery): Promise<Readonly<{ items: readonly CustomerSubscriptionResult[]; nextCursor?: string }>>;
+  abstract listCustomer(actor: Actor, vendorId: string, householdId: string, query: Omit<SubscriptionPageQuery, 'lifecycle'>): Promise<Readonly<{ items: readonly CustomerSubscriptionResult[]; nextCursor?: string }>>;
   abstract getCustomer(actor: Actor, vendorId: string, householdId: string, subscriptionId: string): Promise<CustomerSubscriptionResult>;
   abstract historyCustomer(actor: Actor, vendorId: string, householdId: string, subscriptionId: string, query: Pick<SubscriptionPageQuery, 'cursor' | 'limit'>): Promise<CustomerSubscriptionHistoryPage>;
 }
@@ -103,14 +104,15 @@ export class DefaultSubscriptionService extends SubscriptionService {
   list(actor: Actor, vendorId: string, query: SubscriptionPageQuery) {
     if (Boolean(query.routeId) !== Boolean(query.routeServiceDate))
       throw new ApplicationError('INVALID_ROUTE_FILTER', 'Route and service date must be provided together', 400);
-    return this.execute(actor, vendorId, 'subscription:read', 'subscription.list', async (tx) => {
+    return this.execute(actor, vendorId, query.lifecycle === 'deleted' ? 'subscription:manage' : 'subscription:read', query.lifecycle === 'deleted' ? 'subscription.deleted-list' : 'subscription.list', async (tx) => {
       const today = await this.today(tx, vendorId);
-      const { routeId, routeServiceDate, ...baseQuery } = query;
-      let storeQuery: SubscriptionStorePageQuery = baseQuery;
+      const { routeId, routeServiceDate, lifecycle, ...baseQuery } = query;
+      const rootQuery: SubscriptionStorePageQuery = { ...baseQuery, lifecycle };
+      let storeQuery: SubscriptionStorePageQuery = rootQuery;
       if (routeId && routeServiceDate) {
         const route = await this.routing.projectRoute(tx, vendorId, routeId, routeServiceDate);
         if (!route) throw new ApplicationError('ROUTE_NOT_FOUND', 'Route was not found', 404);
-        storeQuery = { ...baseQuery, route: {
+        storeQuery = { ...rootQuery, route: {
           serviceDate: routeServiceDate,
           deliverySlotId: route.deliverySlotId,
           householdIds: route.stops.map(({ householdId }) => householdId),
@@ -121,8 +123,8 @@ export class DefaultSubscriptionService extends SubscriptionService {
       return { items, ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}) };
     });
   }
-  get(actor: Actor, vendorId: string, subscriptionId: string) {
-    return this.execute(actor, vendorId, 'subscription:read', 'subscription.get', async (tx) => this.project(await this.subscriptions.get(tx, subscriptionId), await this.today(tx, vendorId)));
+  get(actor: Actor, vendorId: string, subscriptionId: string, lifecycle: RecordLifecycle) {
+    return this.execute(actor, vendorId, lifecycle === 'deleted' ? 'subscription:manage' : 'subscription:read', lifecycle === 'deleted' ? 'subscription.deleted-get' : 'subscription.get', async (tx) => this.project(await this.subscriptions.get(tx, subscriptionId, lifecycle), await this.today(tx, vendorId)));
   }
   history(actor: Actor, vendorId: string, subscriptionId: string, query: Pick<SubscriptionPageQuery, 'cursor' | 'limit'>) {
     return this.execute(actor, vendorId, 'subscription:read', 'subscription.history', (tx) => this.subscriptions.history(tx, subscriptionId, query));
@@ -172,17 +174,17 @@ export class DefaultSubscriptionService extends SubscriptionService {
     });
   }
 
-  listCustomer(actor: Actor, vendorId: string, householdId: string, query: SubscriptionPageQuery) {
+  listCustomer(actor: Actor, vendorId: string, householdId: string, query: Omit<SubscriptionPageQuery, 'lifecycle'>) {
     return this.execute(actor, vendorId, 'customer:self', 'subscription.self-list', async (tx) => {
       await this.households.requireCustomerSubscriptionHousehold(tx, actor, vendorId, householdId);
-      const today = await this.today(tx, vendorId); const page = await this.subscriptions.list(tx, query, today, householdId);
+      const today = await this.today(tx, vendorId); const page = await this.subscriptions.list(tx, { ...query, lifecycle: 'current' }, today, householdId);
       return { items: page.items.map((item) => this.projectCustomer(item, today)), ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}) };
     });
   }
   getCustomer(actor: Actor, vendorId: string, householdId: string, subscriptionId: string) {
     return this.execute(actor, vendorId, 'customer:self', 'subscription.self-get', async (tx) => {
       await this.households.requireCustomerSubscriptionHousehold(tx, actor, vendorId, householdId);
-      return this.projectCustomer(await this.subscriptions.get(tx, subscriptionId, householdId), await this.today(tx, vendorId));
+      return this.projectCustomer(await this.subscriptions.get(tx, subscriptionId, 'current', householdId), await this.today(tx, vendorId));
     });
   }
   historyCustomer(actor: Actor, vendorId: string, householdId: string, subscriptionId: string, query: Pick<SubscriptionPageQuery, 'cursor' | 'limit'>) {
@@ -242,10 +244,10 @@ export class DefaultSubscriptionService extends SubscriptionService {
     if (!allowed) throw new ApplicationError('SUBSCRIPTION_STATE_CONFLICT', 'Subscription state does not allow this transition', 409);
   }
   private currentPlan(value: SubscriptionAggregateRecord) { return value.revisions.filter(({ supersededAt }) => !supersededAt); }
-  private project(value: SubscriptionAggregateRecord, today: string): SubscriptionResult { return { ...value, status: deriveSubscriptionStatus(this.currentPlan(value), today) }; }
+  private project(value: SubscriptionAggregateRecord, today: string): SubscriptionResult { const { deletedAt, deletedBy, deletionReason, ...root } = value; void deletedBy; void deletionReason; return { ...root, status: deriveSubscriptionStatus(this.currentPlan(value), today), lifecycle: recordLifecycleOf(deletedAt) }; }
   private projectCustomer(value: SubscriptionAggregateRecord, today: string): CustomerSubscriptionResult {
-    const { deletedAt, deletedBy, deletionReason, revisions, ...root } = this.project(value, today);
-    void deletedAt; void deletedBy; void deletionReason;
+    const { lifecycle, revisions, ...root } = this.project(value, today);
+    void lifecycle;
     return { ...root, revisions: revisions.map(({ createdBy, supersessionReason, ...revision }) => {
       void createdBy; void supersessionReason; return revision;
     }) };

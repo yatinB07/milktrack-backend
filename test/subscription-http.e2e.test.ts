@@ -65,7 +65,7 @@ async function json<T>(response: Response, status: number): Promise<T> {
 }
 async function error(response: Response, status: number, code?: string) { const body = await json<{ code: string }>(response, status); if (code) assert.equal(body.code, code); }
 type Revision = Readonly<{ id: string; quantity: string; status: string; startDate: string; endDate?: string; supersededAt?: string; createdBy?: string; supersessionReason?: string }>;
-type Subscription = Readonly<{ id: string; version: number; status: string; supersededRevisionCount?: number; revisions: Revision[] }>;
+type Subscription = Readonly<{ id: string; version: number; status: string; lifecycle: 'current' | 'deleted'; supersededRevisionCount?: number; revisions: Revision[] }>;
 
 before(async () => {
   const { createApp } = await import('../src/bootstrap/create-app.js'); app = await createApp({ logger: false }); await app.listen(0, '127.0.0.1');
@@ -100,9 +100,10 @@ after(async () => {
 void test('subscription HTTP lifecycle enforces duplicate safety, dependency-specific transitions, customer privacy, and audit', async () => {
   const current = await fixture('A'); const other = await fixture('B'); const base = `/v1/vendors/${current.vendorId}/subscriptions`;
   const body = { householdId: current.householdId, productId: current.productId, unitId: current.unitId, deliverySlotId: current.slotId, quantity: '01.25', weekdays: [1, 3, 5], startDate: today };
+  await error(await api(`${base}?lifecycle=archived`, current.ownerToken), 400);
   await error(await api(base, current.ownerToken, { method: 'POST', body: { ...body, quantity: 1.25 } }), 400);
   const active = await json<Subscription>(await api(base, current.ownerToken, { method: 'POST', body }), 201);
-  assert.equal(active.version, 1); assert.equal(active.status, 'active'); assert.equal(active.revisions[0]?.quantity, '1.25');
+  assert.equal(active.version, 1); assert.equal(active.status, 'active'); assert.equal(active.lifecycle, 'current'); assert.equal(active.revisions[0]?.quantity, '1.25');
   const raceBody = { ...body, householdId: current.raceHouseholdId };
   const competing = await Promise.all([api(base, current.ownerToken, { method: 'POST', body: raceBody }), api(base, current.ownerToken, { method: 'POST', body: raceBody })]);
   assert.deepEqual(competing.map(({ status }) => status).sort(), [201, 409]);
@@ -121,7 +122,7 @@ void test('subscription HTTP lifecycle enforces duplicate safety, dependency-spe
   assert.deepEqual(competingModifications.map(({ status }) => status).sort(), [200, 409]);
   await error(competingModifications.find(({ status }) => status === 409)!, 409, 'SUBSCRIPTION_VERSION_CONFLICT');
   const modified = await json<Subscription>(competingModifications.find(({ status }) => status === 200)!, 200);
-  assert.equal(modified.supersededRevisionCount, 1); assert.equal(modified.version, 2); assert.equal(modified.status, 'future');
+  assert.equal(modified.supersededRevisionCount, 1); assert.equal(modified.version, 2); assert.equal(modified.status, 'future'); assert.equal(modified.lifecycle,'current');
   const currentRevision = modified.revisions.find(({ supersededAt }) => supersededAt === undefined); assert.ok(currentRevision);
   assert.equal(modified.revisions[0]?.id, currentRevision.id);
   assert.equal(currentRevision.startDate, '2999-01-01'); assert.equal(currentRevision.endDate, '2999-07-31');
@@ -130,13 +131,15 @@ void test('subscription HTTP lifecycle enforces duplicate safety, dependency-spe
   const racePaused = await json<Subscription>(await api(`${base}/${raced.id}/pause`, current.ownerToken, { method: 'POST', body: {
     effectiveDate: today, expectedVersion: 1, reason: 'Race pause',
   } }), 200);
-  assert.equal(racePaused.version, 2);
+  assert.equal(racePaused.version, 2); assert.equal(racePaused.lifecycle,'current');
   const competingResumes = await Promise.all([
     api(`${base}/${raced.id}/resume`, current.ownerToken, { method: 'POST', body: { effectiveDate: today, expectedVersion: 2, reason: 'Race resume' } }),
     api(`${base}/${raced.id}/resume`, current.ownerToken, { method: 'POST', body: { effectiveDate: today, expectedVersion: 2, reason: 'Race resume' } }),
   ]);
   assert.deepEqual(competingResumes.map(({ status }) => status).sort(), [200, 409]);
   await error(competingResumes.find(({ status }) => status === 409)!, 409, 'SUBSCRIPTION_VERSION_CONFLICT');
+  const resumed = await json<Subscription>(competingResumes.find(({ status }) => status === 200)!, 200);
+  assert.equal(resumed.lifecycle, 'current');
   await owner.query("UPDATE subscriptions SET created_at='2000-01-01T00:00:00Z' WHERE id=$1", [future.id]);
   const futurePage = await json<{ items: Subscription[] }>(await api(`${base}?status=future&limit=1`, current.ownerToken), 200);
   assert.equal(futurePage.items.length, 1); assert.equal(futurePage.items[0]?.id, future.id);
@@ -152,25 +155,33 @@ void test('subscription HTTP lifecycle enforces duplicate safety, dependency-spe
 
   const customerBase = `/v1/customer/vendors/${current.vendorId}/households/${current.householdId}/subscriptions`;
   const customerList = await json<{ items: Subscription[] }>(await api(`${customerBase}?status=active`, current.customerToken), 200);
-  assert.equal(customerList.items.length, 1); assert.equal(customerList.items[0]?.id, active.id);
+  assert.equal(customerList.items.length, 1); assert.equal(customerList.items[0]?.id, active.id); await error(await api(`${customerBase}?lifecycle=deleted`,current.customerToken),400);
+  const customerDetail = await json<{ id: string }>(await api(`${customerBase}/${active.id}`, current.customerToken), 200);
+  assert.equal(customerDetail.id, active.id);
   const history = await json<{ items: Revision[] }>(await api(`${customerBase}/${active.id}/revisions`, current.customerToken), 200);
   assert.equal('createdBy' in history.items[0], false); assert.equal('supersessionReason' in history.items[0], false);
   await error(await api(`/v1/customer/vendors/${current.vendorId}/households/${current.otherHouseholdId}/subscriptions/${future.id}`, current.customerToken), 403, 'FORBIDDEN');
   await error(await api(`${customerBase}/${future.id}`, current.customerToken), 404, 'SUBSCRIPTION_NOT_FOUND');
+  await error(await api(`${customerBase}/${active.id}?lifecycle=deleted`, current.customerToken), 400);
+  await error(await api(`${customerBase}/${active.id}/revisions?lifecycle=deleted`, current.customerToken), 400);
   await error(await api(base, current.customerToken), 403, 'FORBIDDEN'); await error(await api(base, other.ownerToken), 403, 'FORBIDDEN');
 
   await owner.query("UPDATE households SET status='inactive' WHERE id=$1", [current.householdId]);
   await owner.query("UPDATE products SET status='inactive' WHERE id=$1", [current.productId]);
   await owner.query('UPDATE delivery_slots SET active=false WHERE id=$1', [current.slotId]);
   const paused = await json<Subscription>(await api(`${base}/${active.id}/pause`, current.ownerToken, { method: 'POST', body: { effectiveDate: today, expectedVersion: 1, reason: 'Temporary stop' } }), 200);
-  assert.equal(paused.status, 'paused');
+  assert.equal(paused.status, 'paused'); assert.equal(paused.lifecycle,'current');
   await error(await api(`${base}/${active.id}/resume`, current.ownerToken, { method: 'POST', body: { effectiveDate: today, expectedVersion: 2, reason: 'Try resume' } }), 409, 'SUBSCRIPTION_HOUSEHOLD_NOT_AVAILABLE');
   const cancelled = await json<Subscription>(await api(`${base}/${active.id}/cancel`, current.ownerToken, { method: 'POST', body: { effectiveDate: today, expectedVersion: 2, reason: 'End service' } }), 200);
-  assert.equal(cancelled.status, 'cancelled'); assert.equal(cancelled.version, 3);
+  assert.equal(cancelled.status, 'cancelled'); assert.equal(cancelled.lifecycle,'current'); assert.equal(cancelled.version, 3);
   assert.equal((await api(`${base}/${active.id}`, current.ownerToken, { method: 'DELETE', body: { expectedVersion: 3, reason: 'Archive terminal service' } })).status, 204);
   await error(await api(`${base}/${active.id}`, current.ownerToken), 404, 'SUBSCRIPTION_NOT_FOUND');
+  const deleted=await json<Subscription>(await api(`${base}/${active.id}?lifecycle=deleted`,current.ownerToken),200);assert.equal(deleted.lifecycle,'deleted');assert.equal(deleted.version,4);for (const key of ['deletedAt','deletedBy','deletionReason']) assert.equal(key in deleted,false);await error(await api(`${base}/${active.id}/restore`,current.ownerToken,{method:'POST',body:{expectedVersion:3,reason:'Stale restore'}}),409,'SUBSCRIPTION_VERSION_CONFLICT');
+  const tiedAt=new Date('2026-07-20T00:00:00Z'),deletedA='00000000-0000-4000-8000-000000000099',deletedB='00000000-0000-4000-8000-000000000098';await owner.query('UPDATE subscriptions SET created_at=$1 WHERE id=$2',[tiedAt,active.id]);await owner.query("INSERT INTO subscriptions(id,vendor_id,household_id,version,deleted_at,deleted_by,deletion_reason,created_at,updated_at) VALUES($1,$2,$3,2,now(),$4,'Historical deletion',$5,$5),($6,$2,$3,2,now(),$4,'Historical deletion',$5,$5)",[deletedA,current.vendorId,current.otherHouseholdId,current.ownerId,tiedAt,deletedB]);
+  const foreignDeleted = randomUUID(); await owner.query("INSERT INTO subscriptions(id,vendor_id,household_id,version,deleted_at,deleted_by,deletion_reason,created_at,updated_at) VALUES($1,$2,$3,2,now(),$4,'Foreign deletion',now(),now())", [foreignDeleted, other.vendorId, other.householdId, other.ownerId]);
+  const deletedPage=await json<{items:Subscription[];nextCursor?:string}>(await api(`${base}?lifecycle=deleted&limit=1`,current.ownerToken),200);assert.equal(deletedPage.items[0]?.id,active.id);for (const key of ['deletedAt','deletedBy','deletionReason']) assert.equal(key in (deletedPage.items[0] ?? {}),false);assert.ok(deletedPage.nextCursor);const deletedNext=await json<{items:Subscription[]}>(await api(`${base}?lifecycle=deleted&limit=2&cursor=${encodeURIComponent(deletedPage.nextCursor)}`,current.ownerToken),200);assert.deepEqual(deletedNext.items.map(({id})=>id),[deletedA,deletedB]);assert.ok((await json<{items:Subscription[]}>(await api(`${base}?lifecycle=deleted&status=completed`,current.ownerToken),200)).items.some(({id})=>id===deletedA));const cancelledDeleted=await json<{items:Subscription[]}>(await api(`${base}?lifecycle=deleted&status=cancelled`,current.ownerToken),200);assert.ok(cancelledDeleted.items.some(({id,lifecycle})=>id===active.id&&lifecycle==='deleted'));assert.ok(!(await json<{items:Subscription[]}>(await api(`${base}?lifecycle=current`,current.ownerToken),200)).items.some(({id})=>id===active.id));await error(await api(`${base}/${active.id}?lifecycle=deleted`,other.ownerToken),403,'FORBIDDEN');await error(await api(`${base}/${foreignDeleted}?lifecycle=deleted`,current.ownerToken),404,'SUBSCRIPTION_NOT_FOUND');await error(await api(`${base}/${randomUUID()}?lifecycle=deleted`,current.ownerToken),404,'SUBSCRIPTION_NOT_FOUND');
   const restored = await json<Subscription>(await api(`${base}/${active.id}/restore`, current.ownerToken, { method: 'POST', body: { expectedVersion: 4, reason: 'Restore terminal history' } }), 200);
-  assert.equal(restored.status, 'cancelled'); assert.equal(restored.version, 5);
+  assert.equal(restored.status, 'cancelled'); assert.equal(restored.lifecycle,'current'); assert.equal(restored.version, 5);await error(await api(`${base}/${active.id}?lifecycle=deleted`,current.ownerToken),404,'SUBSCRIPTION_NOT_FOUND');
   const audits = await owner.query<{ action: string }>('SELECT action FROM audit_events WHERE vendor_id=$1 AND entity_type=$2', [current.vendorId, 'subscription']);
   for (const action of ['subscription.created', 'subscription.modified', 'subscription.paused', 'subscription.cancelled', 'subscription.deleted', 'subscription.restored'])
     assert.ok(audits.rows.some((row) => row.action === action), `missing ${action}`);

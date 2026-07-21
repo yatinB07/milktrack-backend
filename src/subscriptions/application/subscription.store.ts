@@ -1,4 +1,5 @@
 import type { TransactionContext } from '../../common/application/transaction-context.js';
+import type { RecordLifecycle } from '../../common/application/record-lifecycle.js';
 import type { SubscriptionOperationalStatus } from '../domain/subscription-rules.js';
 
 export type SubscriptionRevisionRecord = Readonly<{
@@ -26,7 +27,7 @@ export type SubscriptionAggregateRecord = Readonly<{
   vendorId: string;
   householdId: string;
   version: number;
-  deletedAt?: Date;
+  deletedAt: Date | null;
   deletedBy?: string;
   deletionReason?: string;
   createdAt: Date;
@@ -43,6 +44,7 @@ export type SubscriptionPageQuery = Readonly<{
   status?: 'future' | SubscriptionOperationalStatus | 'completed';
   routeId?: string;
   routeServiceDate?: string;
+  lifecycle: RecordLifecycle;
 }>;
 export type SubscriptionStorePageQuery = Omit<SubscriptionPageQuery, 'routeId' | 'routeServiceDate'> & Readonly<{
   route?: Readonly<{ serviceDate: string; deliverySlotId: string; householdIds: readonly string[] }>;
@@ -79,7 +81,7 @@ export abstract class SubscriptionStore {
     unitId: string; deliverySlotId: string; plannedQuantity: string;
   }>[]>;
   abstract list(tx: TransactionContext, query: SubscriptionStorePageQuery, today: string, householdId?: string): Promise<SubscriptionPage>;
-  abstract get(tx: TransactionContext, subscriptionId: string, householdId?: string): Promise<SubscriptionAggregateRecord>;
+  abstract get(tx: TransactionContext, subscriptionId: string, lifecycle: RecordLifecycle, householdId?: string): Promise<SubscriptionAggregateRecord>;
   abstract history(tx: TransactionContext, subscriptionId: string, query: Pick<SubscriptionPageQuery, 'cursor' | 'limit'>, householdId?: string): Promise<SubscriptionHistoryPage>;
   abstract create(tx: TransactionContext, input: CreateSubscriptionAggregate): Promise<SubscriptionAggregateRecord>;
   abstract lockRoot(tx: TransactionContext, subscriptionId: string, expectedVersion: number, includeDeleted?: boolean): Promise<SubscriptionAggregateRecord>;
