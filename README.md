@@ -141,47 +141,99 @@ expiry before another delivery attempt, so the previous token stops working.
 Treat these logs as credentials and do not use this adapter outside development
 or test.
 
+Vendor managers onboard customers and delivery agents through
+`POST /v1/vendors/{vendorId}/memberships/onboard` with a display name, E.164
+phone number, and one of those two roles. The operation reuses the canonical
+phone identity when it already exists, creates an invited membership for an
+unverified phone, and returns an active membership when that phone is already
+verified. The first successful phone OTP verification activates eligible
+invitations before issuing the session. Direct membership creation or role
+changes cannot bypass this flow and return `MEMBERSHIP_ONBOARDING_REQUIRED` for
+customer or delivery-agent roles. Membership directory reads support `role`,
+`status`, and `search` across display name, phone, and email. A searched request
+examines one stable candidate page only (at most 100 memberships), enriches that
+page once through Identity, and filters it in memory. Its continuation cursor is
+after the last examined candidate, so a page can contain fewer matches than its
+requested limit while still returning `nextCursor`; clients should follow that
+cursor to continue the search.
+
+Authentication authority checks do not scan vendors. Narrow, parameterized
+database functions resolve only the requested user's eligible membership facts,
+active authorization memberships, or activated invitation IDs. Platform roles
+remain a separate exact-user lookup. Unknown users are rejected before these
+authority lookups, and invitation activation plus its tenant audits remains one
+atomic transaction.
+
+## Schedule worker
+
+The API and schedule worker are separate entry points in the same image. The
+worker runs `npm run start:worker` in production or `npm run start:worker:dev`
+from source. Compose starts it without an HTTP server, health endpoint, published
+port, authentication keys, or database-owner credential; it receives only the
+restricted runtime database URL and worker settings.
+
+| Setting | Default | Allowed range |
+|---|---:|---:|
+| `POLL_INTERVAL_MS` | `5000` | `250`–`60000` |
+| `CONCURRENCY` | `4` | `1`–`32` |
+| `SHUTDOWN_TIMEOUT_MS` | `60000` | `1000`–`60000` |
+
+The worker seeds a rolling seven-day horizon in each eligible vendor timezone,
+claims due generation runs, and processes at bounded concurrency. Claims use a
+60-second lease, a fixed 20-second renewal heartbeat, and an ID/token/attempt
+fence so an expired or superseded worker cannot commit. Retryable failures use
+bounded backoff for at most five attempts. Worker logs use fixed safe event
+codes, and public failures use the stable `SCHEDULE_GENERATION_FAILED` envelope
+instead of exposing internal exceptions. `SIGINT` and `SIGTERM` stop new work,
+allow active work to drain up to the configured timeout, and close the Nest
+application context.
+
 ## Verification
 
-Run the repository checks in its own Compose project:
+Run no-database checks without starting Compose dependencies:
 
 ```bash
 docker compose --env-file .env run --rm --no-deps backend npm test
 docker compose --env-file .env run --rm --no-deps backend npm run verify
 docker compose --env-file .env run --rm --no-deps backend npm run db:validate
-sh test/integration-release.sh
-sh test/security-release.sh
 sh test/compose-contract.sh
-sh test/retained-volume-contract.sh
 ```
 
-Phase 2 backend release gates:
+Database and release gates own uniquely named Compose projects, load
+`.env.example`, reject inherited database/project overrides, and remove only
+their disposable volumes:
 
 ```bash
+sh test/integration-release.sh
+sh test/security-release.sh
 npm run test:migration-drift
 npm run test:openapi-compatibility
+sh test/retained-volume-contract.sh
+docker build --target production -t milktrack-backend:production .
+sh test/runtime-contract.sh milktrack-backend:production
 P2_VOLUME_GATE=1 npm run test:schedule-volume
 ```
 
-Migration drift and supported-client compatibility run in normal CI. The
-200,000-subscription schedule-volume gate is an explicit release check: it
-creates a unique disposable Compose project, refuses default/development project
-markers, and removes only its own volume.
+Integration, security, migration drift, runtime, and retained-volume gates are
+safe public entry points; the raw database test scripts refuse direct use. The
+200,000-subscription schedule-volume gate is an explicit release check rather
+than a normal CI step and requires `P2_VOLUME_GATE=1`.
 
 `test/security-release.sh` creates an isolated temporary database volume,
 validates the migration path and retained records, and runs the release-blocking
 RLS, cross-tenant, privilege, session, authentication, and audit checks. It
 removes only its own temporary volume.
 
-`test/integration-release.sh`, `test/security-release.sh`, and
-`test/retained-volume-contract.sh` each generate a unique Compose project, pin
-their service-local database URLs from `.env.example`, reject unsafe caller
-overrides, and remove only their own disposable volumes. The retained-volume
-gate takes only its disposable project down and back up before proving migration
-history was retained.
+The default `milktrack-backend` Compose project and its `postgres_data` volume
+are persistent development state. Database-mutating tests never use them, and
+repository cleanup never runs `down -v` against them. The retained-volume gate
+takes only its disposable project down and back up before proving migration
+history survives container recreation. Do not substitute the default project
+name into a release wrapper, and never run `docker compose down -v`, volume
+deletion, or pruning against the default development project.
 
 CI installs from the lockfile, runs lint/type-check/unit/build verification,
-validates Prisma, deploys every migration to an empty database, runs integration
+validates Prisma, deploys all 21 migrations to an empty database, runs integration
 and security tests, checks OpenAPI and Compose drift, audits the production
 dependency set, probes the production image contract, and always tears down its
 isolated stack. A failure in any of these gates blocks release.
@@ -235,9 +287,27 @@ same terminal history without resuming service. Customer responses require an
 active household membership and omit creator IDs and internal supersession
 reasons.
 
-Use the existing Compose migration and integration commands after applying the
-additive household, vendor-catalog, delivery-slot, effective-pricing, and
-subscription migrations.
+Vendor subscription lists filter by `householdId`, `productId`,
+`deliverySlotId`, operational `status`, and the effective `routeId` plus
+`routeServiceDate` pair. Customer lists retain the product, slot, and status
+filters within their authorized household. Household discovery supports
+case-insensitive `search` across account number, name, address, city, and postal
+code plus explicit active/inactive status. Route discovery supports status,
+delivery slot, and code/name search. Route-stop reads are effective-dated and
+return each stop's ordered household summary, including delivery address and
+coordinates, without exposing household notes or membership data.
+
+Routes support lifecycle, effective ordered stop plans, dated agent assignments,
+and agent-self assignment reads. Active subscription projections feed retained
+scheduled deliveries. Vendor managers can synchronously request a date within
+the seven-day horizon through
+`POST /v1/vendors/{vendorId}/schedule-generation-runs/manual`; authorized readers
+list runs with `trigger`, `status`, `serviceDate`, and cursor filters through
+`GET /v1/vendors/{vendorId}/schedule-generation-runs`. Responses expose safe
+counts and retry state but never lease tokens or owner credentials.
+
+Use the existing Compose migration and integration commands after applying all
+committed Phase 2 migrations.
 
 The committed contract is `openapi/v1.json`. Regenerate it from the same Nest
 application and Swagger configuration used at runtime, then check for drift:
@@ -252,6 +322,8 @@ docker compose --env-file .env run --rm --no-deps backend npm run openapi:check
 Review and commit intentional contract changes before updating generated clients
 in the web or mobile repositories. Tagged backend releases publish this artifact;
 consumers pin a compatible backend contract and must not edit generated types.
+`npm run test:openapi-compatibility` verifies the immutable web and mobile
+baselines and rejects semantic breaking changes before release.
 
 ## Operations and recovery
 

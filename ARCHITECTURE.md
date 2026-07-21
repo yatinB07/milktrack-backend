@@ -33,16 +33,32 @@ service boundary.
 |---|---|---|
 | Identity | Phone OTP, throttled administrator password/TOTP MFA, opaque sessions, actor resolution, and user lifecycle | `users`, `user_identities`, `password_credentials`, `mfa_factors`, `pending_mfa_authentications`, `administrator_authentication_attempts`, `otp_challenges`, `sessions` |
 | Vendors | Platform vendor creation, reads, and audited lifecycle transitions | `vendors` |
-| Memberships | Vendor role lifecycle, initial-owner invitation, and owner-controlled credential enrollment | `vendor_memberships`, `owner_enrollments` |
+| Memberships | Vendor role lifecycle, filtered directory reads, secure phone-member onboarding, initial-owner invitation, and owner-controlled credential enrollment | `vendor_memberships`, `owner_enrollments` |
 | Authorization | Platform-role and support-grant policy evaluation | `platform_role_assignments`, `support_access_grants` |
 | Audit | Append-only privileged/security events and tenant audit reads | `audit_events` |
 | Database | Prisma connection and tenant-scoped transaction runner | No business tables |
 | Health | Liveness HTTP contract | No tables |
-| Catalog | Vendor units and products, lifecycle rules, filtered cursor reads, optimistic product mutations, and atomic audits | `units`, `products` |
+| Customers | Household lifecycle, customer links, discovery, and route-safe household summaries | `households`, `household_members` |
+| Catalog | Units, products, delivery slots, lifecycle rules, filtered reads, and atomic audits | `units`, `products`, `delivery_slots` |
+| Pricing | Effective global prices, household overrides, and vendor/customer resolution | `global_prices`, `customer_price_overrides` |
+| Subscriptions | Effective-dated subscription roots, revisions, weekdays, lifecycle, and filtered history | `subscriptions`, `subscription_revisions`, `subscription_revision_weekdays` |
+| Routing | Route lifecycle, effective ordered stop plans, dated assignments, and agent-self reads | `routes`, `route_stop_plans`, `route_stops`, `route_assignments` |
+| Schedule coordination | Shared advisory date locks and coalesced regeneration writes used by configuration modules | No independently owned tables |
+| Scheduling | Scheduled-delivery reconciliation, generation run APIs, fenced run processing, and the worker | `scheduled_deliveries`, `schedule_generation_runs` |
 
 Some authorization tables currently have schema and policy consumers but no
 public management endpoint. Their presence does not imply that later platform
 plan, dashboard, billing, or support-administration features are implemented.
+
+Authentication crosses the forced-RLS membership boundary through three narrow,
+parameterized security-definer functions rather than enumerating vendors and
+changing tenant context for each one. They expose only an exact-user membership
+existence result, the fields needed for an authorization snapshot, or activated
+membership/vendor IDs. Each function fixes `search_path` to `pg_catalog, public`,
+revokes `PUBLIC`, and grants only `EXECUTE` to `milktrack_app`. Invitation updates
+and their tenant audit inserts execute in one statement and therefore roll back
+together. Platform roles remain an indexed exact-user query, and unknown users
+short-circuit before authority resolution.
 
 ## Authentication and session storage
 
@@ -183,9 +199,54 @@ records, and IP values are HMAC-protected before storage. Owner invitation,
 delivery-token rotation, setup, completion, lockout, retirement, deactivation,
 and explicit session revocation retain their corresponding audit history.
 
-Vendor, audit, unit, and product lists use opaque bounded cursors: default 25, maximum 100, with
-a stable ID tie-breaker. Their ordered timestamps use PostgreSQL millisecond
-precision to match JavaScript cursor serialization.
+All list APIs use opaque bounded cursors: default 25, maximum 100, with a stable
+ID tie-breaker. Household and membership directories add bounded search and
+status/role filters. Membership search examines exactly one fixed candidate page
+of at most 100 rows, calls `MemberIdentityService` once to enrich that page, and
+filters display name, phone, and email in memory. The continuation is derived
+from the last examined candidate rather than the last match, which bounds work
+and guarantees forward progress without scanning an unbounded number of sparse
+pages. Pricing filters by product and unit; subscription filters include
+household, product, slot, status, and an effective route/date pair;
+route filters include status, delivery slot, and search. Ordered timestamps use
+PostgreSQL millisecond precision to match JavaScript cursor serialization.
+
+## Phase 2 module seams
+
+Phase 2 modules collaborate through narrow application services while one local
+PostgreSQL transaction still owns consistency:
+
+- Customers supplies eligibility checks and batched route household summaries;
+- Catalog supplies product, unit, and delivery-slot facts;
+- Pricing supplies batch schedule price resolution;
+- Subscriptions supplies active schedule projections and route-effective reads;
+- Routing supplies effective stop/assignment projections;
+- Schedule coordination supplies shared date locks and regeneration enqueueing;
+- Scheduling reconciles those projections into retained scheduled deliveries.
+
+Configuration mutations acquire schedule-date locks before changing their
+aggregate, append their audit, and enqueue regeneration inside the same tenant
+transaction. These module-owned application seams are the extraction boundary:
+callers do not import another module's Prisma adapter or table records. They do
+not add a broker, network hop, or eventual consistency to the current modular
+monolith.
+
+## Schedule generation and worker boundary
+
+`SchedulingModule` owns the manual generation and run-list HTTP APIs.
+`ScheduleGenerationModule` owns generation, reconciliation, run persistence,
+and processing. `ScheduleWorkerModule` composes those operations with the
+restricted runtime database role in a Nest application context, not an HTTP
+application.
+
+Automatic work seeds a vendor-local rolling seven-day horizon. Configuration
+changes coalesce open work by vendor/date, while manual requests remain distinct.
+Claims use a 60-second lease and an ID/token/attempt fence; a fixed 20-second
+heartbeat renews ownership, and every success or failure transition checks the
+same fence. Retryable failures use bounded backoff for at most five attempts.
+The API never publishes lease state. Unknown processor failures are reduced to
+fixed `SCHEDULE_GENERATION_FAILED` details, and worker logs contain only fixed
+failure event codes.
 
 ## PostgreSQL and migration topology
 
@@ -212,11 +273,32 @@ The final Phase 1 hardening migrations are:
 - `202607180010_owner_enrollment`: forced-RLS owner enrollment state, composite
   identity integrity, and the exact-handle security-definer resolver.
 
-The next Phase 2 migration, `202607200002_vendor_catalog`, adds tenant-safe unit
-and product tables, composite vendor/unit integrity, non-deleted product code
-uniqueness, and forced RLS without resetting earlier household or Phase 1 data.
-The additive `202607200003_delivery_slots` migration adds vendor-local slot
-windows with forced RLS and preserves all earlier tenant data.
+Phase 2 schema ownership is additive and ordered:
+
+- `202607200001_households`: Customers households and retained member links;
+- `202607200002_vendor_catalog` and `202607200003_delivery_slots`: Catalog;
+- `202607200004_effective_pricing`: Pricing;
+- `202607200005_subscriptions`: Subscriptions;
+- `202607200006_routes`, `202607200007_route_stop_plans`, and
+  `202607200008_route_assignments`: Routing;
+- `202607200009_scheduled_deliveries` and
+  `202607200010_schedule_generation_runs`: Scheduling.
+
+The 21st migration, `202607210001_authentication_authority_lookup`, adds the
+three exact-user authentication authority functions and the partial
+`(user_id, status, vendor_id)` lookup index for current memberships. The partial
+index remains migration-owned because Prisma cannot represent its predicate.
+
+Every tenant table has forced RLS. Migrations are owned by the module named
+above, remain append-only after application, and preserve Phase 1 and earlier
+Phase 2 data.
+
+Database-mutating integration, security, migration-drift, seed-integration, and
+volume tests run only through wrappers that prove a unique non-default Compose
+project and disposable database URLs before execution. Their cleanup traps may
+remove only that project's volume. The default `milktrack-backend` project and
+its persistent `postgres_data` volume are never valid test or release-cleanup
+targets.
 
 Local Compose pins PostgreSQL 18.4 by digest; every Dockerfile stage derives from
 the Node.js 24.18.0 image pinned by digest. The production stage installs only
@@ -226,15 +308,6 @@ or role-name changes therefore require a reviewed migration/operations change.
 
 ## OpenAPI boundary
 
-## Customers ownership
-
-`CustomersModule` owns tenant-scoped households and household-member links. Its
-application service consumes the Memberships boundary for customer eligibility,
-uses the tenant transaction executor for every operation, and writes audits in
-the same transaction. `households` is soft deleted and normal reads exclude
-deleted rows; `household_members` retains ended link history. Both tables use
-forced RLS and composite tenant foreign keys.
-
 All application API routes start at `/v1`; Swagger UI and JSON are served at
 `/openapi` and `/openapi.json`. Nest class DTOs validate structured input with
 transformation, whitelisting, and unknown-field rejection; explicit response
@@ -242,7 +315,9 @@ DTOs prevent Prisma or credential fields from leaking. The runtime Swagger
 document and committed `openapi/v1.json` come from the same application
 configuration. CI regenerates the deterministic artifact and fails on drift.
 Backend contract changes are committed and released before dependent client
-repositories regenerate their types.
+repositories regenerate their types. The compatibility gate verifies immutable
+web and mobile baselines with the pinned semantic checker and blocks breaking
+changes even when the generated document is internally deterministic.
 
 ## Future extraction
 

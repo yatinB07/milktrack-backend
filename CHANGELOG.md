@@ -6,6 +6,24 @@ All notable backend changes are recorded here.
 
 ### Added
 
+- Added effective global and household-specific pricing with append-only periods,
+  product/unit filters, vendor-local resolution, customer-safe precedence, and
+  explicit missing-price results.
+- Added effective-dated subscriptions with retained revisions, weekday plans,
+  lifecycle transitions, customer-safe history, and household/product/slot/
+  status plus effective route/date filtering.
+- Added route definitions, effective ordered household stops with safe address
+  summaries, dated agent assignments, agent-self reads, and filtered discovery.
+- Added retained scheduled deliveries, manual and automatic generation runs,
+  filtered run visibility, configuration-change regeneration, and the same-image
+  no-port schedule worker with bounded polling, concurrency, leases, heartbeats,
+  fencing, retries, and graceful shutdown.
+- Added secure customer and delivery-agent phone onboarding, enriched membership
+  directory filters, invitation activation on successful OTP verification, and
+  support for eligible phone sessions during vendor trial.
+- Bounded membership search to one stable candidate page of at most 100 rows,
+  one Identity enrichment call, in-memory matching, and continuation after the
+  last examined candidate.
 - Added tenant-safe vendor-local delivery slots with canonical `HH:mm` windows,
   immutable codes/times, bounded filtered cursor pagination, row-locked reasoned
   lifecycle transitions, forced RLS, and atomic audits.
@@ -37,6 +55,19 @@ All notable backend changes are recorded here.
 
 ### Security
 
+- Replaced authentication-time vendor scans with narrow exact-user database
+  authority functions, fixed security-definer search paths, revoked public
+  execution, runtime-only grants, and a partial current-membership lookup index.
+- Kept invitation activation and its tenant audit inserts atomic while returning
+  only activated membership/vendor IDs, and short-circuited unknown users before
+  authority resolution.
+- Prevented direct membership creation or role changes from bypassing the phone
+  onboarding lifecycle for customers and delivery agents.
+- Added fenced schedule-run transitions, fixed safe worker log codes, safe public
+  generation failures, and response DTOs that omit leases and credentials.
+- Added forced RLS, composite tenant integrity, cross-tenant tests, and narrow
+  runtime grants for every Phase 2 pricing, subscription, routing, schedule, and
+  generation-run table.
 - Added bidirectional delivery-slot tenant isolation, runtime-role access and
   hard-delete denial checks, plus atomic rollback coverage for audit failure.
 - Added composite tenant-safe product-to-unit integrity and bidirectional catalog
@@ -58,6 +89,16 @@ All notable backend changes are recorded here.
 
 ### Operations
 
+- Added isolated public integration, security, migration-drift, runtime, and
+  retained-volume gates with generated Compose project names, pinned test
+  credentials, fail-closed override checks, signal-safe cleanup, and raw-command
+  guards. The explicit 200,000-subscription volume gate uses the same isolation.
+- Added pinned semantic OpenAPI compatibility checks for the immutable web and
+  mobile supported-client baselines.
+- Documented that repository tests never delete or mutate the default persistent
+  development PostgreSQL volume.
+- Documented all 21 committed migrations and restricted release/test cleanup to
+  proven disposable Compose projects and volumes.
 - Added the PostgreSQL 18 Compose stack with health-ordered migrations, a
   persistent named volume, and an unprivileged multi-stage production image.
 - Added Docker-first verification, Compose/runtime contracts, production
