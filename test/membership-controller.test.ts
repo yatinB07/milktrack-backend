@@ -38,11 +38,18 @@ const membership = {
   updatedAt: at,
 };
 
+const directoryMembership = {
+  ...membership,
+  displayName: 'Test Customer',
+  phone: '+919876543210',
+  email: 'customer@example.test',
+};
+
 void test('membership controller maps list results to the public DTO shape', async () => {
   const service = {
     list: () =>
       Promise.resolve({
-        items: [{ ...membership, deletedAt: at }],
+        items: [{ ...directoryMembership, deletedAt: at }],
         nextCursor: membership.id,
         internalCount: 1,
       }),
@@ -55,9 +62,65 @@ void test('membership controller maps list results to the public DTO shape', asy
   );
 
   assert.deepEqual(response, {
-    items: [membership],
+    items: [directoryMembership],
     nextCursor: membership.id,
   });
+});
+
+void test('membership controller forwards vendor directory filters', async () => {
+  let received: unknown;
+  const service = {
+    list: (_actor: Actor, _vendorId: string, query: unknown) => {
+      received = query;
+      return Promise.resolve({ items: [] });
+    },
+  } as unknown as MembershipService;
+  const controller = new MembershipController(service);
+  const query = {
+    role: 'delivery_agent' as const,
+    status: 'invited' as const,
+    search: '  priya  ',
+  };
+
+  await requestContextStore.run(
+    { correlationId: '00000000-0000-4000-8000-000000000005', actor },
+    () => controller.list(membership.vendorId, query),
+  );
+
+  assert.deepEqual(received, query);
+});
+
+void test('membership controller returns only the enriched onboarding result', async () => {
+  const result = {
+    id: directoryMembership.id,
+    vendorId: directoryMembership.vendorId,
+    userId: directoryMembership.userId,
+    role: directoryMembership.role,
+    status: 'invited' as const,
+    displayName: directoryMembership.displayName,
+    phone: directoryMembership.phone,
+    email: directoryMembership.email,
+    createdAt: directoryMembership.createdAt,
+    updatedAt: directoryMembership.updatedAt,
+  };
+  const service = {
+    onboard: () => Promise.resolve({ ...result, matchedExistingUser: true, otp: 'secret' }),
+  } as unknown as MembershipService;
+  const controller = new MembershipController(service);
+
+  const response = await requestContextStore.run(
+    { correlationId: '00000000-0000-4000-8000-000000000005', actor },
+    () =>
+      (controller as unknown as {
+        onboard(vendorId: string, request: { displayName: string; phone: string; role: 'customer' }): Promise<unknown>;
+      }).onboard(membership.vendorId, {
+        displayName: 'Test Customer',
+        phone: '+919876543210',
+        role: 'customer',
+      }),
+  );
+
+  assert.deepEqual(response, result);
 });
 
 void test('user lifecycle controller maps restored users to the public DTO shape', async () => {

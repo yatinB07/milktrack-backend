@@ -401,6 +401,7 @@ void describe('Task 13 cross-tenant security release gate', () => {
       authorization,
       new PrismaMembershipStore(),
       audits,
+      {} as never,
     );
     const currentActor = actor(fixture.ownerA);
     const operations: ReadonlyArray<() => Promise<unknown>> = [

@@ -42,7 +42,9 @@ import {
   EstablishVendorOwnerRequestDto,
   ListMembershipsQueryDto,
   MembershipPageResponseDto,
+  MembershipDirectoryResponseDto,
   MembershipResponseDto,
+  OnboardMembershipRequestDto,
   ReasonRequestDto,
   RetryOwnerEnrollmentResponseDto,
   StartOwnerEnrollmentRequestDto,
@@ -69,9 +71,18 @@ function membershipResponse(result: MembershipResult): MembershipResponseDto {
   };
 }
 
+function directoryMembershipResponse(result: MembershipResult & { displayName: string; phone?: string; email?: string }) {
+  return {
+    ...membershipResponse(result),
+    displayName: result.displayName,
+    ...(result.phone ? { phone: result.phone } : {}),
+    ...(result.email ? { email: result.email } : {}),
+  };
+}
+
 function membershipPageResponse(page: MembershipPage): MembershipPageResponseDto {
   return {
-    items: page.items.map(membershipResponse),
+    items: page.items.map(directoryMembershipResponse),
     ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}),
   };
 }
@@ -129,6 +140,21 @@ export class MembershipController {
       request,
     );
     return membershipResponse(result);
+  }
+
+  @Post('onboard')
+  @ApiCreatedResponse({ type: MembershipDirectoryResponseDto })
+  async onboard(
+    @Param('vendorId', uuidPipe) vendorId: string,
+    @Body() request: OnboardMembershipRequestDto,
+  ) {
+    return directoryMembershipResponse(
+      await this.memberships.onboard(
+        requestContextStore.requireActor(),
+        vendorId,
+        request,
+      ),
+    );
   }
 
   @Patch(':id')
@@ -395,6 +421,12 @@ Reflect.defineMetadata(
   [String, CreateMembershipRequestDto],
   MembershipController.prototype,
   'create',
+);
+Reflect.defineMetadata(
+  'design:paramtypes',
+  [String, OnboardMembershipRequestDto],
+  MembershipController.prototype,
+  'onboard',
 );
 Reflect.defineMetadata(
   'design:paramtypes',

@@ -17,6 +17,23 @@ export abstract class AuthenticationAuthorityPort {
     userId: string,
     vendorStatuses: readonly AuthenticationVendorStatus[],
   ): Promise<IdentityAuthoritySnapshot>;
+
+  abstract hasPhoneMembership(
+    context: TransactionContext,
+    userId: string,
+    statuses: readonly ('active' | 'invited')[],
+  ): Promise<boolean>;
+
+  abstract activateInvitedPhoneMemberships(
+    context: TransactionContext,
+    input: Readonly<{
+      userId: string;
+      at: Date;
+      correlationId: string;
+      deviceId?: string;
+      ipHash?: string;
+    }>,
+  ): Promise<number>;
 }
 
 export abstract class UserLifecycleAuthorizationPort {

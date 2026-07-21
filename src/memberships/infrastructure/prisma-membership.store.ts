@@ -126,16 +126,22 @@ export class PrismaMembershipStore {
 
   async listActive(
     context: TransactionContext,
-    query: Readonly<{ cursor?: string; limit?: number }>,
+    query: Readonly<{
+      cursor?: string;
+      limit?: number;
+      role?: VendorRole;
+      status?: 'invited' | 'active' | 'ended';
+    }>,
   ): Promise<MembershipRecordPage> {
     const tx = unwrapPrismaTransaction(context);
     const limit = this.cursors.parseLimit(query.limit);
     const cursor = query.cursor ? this.cursors.decode(query.cursor) : undefined;
     const rows = await tx.vendorMembership.findMany({
       where: {
-        status: 'active',
-        endedAt: null,
+        status: query.status ?? 'active',
+        ...((query.status ?? 'active') === 'ended' ? {} : { endedAt: null }),
         deletedAt: null,
+        ...(query.role ? { role: query.role } : {}),
         ...(cursor
           ? {
               OR: [
@@ -159,6 +165,10 @@ export class PrismaMembershipStore {
     };
   }
 
+  cursorFor(record: MembershipRecord): string {
+    return this.cursors.encode({ createdAt: record.createdAt, id: record.id });
+  }
+
   findActive(
     context: TransactionContext,
     id: string,
@@ -170,12 +180,74 @@ export class PrismaMembershipStore {
     });
   }
 
+  findCurrent(
+    context: TransactionContext,
+    id: string,
+  ): Promise<MembershipRecord | null> {
+    return unwrapPrismaTransaction(context).vendorMembership.findFirst({
+      where: { id, status: { in: ['active', 'invited'] }, endedAt: null, deletedAt: null },
+      select: resultFields,
+    });
+  }
+
   findIncludingDeleted(
     context: TransactionContext,
     id: string,
   ): Promise<MembershipRecord | null> {
     const tx = unwrapPrismaTransaction(context);
     return tx.vendorMembership.findFirst({ where: { id }, select: resultFields });
+  }
+
+  findCurrentByUserRole(
+    context: TransactionContext,
+    userId: string,
+    role: 'customer' | 'delivery_agent',
+  ): Promise<MembershipRecord | null> {
+    return unwrapPrismaTransaction(context).vendorMembership.findFirst({
+      where: { userId, role, endedAt: null, deletedAt: null },
+      select: resultFields,
+    });
+  }
+
+  async createWithStatus(
+    context: TransactionContext,
+    input: Readonly<{
+      id: string;
+      vendorId: string;
+      userId: string;
+      role: 'customer' | 'delivery_agent';
+      status: 'invited' | 'active';
+      at: Date;
+    }>,
+  ): Promise<MembershipRecord> {
+    try {
+      return await unwrapPrismaTransaction(context).vendorMembership.create({
+        data: {
+          id: input.id,
+          vendorId: input.vendorId,
+          userId: input.userId,
+          role: input.role,
+          status: input.status,
+          joinedAt: input.status === 'active' ? input.at : null,
+        },
+        select: resultFields,
+      });
+    } catch (error) {
+      if (prismaCode(error, 'P2002')) throw conflict();
+      throw error;
+    }
+  }
+
+  activateInvitation(
+    context: TransactionContext,
+    id: string,
+    at: Date,
+  ): Promise<MembershipRecord> {
+    return unwrapPrismaTransaction(context).vendorMembership.update({
+      where: { id },
+      data: { status: 'active', joinedAt: at },
+      select: resultFields,
+    });
   }
 
   async create(

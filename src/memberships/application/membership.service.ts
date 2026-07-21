@@ -10,6 +10,8 @@ import {
 } from '../../common/context/request-context.js';
 import { ApplicationError } from '../../common/errors/application.error.js';
 import type { TransactionContext } from '../../common/application/transaction-context.js';
+import { MemberIdentityService } from '../../identity/application/member-identity.service.js';
+import { normalizePhone } from '../../identity/domain/identity-normalization.js';
 import { TenantAuthorizationExecutor } from '../../authorization/application/tenant-authorization.executor.js';
 import {
   type MembershipRecord,
@@ -29,9 +31,12 @@ export type MembershipResult = Readonly<{
 }>;
 
 export type MembershipPage = Readonly<{
-  items: readonly MembershipResult[];
+  items: readonly MembershipDirectoryResult[];
   nextCursor?: string;
 }>;
+
+export type MembershipDirectoryResult = MembershipResult &
+  Readonly<{ displayName: string; phone?: string; email?: string }>;
 
 export type CustomerMembershipSummary = Readonly<{
   membershipId: string;
@@ -57,13 +62,24 @@ export abstract class MembershipService {
   abstract list(
     actor: Actor,
     vendorId: string,
-    query: Readonly<{ cursor?: string; limit?: number }>,
+    query: Readonly<{
+      cursor?: string;
+      limit?: number;
+      role?: VendorRole;
+      status?: 'invited' | 'active' | 'ended';
+      search?: string;
+    }>,
   ): Promise<MembershipPage>;
   abstract create(
     actor: Actor,
     vendorId: string,
     command: Readonly<{ userId: string; role: VendorRole }>,
   ): Promise<MembershipResult>;
+  abstract onboard(
+    actor: Actor,
+    vendorId: string,
+    command: Readonly<{ displayName: string; phone: string; role: 'customer' | 'delivery_agent' }>,
+  ): Promise<MembershipDirectoryResult>;
   abstract updateRole(
     actor: Actor,
     vendorId: string,
@@ -136,6 +152,8 @@ export class PrismaMembershipService extends MembershipService {
     private readonly memberships: PrismaMembershipStore,
     @Inject(AuditWriter)
     private readonly audits: AuditWriter,
+    @Inject(MemberIdentityService)
+    private readonly identities: MemberIdentityService,
   ) {
     super();
   }
@@ -167,15 +185,59 @@ export class PrismaMembershipService extends MembershipService {
   list(
     actor: Actor,
     vendorId: string,
-    query: Readonly<{ cursor?: string; limit?: number }>,
+    query: Readonly<{
+      cursor?: string;
+      limit?: number;
+      role?: VendorRole;
+      status?: 'invited' | 'active' | 'ended';
+      search?: string;
+    }>,
   ): Promise<MembershipPage> {
     return this.authorization.execute(
       { actor, vendorId, permission: 'membership:read', operation: 'membership.list' },
       async (tx) => {
-        const page = await this.memberships.listActive(tx, query);
+        const wanted = query.limit ?? 25;
+        const search = query.search?.trim().toLocaleLowerCase('en-IN');
+        const matches: MembershipDirectoryResult[] = [];
+        let cursor = query.cursor;
+        let exhausted = false;
+        while (matches.length <= wanted && !exhausted) {
+          const page = await this.memberships.listActive(tx, {
+            cursor,
+            limit: 100,
+            role: query.role,
+            status: query.status,
+          });
+          const profiles = await this.identities.profiles(tx, page.items.map((item) => item.userId));
+          for (const membership of page.items) {
+            const profile = profiles.get(membership.userId);
+            if (!profile) continue;
+            const searchable = [profile.displayName, profile.phone, profile.email]
+              .filter((value): value is string => Boolean(value))
+              .some((value) => value.toLocaleLowerCase('en-IN').includes(search ?? ''));
+            if (!search || searchable) matches.push({ ...result(membership), ...profile });
+            if (matches.length > wanted) break;
+          }
+          exhausted = !page.nextCursor;
+          cursor = page.nextCursor;
+        }
+        const items = matches.slice(0, wanted);
+        const hasMore = matches.length > wanted;
+        const lastRecord = hasMore ? items.at(-1) : undefined;
         return {
-          items: page.items.map(result),
-          ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}),
+          items,
+          ...(lastRecord
+            ? {
+                nextCursor: this.memberships.cursorFor({
+                  ...lastRecord,
+                  joinedAt: lastRecord.joinedAt ?? null,
+                  endedAt: lastRecord.endedAt ?? null,
+                  deletedAt: null,
+                  deletedBy: null,
+                  deletionReason: null,
+                }),
+              }
+            : {}),
         };
       },
     );
@@ -204,6 +266,60 @@ export class PrismaMembershipService extends MembershipService {
           newValue: { role: created.role, status: created.status },
         });
         return result(created);
+      },
+    );
+  }
+
+  onboard(
+    actor: Actor,
+    vendorId: string,
+    command: Readonly<{ displayName: string; phone: string; role: 'customer' | 'delivery_agent' }>,
+  ): Promise<MembershipDirectoryResult> {
+    const displayName = command.displayName.trim();
+    if (displayName.length < 2 || displayName.length > 120) {
+      throw new ApplicationError('INVALID_DISPLAY_NAME', 'Display name is invalid', 400);
+    }
+    const phone = normalizePhone(command.phone);
+    return this.authorization.execute(
+      { actor, vendorId, permission: 'membership:manage', operation: 'membership.onboard' },
+      async (tx) => {
+        const identity = await this.identities.resolvePhoneUser(tx, {
+          displayName,
+          phone,
+          userId: randomUUID(),
+          identityId: randomUUID(),
+        });
+        await this.memberships.lockVendor(tx);
+        let membership = await this.memberships.findCurrentByUserRole(
+          tx,
+          identity.userId,
+          command.role,
+        );
+        if (!membership) {
+          membership = await this.memberships.createWithStatus(tx, {
+            id: randomUUID(),
+            vendorId,
+            userId: identity.userId,
+            role: command.role,
+            status: identity.phoneVerified ? 'active' : 'invited',
+            at: new Date(),
+          });
+          await this.audit(tx, actor, vendorId, membership.id, 'membership.onboarded', {
+            newValue: { role: membership.role, status: membership.status },
+          });
+        } else if (membership.status === 'invited' && identity.phoneVerified) {
+          membership = await this.memberships.activateInvitation(tx, membership.id, new Date());
+          await this.audit(tx, actor, vendorId, membership.id, 'membership.invitation_accepted', {
+            oldValue: { status: 'invited' },
+            newValue: { status: 'active' },
+          });
+        }
+        return {
+          ...result(membership),
+          displayName: identity.displayName,
+          ...(identity.phone ? { phone: identity.phone } : {}),
+          ...(identity.email ? { email: identity.email } : {}),
+        };
       },
     );
   }
@@ -254,7 +370,7 @@ export class PrismaMembershipService extends MembershipService {
         await this.memberships.lockVendor(tx);
         const ownerCount = await this.memberships.lockActiveOwners(tx);
         await this.lockTarget(tx, membershipId);
-        const current = await this.active(tx, membershipId);
+        const current = await this.current(tx, membershipId);
         await this.protectOwnerRemoval(tx, actor, current, ownerCount);
         const ended = await this.memberships.end(tx, membershipId, new Date());
         await this.audit(tx, actor, vendorId, membershipId, 'membership.ended', {
@@ -341,6 +457,15 @@ export class PrismaMembershipService extends MembershipService {
     id: string,
   ): Promise<MembershipRecord> {
     const membership = await this.memberships.findActive(tx, id);
+    if (!membership) throw membershipNotFound();
+    return membership;
+  }
+
+  private async current(
+    tx: TransactionContext,
+    id: string,
+  ): Promise<MembershipRecord> {
+    const membership = await this.memberships.findCurrent(tx, id);
     if (!membership) throw membershipNotFound();
     return membership;
   }

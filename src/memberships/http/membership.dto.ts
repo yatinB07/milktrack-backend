@@ -22,6 +22,8 @@ const vendorRoles = [
   'delivery_agent',
   'customer',
 ] as const;
+const onboardingRoles = ['customer', 'delivery_agent'] as const;
+const e164Pattern = /^\+[1-9]\d{7,14}$/;
 
 export class ListMembershipsQueryDto {
   @ApiPropertyOptional({ type: String })
@@ -36,6 +38,23 @@ export class ListMembershipsQueryDto {
   @Min(1)
   @Max(100)
   limit?: number;
+
+  @ApiPropertyOptional({ type: String, enum: vendorRoles })
+  @IsOptional()
+  @IsIn(vendorRoles)
+  role?: VendorRole;
+
+  @ApiPropertyOptional({ type: String, enum: ['invited', 'active', 'ended'], default: 'active' })
+  @IsOptional()
+  @IsIn(['invited', 'active', 'ended'])
+  status?: 'invited' | 'active' | 'ended';
+
+  @ApiPropertyOptional({ type: String, minLength: 1, maxLength: 120 })
+  @IsOptional()
+  @IsString()
+  @MinLength(1)
+  @MaxLength(120)
+  search?: string;
 }
 
 export class CreateMembershipRequestDto {
@@ -46,6 +65,23 @@ export class CreateMembershipRequestDto {
   @ApiProperty({ type: String, enum: vendorRoles })
   @IsIn(vendorRoles)
   role!: VendorRole;
+}
+
+export class OnboardMembershipRequestDto {
+  @ApiProperty({ type: String, minLength: 2, maxLength: 120 })
+  @IsString()
+  @MinLength(2)
+  @MaxLength(120)
+  displayName!: string;
+
+  @ApiProperty({ type: String, pattern: e164Pattern.source, example: '+919876543210' })
+  @IsString()
+  @Matches(e164Pattern)
+  phone!: string;
+
+  @ApiProperty({ type: String, enum: onboardingRoles })
+  @IsIn(onboardingRoles)
+  role!: 'customer' | 'delivery_agent';
 }
 
 export class UpdateMembershipRoleRequestDto {
@@ -91,9 +127,20 @@ export class MembershipResponseDto {
   updatedAt!: Date;
 }
 
+export class MembershipDirectoryResponseDto extends MembershipResponseDto {
+  @ApiProperty({ type: String })
+  displayName!: string;
+
+  @ApiPropertyOptional({ type: String })
+  phone?: string;
+
+  @ApiPropertyOptional({ type: String, format: 'email' })
+  email?: string;
+}
+
 export class MembershipPageResponseDto {
-  @ApiProperty({ type: () => [MembershipResponseDto] })
-  items!: MembershipResponseDto[];
+  @ApiProperty({ type: () => [MembershipDirectoryResponseDto] })
+  items!: MembershipDirectoryResponseDto[];
 
   @ApiPropertyOptional({ type: String })
   nextCursor?: string;

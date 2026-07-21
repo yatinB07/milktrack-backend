@@ -361,6 +361,66 @@ void describe('membership and user lifecycle HTTP API', () => {
     }
   });
 
+  void it('onboards and searches invited members without exposing global match state', async () => {
+    const seed: Seed = { vendorIds: [], userIds: [] };
+    const ownerId = await insertUser(seed, 'Vendor Owner');
+    const vendorId = await insertVendor(seed);
+    await insertMembership({ vendorId, userId: ownerId, role: 'vendor_owner' });
+    const token = await issueSession(ownerId);
+    const phone = `+91${randomUUID().replaceAll('-', '').replace(/[a-f]/gu, '7').slice(0, 10)}`;
+
+    try {
+      const responses = await Promise.all([
+        request(baseUrl, token, `/v1/vendors/${vendorId}/memberships/onboard`, {
+          method: 'POST',
+          body: JSON.stringify({ displayName: 'Priya Customer', phone, role: 'customer' }),
+        }),
+        request(baseUrl, token, `/v1/vendors/${vendorId}/memberships/onboard`, {
+          method: 'POST',
+          body: JSON.stringify({ displayName: 'Priya Customer', phone, role: 'customer' }),
+        }),
+      ]);
+      const bodies = await Promise.all(responses.map((response) => response.json())) as Array<{
+        id: string;
+        userId: string;
+        status: string;
+        displayName: string;
+        phone: string;
+        matchedExistingUser?: boolean;
+        otp?: string;
+      }>;
+      assert.ok(responses.every((response) => response.status === 201), JSON.stringify(bodies));
+      assert.equal(new Set(bodies.map(({ id }) => id)).size, 1);
+      assert.equal(new Set(bodies.map(({ userId }) => userId)).size, 1);
+      assert.ok(bodies.every(({ status }) => status === 'invited'));
+      assert.ok(bodies.every(({ displayName }) => displayName === 'Priya Customer'));
+      assert.ok(bodies.every((body) => body.phone === phone));
+      assert.ok(bodies.every((body) => body.matchedExistingUser === undefined && body.otp === undefined));
+      seed.userIds.push(bodies[0].userId);
+
+      const directory = await request(
+        baseUrl,
+        token,
+        `/v1/vendors/${vendorId}/memberships?status=invited&role=customer&search=${encodeURIComponent(phone.slice(-6))}`,
+      );
+      const directoryBody = (await directory.json()) as { items: typeof bodies };
+      assert.equal(directory.status, 200, JSON.stringify(directoryBody));
+      assert.deepEqual(directoryBody.items.map(({ id }) => id), [bodies[0].id]);
+
+      const ended = await request(
+        baseUrl,
+        token,
+        `/v1/vendors/${vendorId}/memberships/${bodies[0].id}/end`,
+        { method: 'POST', body: JSON.stringify({ reason: 'Invitation withdrawn' }) },
+      );
+      const endedBody = (await ended.json()) as { status: string };
+      assert.equal(ended.status, 200, JSON.stringify(endedBody));
+      assert.equal(endedBody.status, 'ended');
+    } finally {
+      await cleanup(seed);
+    }
+  });
+
   void it('creates, changes, ends, deletes, and restores memberships with owner and audit rules', async () => {
     const seed: Seed = { vendorIds: [], userIds: [] };
     const ownerId = await insertUser(seed, 'Vendor Owner');

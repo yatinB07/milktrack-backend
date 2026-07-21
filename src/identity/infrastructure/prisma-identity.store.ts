@@ -116,12 +116,16 @@ export class PrismaIdentityStore {
         select: { id: true, userId: true, verifiedAt: true },
       });
       const lookupUserId = identity?.userId ?? NIL_USER_ID;
-      const eligible = await this.isEligiblePhoneUser(tx, lookupUserId);
-      const verifiedIdentity = identity?.verifiedAt && eligible ? identity : null;
+      const eligible = await this.isEligiblePhoneUser(
+        tx,
+        lookupUserId,
+        identity?.verifiedAt ? ['active'] : ['invited'],
+      );
+      const eligibleIdentity = identity && eligible ? identity : null;
       await tx.otpChallenge.create({
         data: {
           id: input.id,
-          identityId: verifiedIdentity?.id,
+          identityId: eligibleIdentity?.id,
           tokenHash: input.tokenHash,
           destinationHash: input.destinationHash,
           purpose: input.purpose,
@@ -132,13 +136,13 @@ export class PrismaIdentityStore {
         },
       });
       await this.audit(tx, {
-        userId: verifiedIdentity?.userId,
+        userId: eligibleIdentity?.userId,
         action: 'auth.otp_challenge_issued',
         entityId: input.id,
         correlationId: input.correlationId,
         ipHash: input.ipHash,
       });
-      return { kind: 'created' as const, deliver: verifiedIdentity !== null };
+      return { kind: 'created' as const, deliver: eligibleIdentity !== null };
     });
   }
 
@@ -163,7 +167,7 @@ export class PrismaIdentityStore {
           expiresAt: true,
           attemptCount: true,
           consumedAt: true,
-          identity: { select: { userId: true } },
+          identity: { select: { id: true, userId: true, verifiedAt: true } },
         },
       });
       if (
@@ -199,7 +203,11 @@ export class PrismaIdentityStore {
         return 'failed';
       }
       await this.sessionUserLock(tx, challenge.identity.userId);
-      if (!(await this.isEligiblePhoneUser(tx, challenge.identity.userId))) {
+      if (!(await this.isEligiblePhoneUser(
+        tx,
+        challenge.identity.userId,
+        challenge.identity.verifiedAt ? ['active'] : ['invited'],
+      ))) {
         await tx.otpChallenge.update({
           where: { id: challenge.id },
           data: { consumedAt: input.now },
@@ -210,6 +218,28 @@ export class PrismaIdentityStore {
         where: { id: challenge.id },
         data: { consumedAt: input.now },
       });
+      if (!challenge.identity.verifiedAt) {
+        await tx.userIdentity.update({
+          where: { id: challenge.identity.id },
+          data: { verifiedAt: input.now },
+        });
+        await this.audit(tx, {
+          userId: challenge.identity.userId,
+          action: 'auth.phone_identity_verified',
+          entityId: challenge.identity.id,
+          correlationId: input.correlationId,
+          ipHash: input.session.ipHash,
+          deviceId: input.session.deviceId,
+        });
+      }
+      await this.authority.activateInvitedPhoneMemberships(wrapPrismaTransaction(tx), {
+        userId: challenge.identity.userId,
+        at: input.now,
+        correlationId: input.correlationId,
+        ipHash: input.session.ipHash,
+        deviceId: input.session.deviceId,
+      });
+      if (!(await this.isEligiblePhoneUser(tx, challenge.identity.userId))) return 'failed';
       await this.createSession(
         tx,
         challenge.identity.userId,
@@ -933,15 +963,16 @@ export class PrismaIdentityStore {
   private async isEligiblePhoneUser(
     tx: Prisma.TransactionClient,
     userId: string,
+    statuses: readonly ('active' | 'invited')[] = ['active'],
   ): Promise<boolean> {
     const user = await tx.user.findFirst({
       where: { id: userId, status: 'active', deletedAt: null },
       select: { id: true },
     });
-    const activeAuthority = await this.authority.snapshot(
+    const hasPhoneMembership = await this.authority.hasPhoneMembership(
       wrapPrismaTransaction(tx),
       userId,
-      ['active'],
+      statuses,
     );
     const authenticationAuthority = await this.authority.snapshot(
       wrapPrismaTransaction(tx),
@@ -950,8 +981,7 @@ export class PrismaIdentityStore {
     );
     return user !== null &&
       authenticationAuthority.platformRoles.length === 0 &&
-      activeAuthority.memberships.length > 0 &&
-      activeAuthority.memberships.every(({ role }) => role === 'customer' || role === 'delivery_agent') &&
+      hasPhoneMembership &&
       !authenticationAuthority.memberships.some(({ role }) =>
         role === 'vendor_owner' || role === 'vendor_administrator',
       );

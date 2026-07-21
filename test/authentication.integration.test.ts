@@ -383,6 +383,131 @@ void test('known and unknown phone requests are indistinguishable while only kno
   }
 });
 
+void test('invited phone verification atomically verifies identity, activates membership, and creates a session', async () => {
+  const fixture = await insertPhoneFixture('+919876500041');
+  await ownerPool.query('UPDATE user_identities SET verified_at = NULL WHERE id = $1', [fixture.identityId]);
+  await ownerPool.query(
+    "UPDATE vendor_memberships SET status = 'invited', joined_at = NULL WHERE id = $1",
+    [fixture.membershipId],
+  );
+  const { prisma, delivery, service } = createService();
+  try {
+    const challenge = await service.requestPhoneOtp({ phone: fixture.phone, purpose: 'sign_in' });
+    const code = delivery.takeLastCodeForTest(fixture.phone);
+    assert.ok(code);
+
+    await assert.rejects(
+      service.verifyPhoneOtp({
+        challengeToken: challenge.challengeToken,
+        code: guaranteedWrongCode(code),
+        deviceId: 'invited-wrong-code',
+      }),
+      expectAuthenticationFailure,
+    );
+    const unchanged = await ownerPool.query<{
+      verified_at: Date | null;
+      status: string;
+      joined_at: Date | null;
+      sessions: string;
+    }>(
+      `SELECT ui.verified_at, vm.status::text, vm.joined_at,
+              (SELECT count(*)::text FROM sessions WHERE user_id = $1) AS sessions
+       FROM user_identities ui
+       JOIN vendor_memberships vm ON vm.user_id = ui.user_id
+       WHERE ui.id = $2 AND vm.id = $3`,
+      [fixture.userId, fixture.identityId, fixture.membershipId],
+    );
+    assert.deepEqual(unchanged.rows[0], {
+      verified_at: null,
+      status: 'invited',
+      joined_at: null,
+      sessions: '0',
+    });
+
+    const session = await service.verifyPhoneOtp({
+      challengeToken: challenge.challengeToken,
+      code,
+      deviceId: 'invited-success',
+    });
+    const activated = await ownerPool.query<{
+      verified: boolean;
+      status: string;
+      joined: boolean;
+      sessions: string;
+      audits: string;
+    }>(
+      `SELECT ui.verified_at IS NOT NULL AS verified, vm.status::text,
+              vm.joined_at IS NOT NULL AS joined,
+              (SELECT count(*)::text FROM sessions WHERE user_id = $1) AS sessions,
+              (SELECT count(*)::text FROM audit_events
+               WHERE entity_id = vm.id AND action = 'membership.invitation_accepted') AS audits
+       FROM user_identities ui
+       JOIN vendor_memberships vm ON vm.user_id = ui.user_id
+       WHERE ui.id = $2 AND vm.id = $3`,
+      [fixture.userId, fixture.identityId, fixture.membershipId],
+    );
+    assert.deepEqual(activated.rows[0], {
+      verified: true,
+      status: 'active',
+      joined: true,
+      sessions: '1',
+      audits: '1',
+    });
+    assert.equal((await service.authenticate(session.accessToken)).userId, fixture.userId);
+  } finally {
+    await prisma.$disconnect();
+    await cleanupFixture(fixture);
+  }
+});
+
+void test('an invite-acceptance audit failure rolls back identity, membership, challenge, and session state', async () => {
+  const fixture = await insertPhoneFixture('+919876500042');
+  await ownerPool.query('UPDATE user_identities SET verified_at = NULL WHERE id = $1', [fixture.identityId]);
+  await ownerPool.query(
+    "UPDATE vendor_memberships SET status = 'invited', joined_at = NULL WHERE id = $1",
+    [fixture.membershipId],
+  );
+  const { prisma, delivery, service } = createService();
+  try {
+    const challenge = await service.requestPhoneOtp({ phone: fixture.phone, purpose: 'sign_in' });
+    const code = delivery.takeLastCodeForTest(fixture.phone);
+    assert.ok(code);
+    await expectForcedAuditFailure(randomUUID(), () =>
+      service.verifyPhoneOtp({
+        challengeToken: challenge.challengeToken,
+        code,
+        deviceId: 'invite-audit-failure',
+      }),
+    );
+
+    const state = await ownerPool.query<{
+      verified_at: Date | null;
+      status: string;
+      joined_at: Date | null;
+      consumed_at: Date | null;
+      sessions: string;
+    }>(
+      `SELECT ui.verified_at, vm.status::text, vm.joined_at, oc.consumed_at,
+              (SELECT count(*)::text FROM sessions WHERE user_id = $1) AS sessions
+       FROM user_identities ui
+       JOIN vendor_memberships vm ON vm.user_id = ui.user_id
+       JOIN otp_challenges oc ON oc.identity_id = ui.id
+       WHERE ui.id = $2 AND vm.id = $3 AND oc.token_hash = $4`,
+      [fixture.userId, fixture.identityId, fixture.membershipId, tokenHash(challenge.challengeToken)],
+    );
+    assert.deepEqual(state.rows[0], {
+      verified_at: null,
+      status: 'invited',
+      joined_at: null,
+      consumed_at: null,
+      sessions: '0',
+    });
+  } finally {
+    await prisma.$disconnect();
+    await cleanupFixture(fixture);
+  }
+});
+
 void test('authentication audits exist and audit failure rolls back challenge and session state', async () => {
   const fixture = await insertPhoneFixture('+919876500023');
   const { prisma, delivery, service } = createService();

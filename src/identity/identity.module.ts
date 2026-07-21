@@ -20,6 +20,8 @@ import {
 import { LocalOtpDelivery } from './infrastructure/local-otp.delivery.js';
 import { PrismaIdentityStore } from './infrastructure/prisma-identity.store.js';
 import { PrismaUserLifecycleStore } from './infrastructure/prisma-user-lifecycle.store.js';
+import { MemberIdentityService } from './application/member-identity.service.js';
+import { PrismaMemberIdentityService } from './infrastructure/prisma-member-identity.service.js';
 import { AuthController } from './http/auth.controller.js';
 import { ActorGuard } from './http/actor.guard.js';
 
@@ -30,6 +32,8 @@ import { ActorGuard } from './http/actor.guard.js';
     { provide: RequestContextStore, useValue: requestContextStore },
     PrismaIdentityStore,
     PrismaUserLifecycleStore,
+    PrismaMemberIdentityService,
+    { provide: MemberIdentityService, useExisting: PrismaMemberIdentityService },
     { provide: UserLifecycleStore, useExisting: PrismaUserLifecycleStore },
     DefaultUserLifecycleService,
     {
@@ -57,6 +61,6 @@ import { ActorGuard } from './http/actor.guard.js';
     },
     ActorGuard,
   ],
-  exports: [ActorGuard, AuthenticationService, UserLifecycleService],
+  exports: [ActorGuard, AuthenticationService, UserLifecycleService, MemberIdentityService],
 })
 export class IdentityModule {}

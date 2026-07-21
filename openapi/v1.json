@@ -1315,11 +1315,81 @@
         },
         "type": "object"
       },
+      "MembershipDirectoryResponseDto": {
+        "properties": {
+          "createdAt": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "displayName": {
+            "type": "string"
+          },
+          "email": {
+            "format": "email",
+            "type": "string"
+          },
+          "endedAt": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "joinedAt": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "phone": {
+            "type": "string"
+          },
+          "role": {
+            "enum": [
+              "vendor_owner",
+              "vendor_administrator",
+              "delivery_agent",
+              "customer"
+            ],
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "invited",
+              "active",
+              "ended"
+            ],
+            "type": "string"
+          },
+          "updatedAt": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "userId": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "vendorId": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "vendorId",
+          "userId",
+          "role",
+          "status",
+          "createdAt",
+          "updatedAt",
+          "displayName"
+        ],
+        "type": "object"
+      },
       "MembershipPageResponseDto": {
         "properties": {
           "items": {
             "items": {
-              "$ref": "#/components/schemas/MembershipResponseDto"
+              "$ref": "#/components/schemas/MembershipDirectoryResponseDto"
             },
             "type": "array"
           },
@@ -1486,6 +1556,33 @@
           "deliverySlotId",
           "expectedVersion",
           "reason"
+        ],
+        "type": "object"
+      },
+      "OnboardMembershipRequestDto": {
+        "properties": {
+          "displayName": {
+            "maxLength": 120,
+            "minLength": 2,
+            "type": "string"
+          },
+          "phone": {
+            "example": "+919876543210",
+            "pattern": "^\\+[1-9]\\d{7,14}$",
+            "type": "string"
+          },
+          "role": {
+            "enum": [
+              "customer",
+              "delivery_agent"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "displayName",
+          "phone",
+          "role"
         ],
         "type": "object"
       },
@@ -8412,6 +8509,44 @@
               "minimum": 1,
               "type": "number"
             }
+          },
+          {
+            "in": "query",
+            "name": "role",
+            "required": false,
+            "schema": {
+              "enum": [
+                "vendor_owner",
+                "vendor_administrator",
+                "delivery_agent",
+                "customer"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "default": "active",
+              "enum": [
+                "invited",
+                "active",
+                "ended"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "search",
+            "required": false,
+            "schema": {
+              "maxLength": 120,
+              "minLength": 1,
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -8513,6 +8648,101 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/MembershipResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "opaqueBearer": []
+          }
+        ],
+        "tags": [
+          "Vendor memberships"
+        ]
+      }
+    },
+    "/v1/vendors/{vendorId}/memberships/onboard": {
+      "post": {
+        "operationId": "MembershipController_onboard",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "vendorId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OnboardMembershipRequestDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MembershipDirectoryResponseDto"
                 }
               }
             },

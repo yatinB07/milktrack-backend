@@ -26,6 +26,7 @@ const phaseOneOperations = {
   '/v1/platform/vendors/{vendorId}/owners/enrollments/{enrollmentId}/retry': ['post'],
   '/v1/vendors/{vendorId}/audit-events': ['get'],
   '/v1/vendors/{vendorId}/memberships': ['get', 'post'],
+  '/v1/vendors/{vendorId}/memberships/onboard': ['post'],
   '/v1/vendors/{vendorId}/memberships/{id}': ['delete', 'patch'],
   '/v1/vendors/{vendorId}/memberships/{id}/end': ['post'],
   '/v1/vendors/{vendorId}/memberships/{id}/restore': ['post'],
@@ -48,6 +49,7 @@ const bodyOperations = new Set([
   'post /v1/platform/vendors/{vendorId}/owners/initial',
   'post /v1/platform/vendors/{vendorId}/owners/enrollments/{enrollmentId}/retry',
   'post /v1/vendors/{vendorId}/memberships',
+  'post /v1/vendors/{vendorId}/memberships/onboard',
   'delete /v1/vendors/{vendorId}/memberships/{id}',
   'patch /v1/vendors/{vendorId}/memberships/{id}',
   'post /v1/vendors/{vendorId}/memberships/{id}/end',
@@ -71,6 +73,7 @@ const protectedOperations = new Set([
   'get /v1/vendors/{vendorId}/audit-events',
   'get /v1/vendors/{vendorId}/memberships',
   'post /v1/vendors/{vendorId}/memberships',
+  'post /v1/vendors/{vendorId}/memberships/onboard',
   'delete /v1/vendors/{vendorId}/memberships/{id}',
   'patch /v1/vendors/{vendorId}/memberships/{id}',
   'post /v1/vendors/{vendorId}/memberships/{id}/end',
@@ -163,6 +166,31 @@ void test('security contract rejects bearer authentication on an anonymous opera
   ];
 
   assert.throws(() => assertPhaseOneSecurity(mutated), /GET \/v1\/health/);
+});
+
+void test('publishes the vendor-scoped member onboarding and enriched directory contract', async () => {
+  const { document } = await readDocument();
+  const paths = object(document.paths, 'OpenAPI paths must be documented');
+  const operation = object(
+    object(paths['/v1/vendors/{vendorId}/memberships/onboard'], 'onboarding path').post,
+    'onboarding operation',
+  );
+  assert.deepEqual(operation.security, [{ opaqueBearer: [] }]);
+
+  const schemas = object(
+    object(object(document.components, 'components').schemas, 'schemas'),
+    'schemas',
+  );
+  const request = object(schemas.OnboardMembershipRequestDto, 'onboarding request');
+  assert.deepEqual(request.required, ['displayName', 'phone', 'role']);
+  const requestProperties = object(request.properties, 'onboarding request properties');
+  assert.deepEqual(object(requestProperties.role, 'onboarding role').enum, ['customer', 'delivery_agent']);
+  assert.equal(object(requestProperties.phone, 'onboarding phone').pattern, '^\\+[1-9]\\d{7,14}$');
+
+  const directory = object(schemas.MembershipDirectoryResponseDto, 'directory response');
+  assert.ok((directory.required as unknown[]).includes('displayName'));
+  const serialized = JSON.stringify(operation);
+  assert.doesNotMatch(serialized, /matchedExistingUser|otp|challengeToken|accessToken|refreshToken/u);
 });
 
 void test('publishes the complete Phase 1 HTTP contract without persistence secrets', async () => {

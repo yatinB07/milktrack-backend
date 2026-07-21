@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto';
+
 import { Injectable } from '@nestjs/common';
 
 import type { TransactionContext } from '../../common/application/transaction-context.js';
@@ -15,6 +17,98 @@ export class PrismaIdentityAuthorizationAdapter
   extends AuthenticationAuthorityPort
   implements UserLifecycleAuthorizationPort
 {
+  async hasPhoneMembership(
+    context: TransactionContext,
+    userId: string,
+    statuses: readonly ('active' | 'invited')[],
+  ): Promise<boolean> {
+    const tx = unwrapPrismaTransaction(context);
+    const vendors = await tx.vendor.findMany({
+      where: { status: 'active', deletedAt: null },
+      select: { id: true },
+    });
+    for (const { id } of vendors) {
+      await tx.$executeRaw`SELECT set_config('app.vendor_id', ${id}, true)`;
+      const count = await tx.vendorMembership.count({
+        where: {
+          userId,
+          role: { in: ['customer', 'delivery_agent'] },
+          status: { in: [...statuses] },
+          endedAt: null,
+          deletedAt: null,
+        },
+      });
+      if (count > 0) {
+        await tx.$executeRaw`SELECT set_config('app.vendor_id', '', true)`;
+        return true;
+      }
+    }
+    await tx.$executeRaw`SELECT set_config('app.vendor_id', '', true)`;
+    return false;
+  }
+
+  async activateInvitedPhoneMemberships(
+    context: TransactionContext,
+    input: Readonly<{
+      userId: string;
+      at: Date;
+      correlationId: string;
+      deviceId?: string;
+      ipHash?: string;
+    }>,
+  ): Promise<number> {
+    const tx = unwrapPrismaTransaction(context);
+    const vendors = await tx.vendor.findMany({
+      where: { status: 'active', deletedAt: null },
+      select: { id: true },
+      orderBy: { id: 'asc' },
+    });
+    let activated = 0;
+    for (const { id: vendorId } of vendors) {
+      await tx.$executeRaw`SELECT set_config('app.vendor_id', ${vendorId}, true)`;
+      const invitations = await tx.vendorMembership.findMany({
+        where: {
+          userId: input.userId,
+          role: { in: ['customer', 'delivery_agent'] },
+          status: 'invited',
+          endedAt: null,
+          deletedAt: null,
+        },
+        select: { id: true },
+        orderBy: { id: 'asc' },
+      });
+      for (const invitation of invitations) {
+        const updated = await tx.vendorMembership.updateMany({
+          where: {
+            id: invitation.id,
+            status: 'invited',
+            endedAt: null,
+            deletedAt: null,
+          },
+          data: { status: 'active', joinedAt: input.at },
+        });
+        if (updated.count !== 1) continue;
+        activated += 1;
+        await tx.auditEvent.create({
+          data: {
+            id: randomUUID(),
+            vendorId,
+            actorUserId: input.userId,
+            action: 'membership.invitation_accepted',
+            entityType: 'vendor_membership',
+            entityId: invitation.id,
+            newValue: { status: 'active' },
+            correlationId: input.correlationId,
+            deviceId: input.deviceId,
+            ipHash: input.ipHash,
+          },
+        });
+      }
+    }
+    await tx.$executeRaw`SELECT set_config('app.vendor_id', '', true)`;
+    return activated;
+  }
+
   async snapshot(
     context: TransactionContext,
     userId: string,

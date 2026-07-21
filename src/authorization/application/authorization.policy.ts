@@ -88,6 +88,7 @@ const activeVendorOperations: Readonly<Record<string, VendorPermission>> = {
   'vendor.profile.read': 'vendor:profile:read',
   'membership.list': 'membership:read',
   'membership.create': 'membership:manage',
+  'membership.onboard': 'membership:manage',
   'membership.update-role': 'membership:manage',
   'membership.end': 'membership:manage',
   'membership.delete': 'membership:manage',
