@@ -53,6 +53,8 @@ printf '%s\n' \
   "});" > "$CONFIG"
 npx prisma migrate diff --config "$CONFIG" --exit-code \
   --from-migrations "$MIGRATIONS" --to-config-datasource
+npx prisma migrate diff --config "$CONFIG" --exit-code \
+  --from-migrations "$MIGRATIONS" --to-schema /app/prisma/schema.prisma
 SH
 }
 

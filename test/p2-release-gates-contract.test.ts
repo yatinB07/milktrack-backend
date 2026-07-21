@@ -89,6 +89,8 @@ void test('migration drift gate is isolated and proves both clean and detected s
   assert.match(script, /npx prisma migrate status/);
   assert.match(script, /--from-migrations "\$MIGRATIONS"/);
   assert.match(script, /--to-config-datasource/);
+  assert.equal(script.match(/npx prisma migrate diff --config "\$CONFIG" --exit-code/g)?.length, 2);
+  assert.match(script, /--from-migrations "\$MIGRATIONS" --to-schema \/app\/prisma\/schema\.prisma/);
   assert.match(script, /shadowDatabaseUrl: env\('SHADOW_DATABASE_URL'\)/);
   assert.match(script, /provider = "postgresql"/);
   assert.match(script, /CREATE DATABASE milktrack_shadow/);

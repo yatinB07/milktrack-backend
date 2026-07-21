@@ -181,8 +181,8 @@ model AdministratorAuthenticationAttempt {
   succeeded  Boolean
   createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
 
-  @@index([accountKey, stage, createdAt(sort: Desc)])
-  @@index([ipHash, stage, createdAt(sort: Desc)])
+  @@index([accountKey, stage, createdAt(sort: Desc)], map: "administrator_auth_attempts_account_stage_created_idx")
+  @@index([ipHash, stage, createdAt(sort: Desc)], map: "administrator_auth_attempts_ip_stage_created_idx")
   @@map("administrator_authentication_attempts")
 }
 
@@ -253,7 +253,6 @@ model Vendor {
   globalPrices      GlobalPrice[]
   priceOverrides    CustomerPriceOverride[]
   subscriptions     Subscription[]
-  subscriptionRevisions SubscriptionRevision[]
   routes Route[]
   routeStopPlans RouteStopPlan[]
   routeAssignments RouteAssignment[]
@@ -278,7 +277,7 @@ model VendorMembership {
   updatedAt       DateTime         @updatedAt @map("updated_at") @db.Timestamptz(6)
   vendor          Vendor           @relation(fields: [vendorId], references: [id])
   user            User             @relation(fields: [userId], references: [id])
-  ownerEnrollment OwnerEnrollment?
+  ownerEnrollments OwnerEnrollment[]
   householdMembers HouseholdMember[]
   routeAssignments RouteAssignment[]
 
@@ -309,7 +308,7 @@ model Household {
   deletionReason String?         @map("deletion_reason")
   createdAt      DateTime        @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt      DateTime        @updatedAt @map("updated_at") @db.Timestamptz(6)
-  vendor         Vendor          @relation(fields: [vendorId], references: [id])
+  vendor         Vendor          @relation(fields: [vendorId], references: [id], onDelete: NoAction, onUpdate: NoAction)
   members        HouseholdMember[]
   priceOverrides CustomerPriceOverride[]
   subscriptions Subscription[]
@@ -317,7 +316,7 @@ model Household {
   scheduledDeliveries ScheduledDelivery[]
 
   @@unique([vendorId, id])
-  @@index([vendorId, createdAt, id])
+  @@index([vendorId, createdAt(sort: Desc), id(sort: Desc)])
   @@map("households")
 }
 
@@ -331,11 +330,11 @@ model HouseholdMember {
   endedAt              DateTime?             @map("ended_at") @db.Timestamptz(6)
   createdAt            DateTime              @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt            DateTime              @updatedAt @map("updated_at") @db.Timestamptz(6)
-  household            Household             @relation(fields: [vendorId, householdId], references: [vendorId, id])
-  customerMembership   VendorMembership      @relation(fields: [vendorId, customerMembershipId], references: [vendorId, id])
+  household            Household             @relation(fields: [vendorId, householdId], references: [vendorId, id], onDelete: NoAction, onUpdate: NoAction, map: "household_members_household_fkey")
+  customerMembership   VendorMembership      @relation(fields: [vendorId, customerMembershipId], references: [vendorId, id], onDelete: NoAction, onUpdate: NoAction, map: "household_members_customer_membership_fkey")
 
   @@unique([vendorId, id])
-  @@index([vendorId, householdId, createdAt, id])
+  @@index([vendorId, householdId, createdAt(sort: Desc), id(sort: Desc)])
   @@map("household_members")
 }
 
@@ -348,7 +347,7 @@ model Unit {
   status       CatalogStatus @default(active)
   createdAt    DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt    DateTime      @updatedAt @map("updated_at") @db.Timestamptz(6)
-  vendor       Vendor        @relation(fields: [vendorId], references: [id])
+  vendor       Vendor        @relation(fields: [vendorId], references: [id], onDelete: NoAction, onUpdate: NoAction)
   products     Product[]
 
   @@unique([vendorId, id])
@@ -370,8 +369,8 @@ model Product {
   deletionReason String?       @map("deletion_reason")
   createdAt      DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt      DateTime      @updatedAt @map("updated_at") @db.Timestamptz(6)
-  vendor         Vendor        @relation(fields: [vendorId], references: [id])
-  defaultUnit    Unit          @relation(fields: [vendorId, defaultUnitId], references: [vendorId, id])
+  vendor         Vendor        @relation(fields: [vendorId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  defaultUnit    Unit          @relation(fields: [vendorId, defaultUnitId], references: [vendorId, id], onDelete: NoAction, onUpdate: NoAction, map: "products_default_unit_fkey")
   globalPrices   GlobalPrice[] @relation("GlobalPriceProduct")
   priceOverrides CustomerPriceOverride[] @relation("CustomerPriceOverrideProduct")
   subscriptionRevisions SubscriptionRevision[]
@@ -392,7 +391,7 @@ model DeliverySlot {
   active         Boolean  @default(true)
   createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
-  vendor         Vendor   @relation(fields: [vendorId], references: [id])
+  vendor         Vendor   @relation(fields: [vendorId], references: [id], onDelete: NoAction, onUpdate: NoAction)
   subscriptionRevisions SubscriptionRevision[]
   routes Route[]
   scheduledDeliveries ScheduledDelivery[]
@@ -415,13 +414,13 @@ model GlobalPrice {
   createdBy     String   @map("created_by") @db.Uuid
   createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt     DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
-  vendor        Vendor   @relation(fields: [vendorId], references: [id])
-  product       Product  @relation("GlobalPriceProduct", fields: [vendorId, productId, unitId], references: [vendorId, id, defaultUnitId])
-  creator       User     @relation("GlobalPriceCreator", fields: [createdBy], references: [id])
+  vendor        Vendor   @relation(fields: [vendorId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  product       Product  @relation("GlobalPriceProduct", fields: [vendorId, productId, unitId], references: [vendorId, id, defaultUnitId], onDelete: NoAction, onUpdate: NoAction, map: "global_prices_product_unit_fkey")
+  creator       User     @relation("GlobalPriceCreator", fields: [createdBy], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
   @@unique([vendorId, id])
   @@index([vendorId, createdAt(sort: Desc), id(sort: Desc)])
-  @@index([vendorId, productId, unitId, effectiveFrom(sort: Desc), effectiveTo])
+  @@index([vendorId, productId, unitId, effectiveFrom(sort: Desc), effectiveTo], map: "global_prices_resolution_idx")
   @@map("global_prices")
 }
 
@@ -439,14 +438,14 @@ model CustomerPriceOverride {
   createdBy     String   @map("created_by") @db.Uuid
   createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt     DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
-  vendor        Vendor   @relation(fields: [vendorId], references: [id])
-  household     Household @relation(fields: [vendorId, householdId], references: [vendorId, id])
-  product       Product  @relation("CustomerPriceOverrideProduct", fields: [vendorId, productId, unitId], references: [vendorId, id, defaultUnitId])
-  creator       User     @relation("CustomerPriceOverrideCreator", fields: [createdBy], references: [id])
+  vendor        Vendor   @relation(fields: [vendorId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  household     Household @relation(fields: [vendorId, householdId], references: [vendorId, id], onDelete: NoAction, onUpdate: NoAction, map: "customer_price_overrides_household_fkey")
+  product       Product  @relation("CustomerPriceOverrideProduct", fields: [vendorId, productId, unitId], references: [vendorId, id, defaultUnitId], onDelete: NoAction, onUpdate: NoAction, map: "customer_price_overrides_product_unit_fkey")
+  creator       User     @relation("CustomerPriceOverrideCreator", fields: [createdBy], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
   @@unique([vendorId, id])
-  @@index([vendorId, householdId, createdAt(sort: Desc), id(sort: Desc)])
-  @@index([vendorId, householdId, productId, unitId, effectiveFrom(sort: Desc), effectiveTo])
+  @@index([vendorId, householdId, createdAt(sort: Desc), id(sort: Desc)], map: "customer_price_overrides_vendor_id_household_id_created_at_id_i")
+  @@index([vendorId, householdId, productId, unitId, effectiveFrom(sort: Desc), effectiveTo], map: "customer_price_overrides_resolution_idx")
   @@map("customer_price_overrides")
 }
 
@@ -460,9 +459,9 @@ model Subscription {
   deletionReason String?   @map("deletion_reason")
   createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt      DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
-  vendor         Vendor    @relation(fields: [vendorId], references: [id])
-  household      Household @relation(fields: [vendorId, householdId], references: [vendorId, id])
-  deleter        User?     @relation("SubscriptionDeleter", fields: [deletedBy], references: [id])
+  vendor         Vendor    @relation(fields: [vendorId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  household      Household @relation(fields: [vendorId, householdId], references: [vendorId, id], onDelete: NoAction, onUpdate: NoAction, map: "subscriptions_household_fkey")
+  deleter        User?     @relation("SubscriptionDeleter", fields: [deletedBy], references: [id], onDelete: NoAction, onUpdate: NoAction)
   revisions      SubscriptionRevision[]
   scheduledDeliveries ScheduledDelivery[]
 
@@ -490,21 +489,20 @@ model SubscriptionRevision {
   supersessionReason     String?   @map("supersession_reason")
   createdAt              DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt              DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
-  vendor                 Vendor    @relation(fields: [vendorId], references: [id])
-  subscription           Subscription @relation(fields: [vendorId, subscriptionId], references: [vendorId, id])
-  product                Product   @relation(fields: [vendorId, productId, unitId], references: [vendorId, id, defaultUnitId])
-  deliverySlot           DeliverySlot @relation(fields: [vendorId, deliverySlotId], references: [vendorId, id])
-  creator                User      @relation("SubscriptionRevisionCreator", fields: [createdBy], references: [id])
-  supersededBy           SubscriptionRevision? @relation("RevisionSupersession", fields: [vendorId, subscriptionId, supersededByRevisionId], references: [vendorId, subscriptionId, id])
+  subscription           Subscription @relation(fields: [vendorId, subscriptionId], references: [vendorId, id], onDelete: NoAction, onUpdate: NoAction, map: "subscription_revisions_subscription_fkey")
+  product                Product   @relation(fields: [vendorId, productId, unitId], references: [vendorId, id, defaultUnitId], onDelete: NoAction, onUpdate: NoAction, map: "subscription_revisions_product_unit_fkey")
+  deliverySlot           DeliverySlot @relation(fields: [vendorId, deliverySlotId], references: [vendorId, id], onDelete: NoAction, onUpdate: NoAction, map: "subscription_revisions_delivery_slot_fkey")
+  creator                User      @relation("SubscriptionRevisionCreator", fields: [createdBy], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  supersededBy           SubscriptionRevision? @relation("RevisionSupersession", fields: [vendorId, subscriptionId, supersededByRevisionId], references: [vendorId, subscriptionId, id], onDelete: NoAction, onUpdate: NoAction, map: "subscription_revisions_supersession_fkey")
   supersededRevisions    SubscriptionRevision[] @relation("RevisionSupersession")
   weekdays               SubscriptionRevisionWeekday[]
   scheduledDeliveries    ScheduledDelivery[]
 
   @@unique([vendorId, id])
   @@unique([vendorId, subscriptionId, id])
-  @@unique([vendorId, subscriptionId, id, productId, unitId, deliverySlotId])
-  @@index([vendorId, subscriptionId, effectiveFrom, id])
-  @@index([vendorId, subscriptionId, createdAt(sort: Desc), id(sort: Desc)])
+  @@unique([vendorId, subscriptionId, id, productId, unitId, deliverySlotId], map: "subscription_revisions_schedule_projection_key")
+  @@index([vendorId, subscriptionId, effectiveFrom, id], map: "subscription_revisions_current_plan_idx")
+  @@index([vendorId, subscriptionId, createdAt(sort: Desc), id(sort: Desc)], map: "subscription_revisions_history_idx")
   @@map("subscription_revisions")
 }
 
@@ -512,7 +510,7 @@ model SubscriptionRevisionWeekday {
   vendorId               String @map("vendor_id") @db.Uuid
   subscriptionRevisionId String @map("subscription_revision_id") @db.Uuid
   weekday                Int    @db.SmallInt
-  revision               SubscriptionRevision @relation(fields: [vendorId, subscriptionRevisionId], references: [vendorId, id])
+  revision               SubscriptionRevision @relation(fields: [vendorId, subscriptionRevisionId], references: [vendorId, id], onDelete: NoAction, onUpdate: NoAction, map: "subscription_revision_weekdays_revision_fkey")
 
   @@id([vendorId, subscriptionRevisionId, weekday])
   @@map("subscription_revision_weekdays")
@@ -531,16 +529,17 @@ model Route {
   deletionReason String?       @map("deletion_reason")
   createdAt      DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt      DateTime      @updatedAt @map("updated_at") @db.Timestamptz(6)
-  vendor         Vendor        @relation(fields: [vendorId], references: [id])
-  deliverySlot   DeliverySlot  @relation(fields: [vendorId, deliverySlotId], references: [vendorId, id])
-  deleter        User?         @relation("RouteDeleter", fields: [deletedBy], references: [id])
+  vendor         Vendor        @relation(fields: [vendorId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  deliverySlot   DeliverySlot  @relation(fields: [vendorId, deliverySlotId], references: [vendorId, id], onDelete: NoAction, onUpdate: NoAction, map: "routes_delivery_slot_fkey")
+  deleter        User?         @relation("RouteDeleter", fields: [deletedBy], references: [id], onDelete: NoAction, onUpdate: NoAction)
   stopPlans      RouteStopPlan[]
+  stops          RouteStop[]
   assignments    RouteAssignment[]
 
   @@unique([vendorId, id])
   @@unique([vendorId, id, deliverySlotId])
-  @@index([vendorId, status, createdAt(sort: Desc), id(sort: Desc)])
-  @@index([vendorId, deliverySlotId, status])
+  @@index([vendorId, status, createdAt(sort: Desc), id(sort: Desc)], map: "routes_vendor_id_status_created_at_id_idx")
+  @@index([vendorId, deliverySlotId, status], map: "routes_vendor_id_delivery_slot_id_status_idx")
   @@map("routes")
 }
 
@@ -557,18 +556,18 @@ model RouteStopPlan {
   supersessionReason String?         @map("supersession_reason")
   createdAt          DateTime        @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt          DateTime        @updatedAt @map("updated_at") @db.Timestamptz(6)
-  route              Route           @relation(fields: [vendorId, routeId, deliverySlotId], references: [vendorId, id, deliverySlotId])
-  vendor             Vendor          @relation(fields: [vendorId], references: [id])
-  creator            User            @relation("RouteStopPlanCreator", fields: [createdBy], references: [id])
-  supersededBy       RouteStopPlan?   @relation("RouteStopPlanSupersession", fields: [vendorId, routeId, supersededByPlanId], references: [vendorId, routeId, id])
+  route              Route           @relation(fields: [vendorId, routeId, deliverySlotId], references: [vendorId, id, deliverySlotId], onDelete: NoAction, onUpdate: NoAction, map: "route_stop_plans_route_slot_fkey")
+  vendor             Vendor          @relation(fields: [vendorId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  creator            User            @relation("RouteStopPlanCreator", fields: [createdBy], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  supersededBy       RouteStopPlan?   @relation("RouteStopPlanSupersession", fields: [vendorId, routeId, supersededByPlanId], references: [vendorId, routeId, id], onDelete: NoAction, onUpdate: NoAction, map: "route_stop_plans_supersession_fkey")
   supersededPlans    RouteStopPlan[]  @relation("RouteStopPlanSupersession")
   stops              RouteStop[]
 
   @@unique([vendorId, id])
   @@unique([vendorId, routeId, id])
   @@unique([vendorId, routeId, id, deliverySlotId])
-  @@index([vendorId, routeId, effectiveFrom, id])
-  @@index([vendorId, routeId, createdAt(sort: Desc), id(sort: Desc)])
+  @@index([vendorId, routeId, effectiveFrom, id], map: "route_stop_plans_projection_idx")
+  @@index([vendorId, routeId, createdAt(sort: Desc), id(sort: Desc)], map: "route_stop_plans_history_idx")
   @@map("route_stop_plans")
 }
 
@@ -588,14 +587,15 @@ model RouteStop {
   supersessionReason String?        @map("supersession_reason")
   createdAt          DateTime       @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt          DateTime       @updatedAt @map("updated_at") @db.Timestamptz(6)
-  plan               RouteStopPlan  @relation(fields: [vendorId, routeId, planId], references: [vendorId, routeId, id])
-  household          Household      @relation(fields: [vendorId, householdId], references: [vendorId, id])
-  creator            User           @relation("RouteStopCreator", fields: [createdBy], references: [id])
+  plan               RouteStopPlan  @relation(fields: [vendorId, routeId, planId], references: [vendorId, routeId, id], onDelete: NoAction, onUpdate: NoAction, map: "route_stops_plan_fkey")
+  route              Route          @relation(fields: [vendorId, routeId, deliverySlotId], references: [vendorId, id, deliverySlotId], onDelete: NoAction, onUpdate: NoAction, map: "route_stops_route_slot_fkey")
+  household          Household      @relation(fields: [vendorId, householdId], references: [vendorId, id], onDelete: NoAction, onUpdate: NoAction, map: "route_stops_household_fkey")
+  creator            User           @relation("RouteStopCreator", fields: [createdBy], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
   @@unique([vendorId, id])
-  @@index([vendorId, routeId, effectiveFrom, sequence, id])
-  @@index([vendorId, householdId, deliverySlotId, effectiveFrom])
-  @@index([vendorId, routeId, planId, sequence, id])
+  @@index([vendorId, routeId, effectiveFrom, sequence, id], map: "route_stops_projection_idx")
+  @@index([vendorId, householdId, deliverySlotId, effectiveFrom], map: "route_stops_household_projection_idx")
+  @@index([vendorId, routeId, planId, sequence, id], map: "route_stops_history_idx")
   @@map("route_stops")
 }
 
@@ -613,18 +613,18 @@ model RouteAssignment {
   cancellationReason String?         @map("cancellation_reason")
   createdAt         DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt         DateTime         @updatedAt @map("updated_at") @db.Timestamptz(6)
-  vendor            Vendor           @relation(fields: [vendorId], references: [id])
-  route             Route            @relation(fields: [vendorId, routeId, deliverySlotId], references: [vendorId, id, deliverySlotId])
-  agentMembership   VendorMembership @relation(fields: [vendorId, agentMembershipId], references: [vendorId, id])
-  creator           User             @relation("RouteAssignmentCreator", fields: [createdBy], references: [id])
-  updater           User             @relation("RouteAssignmentUpdater", fields: [updatedBy], references: [id])
+  vendor            Vendor           @relation(fields: [vendorId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  route             Route            @relation(fields: [vendorId, routeId, deliverySlotId], references: [vendorId, id, deliverySlotId], onDelete: NoAction, onUpdate: NoAction, map: "route_assignments_route_fkey")
+  agentMembership   VendorMembership @relation(fields: [vendorId, agentMembershipId], references: [vendorId, id], onDelete: NoAction, onUpdate: NoAction, map: "route_assignments_agent_membership_fkey")
+  creator           User             @relation("RouteAssignmentCreator", fields: [createdBy], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  updater           User             @relation("RouteAssignmentUpdater", fields: [updatedBy], references: [id], onDelete: NoAction, onUpdate: NoAction)
   scheduledDeliveries ScheduledDelivery[]
 
   @@unique([vendorId, id])
-  @@unique([vendorId, id, serviceDate, deliverySlotId])
+  @@unique([vendorId, id, serviceDate, deliverySlotId], map: "route_assignments_schedule_projection_key")
   @@unique([vendorId, routeId, serviceDate])
-  @@index([vendorId, routeId, serviceDate(sort: Desc), id(sort: Desc)])
-  @@index([vendorId, agentMembershipId, serviceDate(sort: Desc), id(sort: Desc)])
+  @@index([vendorId, routeId, serviceDate(sort: Desc), id(sort: Desc)], map: "route_assignments_vendor_route_date_id_idx")
+  @@index([vendorId, agentMembershipId, serviceDate(sort: Desc), id(sort: Desc)], map: "route_assignments_vendor_agent_date_id_idx")
   @@map("route_assignments")
 }
 
@@ -647,19 +647,19 @@ model ScheduledDelivery {
   version                Int       @default(1)
   createdAt              DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt              DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
-  vendor                 Vendor    @relation(fields: [vendorId], references: [id])
-  subscription           Subscription @relation(fields: [vendorId, subscriptionId, householdId], references: [vendorId, id, householdId])
-  subscriptionRevision   SubscriptionRevision @relation(fields: [vendorId, subscriptionId, subscriptionRevisionId, productId, unitId, deliverySlotId], references: [vendorId, subscriptionId, id, productId, unitId, deliverySlotId])
-  household              Household @relation(fields: [vendorId, householdId], references: [vendorId, id])
-  product                Product   @relation(fields: [vendorId, productId, unitId], references: [vendorId, id, defaultUnitId])
-  deliverySlot           DeliverySlot @relation(fields: [vendorId, deliverySlotId], references: [vendorId, id])
-  routeAssignment        RouteAssignment? @relation(fields: [vendorId, routeAssignmentId, serviceDate, deliverySlotId], references: [vendorId, id, serviceDate, deliverySlotId])
+  vendor                 Vendor    @relation(fields: [vendorId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  subscription           Subscription @relation(fields: [vendorId, subscriptionId, householdId], references: [vendorId, id, householdId], onDelete: NoAction, onUpdate: NoAction, map: "scheduled_deliveries_subscription_household_fkey")
+  subscriptionRevision   SubscriptionRevision @relation(fields: [vendorId, subscriptionId, subscriptionRevisionId, productId, unitId, deliverySlotId], references: [vendorId, subscriptionId, id, productId, unitId, deliverySlotId], onDelete: NoAction, onUpdate: NoAction, map: "scheduled_deliveries_revision_projection_fkey")
+  household              Household @relation(fields: [vendorId, householdId], references: [vendorId, id], onDelete: NoAction, onUpdate: NoAction, map: "scheduled_deliveries_household_fkey")
+  product                Product   @relation(fields: [vendorId, productId, unitId], references: [vendorId, id, defaultUnitId], onDelete: NoAction, onUpdate: NoAction, map: "scheduled_deliveries_product_unit_fkey")
+  deliverySlot           DeliverySlot @relation(fields: [vendorId, deliverySlotId], references: [vendorId, id], onDelete: NoAction, onUpdate: NoAction, map: "scheduled_deliveries_delivery_slot_fkey")
+  routeAssignment        RouteAssignment? @relation(fields: [vendorId, routeAssignmentId, serviceDate, deliverySlotId], references: [vendorId, id, serviceDate, deliverySlotId], onDelete: NoAction, onUpdate: NoAction, map: "scheduled_deliveries_route_assignment_fkey")
 
   @@unique([vendorId, id])
   @@unique([vendorId, subscriptionId, serviceDate, deliverySlotId], map: "scheduled_deliveries_business_key")
-  @@index([vendorId, serviceDate, status, id])
-  @@index([vendorId, routeAssignmentId, serviceDate, status, id])
-  @@index([vendorId, householdId, serviceDate, status, id])
+  @@index([vendorId, serviceDate, status, id], map: "scheduled_deliveries_vendor_date_status_id_idx")
+  @@index([vendorId, routeAssignmentId, serviceDate, status, id], map: "scheduled_deliveries_assignment_date_status_id_idx")
+  @@index([vendorId, householdId, serviceDate, status, id], map: "scheduled_deliveries_household_date_status_id_idx")
   @@map("scheduled_deliveries")
 }
 
@@ -688,13 +688,13 @@ model ScheduleGenerationRun {
   missingPriceCount Int?      @map("missing_price_count")
   createdAt         DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt         DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
-  vendor             Vendor    @relation(fields: [vendorId], references: [id])
-  requester          User?     @relation("ScheduleGenerationRunRequester", fields: [requestedByUserId], references: [id])
+  vendor             Vendor    @relation(fields: [vendorId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  requester          User?     @relation("ScheduleGenerationRunRequester", fields: [requestedByUserId], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "schedule_generation_runs_requester_fkey")
 
   @@unique([vendorId, id])
-  @@index([vendorId, status, availableAt, createdAt, id])
-  @@index([vendorId, leaseExpiresAt, createdAt, id])
-  @@index([vendorId, createdAt(sort: Desc), id(sort: Desc)])
+  @@index([vendorId, status, availableAt, createdAt, id], map: "schedule_generation_runs_due_claim_idx")
+  @@index([vendorId, leaseExpiresAt, createdAt, id], map: "schedule_generation_runs_expired_lease_idx")
+  @@index([vendorId, createdAt(sort: Desc), id(sort: Desc)], map: "schedule_generation_runs_cursor_idx")
   @@map("schedule_generation_runs")
 }
 
@@ -721,7 +721,7 @@ model OwnerEnrollment {
   createdAt          DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt          DateTime         @updatedAt @map("updated_at") @db.Timestamptz(6)
   vendor             Vendor           @relation(fields: [vendorId], references: [id])
-  membership         VendorMembership @relation(fields: [membershipId], references: [id])
+  membership         VendorMembership @relation(fields: [vendorId, membershipId], references: [vendorId, id])
   user               User             @relation(fields: [userId], references: [id])
   identity           UserIdentity     @relation(fields: [identityId, userId], references: [id, userId])
 
