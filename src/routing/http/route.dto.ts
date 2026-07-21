@@ -1,11 +1,13 @@
 import { Type } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { IsArray, IsIn, IsInt, IsOptional, IsString, IsUUID, Length, Max, Min } from 'class-validator';
-import type { RouteRecord } from '../application/route.store.js';
+import type { RouteResult } from '../application/route.store.js';
 import type { RouteAssignmentMutation, RouteAssignmentRecord } from '../application/route-assignment.store.js';
+import { LifecycleQueryDto } from '../../common/http/record-lifecycle.dto.js';
+import { recordLifecycles } from '../../common/application/record-lifecycle.js';
 
 const code = /^[A-Za-z0-9_-]{2,32}$/;
-export class RoutePageQueryDto {
+export class RoutePageQueryDto extends LifecycleQueryDto {
   @IsOptional() @IsString() cursor?: string;
   @ApiPropertyOptional({ default: 25, minimum: 1, maximum: 100 }) @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(100) limit?: number;
   @ApiPropertyOptional({ enum: ['active', 'inactive'], default: 'active' }) @IsOptional() @IsIn(['active', 'inactive']) status?: 'active' | 'inactive';
@@ -25,6 +27,7 @@ export class RouteResponseDto {
   code!: string; name!: string;
   @ApiProperty({ type: String, format: 'uuid' }) deliverySlotId!: string;
   @ApiProperty({ enum: ['active', 'inactive'] }) status!: string;
+  @ApiProperty({ enum: recordLifecycles }) lifecycle!: string;
   version!: number;
   @ApiProperty({ type: String, format: 'date-time' }) createdAt!: string;
   @ApiProperty({ type: String, format: 'date-time' }) updatedAt!: string;
@@ -103,4 +106,4 @@ export class RouteAssignmentMutationResponseDto extends RouteAssignmentResponseD
 export class RouteAssignmentListResponseDto { @ApiProperty({ type:()=>RouteAssignmentResponseDto,isArray:true }) items!:RouteAssignmentResponseDto[]; @ApiPropertyOptional({type:String}) nextCursor?:string; }
 export const toRouteAssignmentResponse=(value:RouteAssignmentRecord):RouteAssignmentResponseDto=>({...value,createdAt:value.createdAt.toISOString(),updatedAt:value.updatedAt.toISOString()});
 export const toRouteAssignmentMutationResponse=(value:RouteAssignmentMutation):RouteAssignmentMutationResponseDto=>({...toRouteAssignmentResponse(value.assignment),routeVersion:value.routeVersion});
-export const toRouteResponse = (route: RouteRecord): RouteResponseDto => ({ ...route, createdAt: route.createdAt.toISOString(), updatedAt: route.updatedAt.toISOString() });
+export const toRouteResponse = ({ lifecycle, ...route }: RouteResult): RouteResponseDto => ({ ...route, lifecycle, createdAt: route.createdAt.toISOString(), updatedAt: route.updatedAt.toISOString() });

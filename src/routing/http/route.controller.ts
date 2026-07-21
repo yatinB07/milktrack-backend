@@ -23,14 +23,15 @@ import {
   toRouteAssignmentResponse,
   toRouteResponse,
 } from './route.dto.js';
+import { LifecycleQueryDto } from '../../common/http/record-lifecycle.dto.js';
 
 @ApiTags('Vendor routes') @ApiBearerAuth('opaqueBearer') @UseGuards(ActorGuard)
 @Controller('vendors/:vendorId/routes')
 export class RouteController {
   constructor(@Inject(RouteService) private readonly routes: RouteService) {}
-  @Get() @ApiResponse({ status: 200, type: RouteListResponseDto }) async list(@Param('vendorId', ParseUUIDPipe) vendorId: string, @Query() query: RoutePageQueryDto) { const page = await this.routes.list(requestContextStore.requireActor(), vendorId, query); return { items: page.items.map(toRouteResponse), ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}) }; }
+  @Get() @ApiResponse({ status: 200, type: RouteListResponseDto }) async list(@Param('vendorId', ParseUUIDPipe) vendorId: string, @Query() query: RoutePageQueryDto) { const page = await this.routes.list(requestContextStore.requireActor(), vendorId, { ...query, lifecycle: query.lifecycle ?? 'current' }); return { items: page.items.map(toRouteResponse), ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}) }; }
   @Post() @ApiResponse({ status: 201, type: RouteResponseDto }) async create(@Param('vendorId', ParseUUIDPipe) vendorId: string, @Body() body: CreateRouteRequestDto) { return toRouteResponse(await this.routes.create(requestContextStore.requireActor(), vendorId, body)); }
-  @Get(':routeId') @ApiResponse({ status: 200, type: RouteResponseDto }) async get(@Param('vendorId', ParseUUIDPipe) vendorId: string, @Param('routeId', ParseUUIDPipe) routeId: string) { return toRouteResponse(await this.routes.get(requestContextStore.requireActor(), vendorId, routeId)); }
+  @Get(':routeId') @ApiResponse({ status: 200, type: RouteResponseDto }) async get(@Param('vendorId', ParseUUIDPipe) vendorId: string, @Param('routeId', ParseUUIDPipe) routeId: string, @Query() query: LifecycleQueryDto) { return toRouteResponse(await this.routes.get(requestContextStore.requireActor(), vendorId, routeId, query.lifecycle ?? 'current')); }
   @Get(':routeId/stops') @ApiResponse({ status: 200, type: RouteStopsResponseDto }) listStops(@Param('vendorId', ParseUUIDPipe) vendorId: string, @Param('routeId', ParseUUIDPipe) routeId: string, @Query() query: RouteStopsQueryDto) { return this.routes.listStops(requestContextStore.requireActor(), vendorId, routeId, query); }
   @Post(':routeId/stops/replace') @HttpCode(200) @ApiResponse({ status: 200, type: RouteStopsResponseDto }) replaceStops(@Param('vendorId', ParseUUIDPipe) vendorId: string, @Param('routeId', ParseUUIDPipe) routeId: string, @Body() body: ReplaceRouteStopsRequestDto) { return this.routes.replaceStops(requestContextStore.requireActor(), vendorId, routeId, body); }
   @Get(':routeId/assignments')
@@ -84,7 +85,7 @@ export class RouteController {
 }
 
 for (const status of [400, 401, 403, 404, 409, 503]) ApiResponse({ status, type: ApiErrorResponseDto })(RouteController);
-for (const [key, types] of [['list', [String, RoutePageQueryDto]], ['create', [String, CreateRouteRequestDto]], ['get', [String, String]], ['listStops', [String, String, RouteStopsQueryDto]], ['replaceStops', [String, String, ReplaceRouteStopsRequestDto]], ['listAssignments',[String,String,RouteAssignmentPageQueryDto]],['assign',[String,String,String,AssignRouteRequestDto,Object]],['cancelAssignment',[String,String,String,RouteVersionReasonRequestDto]], ['rename', [String, String, RenameRouteRequestDto]], ['deactivate', [String, String, RouteVersionReasonRequestDto]], ['reactivate', [String, String, RouteVersionReasonRequestDto]], ['softDelete', [String, String, RouteVersionReasonRequestDto]], ['restore', [String, String, RouteVersionReasonRequestDto]]] as const)
+for (const [key, types] of [['list', [String, RoutePageQueryDto]], ['create', [String, CreateRouteRequestDto]], ['get', [String, String, LifecycleQueryDto]], ['listStops', [String, String, RouteStopsQueryDto]], ['replaceStops', [String, String, ReplaceRouteStopsRequestDto]], ['listAssignments',[String,String,RouteAssignmentPageQueryDto]],['assign',[String,String,String,AssignRouteRequestDto,Object]],['cancelAssignment',[String,String,String,RouteVersionReasonRequestDto]], ['rename', [String, String, RenameRouteRequestDto]], ['deactivate', [String, String, RouteVersionReasonRequestDto]], ['reactivate', [String, String, RouteVersionReasonRequestDto]], ['softDelete', [String, String, RouteVersionReasonRequestDto]], ['restore', [String, String, RouteVersionReasonRequestDto]]] as const)
   Reflect.defineMetadata('design:paramtypes', types, RouteController.prototype, key);
 
 @ApiTags('Agent route assignments') @ApiBearerAuth('opaqueBearer') @UseGuards(ActorGuard)

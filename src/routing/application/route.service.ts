@@ -8,6 +8,7 @@ import { CatalogService } from '../../catalog/application/catalog.service.js';
 import { HouseholdService, type RouteHouseholdSummary } from '../../customers/application/household.service.js';
 import { MembershipService } from '../../memberships/application/membership.service.js';
 import type { TransactionContext } from '../../common/application/transaction-context.js';
+import { recordLifecycleOf, type RecordLifecycle } from '../../common/application/record-lifecycle.js';
 import type { Actor } from '../../common/context/request-context.js';
 import { requestContextStore } from '../../common/context/request-context.js';
 import { ApplicationError } from '../../common/errors/application.error.js';
@@ -20,7 +21,7 @@ import { normalizeRouteAssignmentMutation, validateRouteAssignmentDate } from '.
 import { RouteAssignmentStore, type RouteAssignmentMutation, type RouteAssignmentPage, type RouteAssignmentPageQuery } from './route-assignment.store.js';
 import { normalizeRouteStopReplacement, validateRouteStopDate } from '../domain/route-stop-rules.js';
 import { RouteStopPlanStore, type RouteStopPageQuery, type RouteStopProjection, type RouteStopRecord, type RouteStopSnapshot } from './route-stop-plan.store.js';
-import { RouteStore, type RoutePageQuery, type RouteRecord, type RouteStatus } from './route.store.js';
+import { RouteStore, type RoutePageQuery, type RouteRecord, type RouteResult, type RouteStatus } from './route.store.js';
 
 export type CreateRouteCommand = Readonly<{ code: string; name: string; deliverySlotId: string }>;
 export type RenameRouteCommand = Readonly<{ name: string; expectedVersion: number }>;
@@ -32,14 +33,14 @@ export type RouteStopResult = Omit<RouteStopProjection, 'stops'> & Readonly<{
 }>;
 
 export abstract class RouteService {
-  abstract list(actor: Actor, vendorId: string, query: RoutePageQuery): Promise<Readonly<{ items: readonly RouteRecord[]; nextCursor?: string }>>;
-  abstract get(actor: Actor, vendorId: string, routeId: string): Promise<RouteRecord>;
-  abstract create(actor: Actor, vendorId: string, command: CreateRouteCommand): Promise<RouteRecord>;
-  abstract rename(actor: Actor, vendorId: string, routeId: string, command: RenameRouteCommand): Promise<RouteRecord>;
-  abstract deactivate(actor: Actor, vendorId: string, routeId: string, command: RouteVersionReason): Promise<RouteRecord>;
-  abstract reactivate(actor: Actor, vendorId: string, routeId: string, command: RouteVersionReason): Promise<RouteRecord>;
+  abstract list(actor: Actor, vendorId: string, query: RoutePageQuery): Promise<Readonly<{ items: readonly RouteResult[]; nextCursor?: string }>>;
+  abstract get(actor: Actor, vendorId: string, routeId: string, lifecycle: RecordLifecycle): Promise<RouteResult>;
+  abstract create(actor: Actor, vendorId: string, command: CreateRouteCommand): Promise<RouteResult>;
+  abstract rename(actor: Actor, vendorId: string, routeId: string, command: RenameRouteCommand): Promise<RouteResult>;
+  abstract deactivate(actor: Actor, vendorId: string, routeId: string, command: RouteVersionReason): Promise<RouteResult>;
+  abstract reactivate(actor: Actor, vendorId: string, routeId: string, command: RouteVersionReason): Promise<RouteResult>;
   abstract softDelete(actor: Actor, vendorId: string, routeId: string, command: RouteVersionReason): Promise<void>;
-  abstract restore(actor: Actor, vendorId: string, routeId: string, command: RouteVersionReason): Promise<RouteRecord>;
+  abstract restore(actor: Actor, vendorId: string, routeId: string, command: RouteVersionReason): Promise<RouteResult>;
   abstract listStops(actor: Actor, vendorId: string, routeId: string, query: RouteStopPageQuery): Promise<RouteStopResult>;
   abstract replaceStops(actor: Actor, vendorId: string, routeId: string, command: ReplaceRouteStopsCommand): Promise<RouteStopResult>;
   abstract listAssignments(actor: Actor, vendorId: string, routeId: string, query: RouteAssignmentPageQuery): Promise<RouteAssignmentPage>;
@@ -66,23 +67,26 @@ export class DefaultRouteService extends RouteService {
 
   list(actor: Actor, vendorId: string, query: RoutePageQuery) {
     const search = query.search?.trim();
-    return this.execute(actor, vendorId, 'route:read', 'route.list', (tx) => this.routes.list(tx, { ...query, ...(search ? { search } : { search: undefined }) }));
+    return this.execute(actor, vendorId, query.lifecycle === 'deleted' ? 'route:manage' : 'route:read', query.lifecycle === 'deleted' ? 'route.deleted-list' : 'route.list', async (tx) => {
+      const page = await this.routes.list(tx, { ...query, ...(search ? { search } : { search: undefined }) });
+      return { items: page.items.map((route) => this.result(route)), ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}) };
+    });
   }
-  get(actor: Actor, vendorId: string, routeId: string) { return this.execute(actor, vendorId, 'route:read', 'route.get', (tx) => this.routes.get(tx, routeId)); }
+  get(actor: Actor, vendorId: string, routeId: string, lifecycle: RecordLifecycle) { return this.execute(actor, vendorId, lifecycle === 'deleted' ? 'route:manage' : 'route:read', lifecycle === 'deleted' ? 'route.deleted-get' : 'route.get', async (tx) => this.result(await this.routes.get(tx, routeId, lifecycle))); }
   create(actor: Actor, vendorId: string, command: CreateRouteCommand) {
     const code = normalizeRouteCode(command.code); const name = normalizeRouteName(command.name);
     return this.execute(actor, vendorId, 'route:manage', 'route.create', async (tx) => {
       await this.catalog.requireRouteDeliverySlot(tx, command.deliverySlotId);
-      const route = await this.routes.create(tx, { id: randomUUID(), vendorId, code, name, deliverySlotId: command.deliverySlotId, status: 'active', version: 1, createdAt: new Date(), updatedAt: new Date() });
+      const route = await this.routes.create(tx, { id: randomUUID(), vendorId, code, name, deliverySlotId: command.deliverySlotId, status: 'active', version: 1, deletedAt: null, createdAt: new Date(), updatedAt: new Date() });
       await this.audit(tx, actor, vendorId, route.id, 'route.created', undefined, route);
-      return route;
+      return this.result(route);
     });
   }
   rename(actor: Actor, vendorId: string, routeId: string, command: RenameRouteCommand) {
     const name = normalizeRouteName(command.name);
     return this.execute(actor, vendorId, 'route:manage', 'route.rename', async (tx) => {
       const change = await this.routes.rename(tx, routeId, command.expectedVersion, name);
-      await this.audit(tx, actor, vendorId, routeId, 'route.renamed', change.before, change.after); return change.after;
+      await this.audit(tx, actor, vendorId, routeId, 'route.renamed', change.before, change.after); return this.result(change.after);
     });
   }
   deactivate(actor: Actor, vendorId: string, routeId: string, command: RouteVersionReason) { return this.changeStatus(actor, vendorId, routeId, command, 'inactive', 'route.deactivate', 'route.deactivated'); }
@@ -113,13 +117,13 @@ export class DefaultRouteService extends RouteService {
       await this.scheduleDates.lock(tx, vendorId, dates);
       const change = await this.routes.restore(tx, routeId, command.expectedVersion);
       await this.audit(tx, actor, vendorId, routeId, 'route.restored', change.before, change.after, reason);
-      await this.regenerate(tx, vendorId, today, dates, actor.userId); return change.after;
+      await this.regenerate(tx, vendorId, today, dates, actor.userId); return this.result(change.after);
     });
   }
   listStops(actor: Actor, vendorId: string, routeId: string, query: RouteStopPageQuery) {
     validateRouteStopDate(query.serviceDate);
     return this.execute(actor, vendorId, 'route:read', 'route.stops-list', async (tx) => {
-      const projection = await this.stopPlans.list(tx, await this.routes.get(tx, routeId), query);
+      const projection = await this.stopPlans.list(tx, await this.routes.get(tx, routeId, 'current'), query);
       return this.enrichStops(tx, projection);
     });
   }
@@ -148,7 +152,7 @@ export class DefaultRouteService extends RouteService {
       throw new ApplicationError('INVALID_ROUTE_DATE', 'Assignment date range is invalid', 400);
     }
     return this.execute(actor, vendorId, 'route:read', 'route.assignments-list', async (tx) =>
-      this.assignments.list(tx, await this.routes.get(tx, routeId), query));
+      this.assignments.list(tx, await this.routes.get(tx, routeId, 'current'), query));
   }
 
   assign(actor: Actor, vendorId: string, routeId: string, serviceDate: string, command: AssignRouteCommand) {
@@ -233,10 +237,11 @@ export class DefaultRouteService extends RouteService {
       }
       const change = await this.routes.changeStatus(tx, routeId, command.expectedVersion, status);
       await this.audit(tx, actor, vendorId, routeId, action, change.before, change.after, reason);
-      await this.regenerate(tx, vendorId, today, dates, actor.userId); return change.after;
+      await this.regenerate(tx, vendorId, today, dates, actor.userId); return this.result(change.after);
     });
   }
   private execute<T>(actor: Actor, vendorId: string, permission: 'route:read' | 'route:manage' | 'route:self', operation: string, work: (tx: TransactionContext) => Promise<T>) { return this.authorization.execute({ actor, vendorId, permission, operation }, work); }
+  private result({ deletedAt, ...route }: RouteRecord): RouteResult { return { ...route, lifecycle: recordLifecycleOf(deletedAt) }; }
   private async today(tx: TransactionContext, vendorId: string) {
     const { timezone } = await this.vendors.getSubscriptionTimezone(tx, vendorId);
     const today = DateTime.now().setZone(timezone).toISODate();

@@ -6,8 +6,7 @@ import { ApplicationError } from '../../common/errors/application.error.js';
 import { unwrapPrismaTransaction } from '../../database/infrastructure/prisma-transaction-context.js';
 import { Prisma } from '../../generated/prisma/client.js';
 import { publicRouteStopPeriod } from '../domain/route-stop-rules.js';
-import { RouteStopPlanStore, type ReplaceRouteStopsInput, type RouteStopPageQuery } from '../application/route-stop-plan.store.js';
-import type { RouteRecord } from '../application/route.store.js';
+import { RouteStopPlanStore, type ReplaceRouteStopsInput, type RouteStopPageQuery, type RouteStopPlanRoute } from '../application/route-stop-plan.store.js';
 
 type PlanRow = { id: string; effectiveFrom: string; effectiveTo: string | null };
 type StopRow = { id: string; householdId: string; sequence: number };
@@ -17,7 +16,7 @@ type StopCursor = Readonly<{ sequence: number; id: string }>;
 
 @Injectable()
 export class PrismaRouteStopPlanStore extends RouteStopPlanStore {
-  async list(context: TransactionContext, route: RouteRecord, query: RouteStopPageQuery) {
+  async list(context: TransactionContext, route: RouteStopPlanRoute, query: RouteStopPageQuery) {
     const tx = unwrapPrismaTransaction(context);
     const limit = this.limit(query.limit); const cursor = query.cursor ? this.decode(query.cursor) : undefined;
     const plans = await this.plans(context, route.id, query.serviceDate);
@@ -108,7 +107,7 @@ export class PrismaRouteStopPlanStore extends RouteStopPlanStore {
         AND effective_from <= ${serviceDate}::date AND (effective_to IS NULL OR effective_to > ${serviceDate}::date)
       ORDER BY effective_from DESC,id DESC LIMIT 1`);
   }
-  private async snapshot(context:TransactionContext,route:RouteRecord,serviceDate:string) {
+  private async snapshot(context:TransactionContext,route:RouteStopPlanRoute,serviceDate:string) {
     const tx=unwrapPrismaTransaction(context),plan=(await this.plans(context,route.id,serviceDate))[0];
     const stops=plan?await tx.$queryRaw<StopRow[]>(Prisma.sql`SELECT id,household_id AS "householdId",sequence FROM route_stops WHERE plan_id=${plan.id}::uuid AND superseded_at IS NULL ORDER BY sequence,id`):[];
     return {routeId:route.id,routeVersion:route.version,deliverySlotId:route.deliverySlotId,serviceDate,...(plan?publicRouteStopPeriod(plan.effectiveFrom,plan.effectiveTo??undefined):{}),stops};

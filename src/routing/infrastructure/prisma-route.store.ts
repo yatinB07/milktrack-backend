@@ -5,9 +5,9 @@ import { CursorCodec } from '../../common/cursor/cursor.js';
 import { ApplicationError } from '../../common/errors/application.error.js';
 import { unwrapPrismaTransaction } from '../../database/infrastructure/prisma-transaction-context.js';
 import { Prisma } from '../../generated/prisma/client.js';
-import { RouteStore, type RoutePageQuery, type RouteRecord, type RouteStatus } from '../application/route.store.js';
+import { RouteStore, type RouteRecord, type RouteStatus, type RouteStorePageQuery } from '../application/route.store.js';
 
-const select = { id: true, vendorId: true, code: true, name: true, deliverySlotId: true, status: true, version: true, createdAt: true, updatedAt: true } as const;
+const select = { id: true, vendorId: true, code: true, name: true, deliverySlotId: true, status: true, version: true, deletedAt: true, createdAt: true, updatedAt: true } as const;
 type Row = Prisma.RouteGetPayload<{ select: typeof select }>;
 const error = (code: string, message: string, status: number) => new ApplicationError(code, message, status);
 
@@ -15,11 +15,12 @@ const error = (code: string, message: string, status: number) => new Application
 export class PrismaRouteStore extends RouteStore {
   private readonly cursors = new CursorCodec();
 
-  async list(context: TransactionContext, query: RoutePageQuery) {
+  async list(context: TransactionContext, query: RouteStorePageQuery) {
     const tx = unwrapPrismaTransaction(context); const limit = this.cursors.parseLimit(query.limit);
     const cursor = query.cursor ? this.cursors.decode(query.cursor) : undefined;
     const rows = await tx.route.findMany({ where: {
-      deletedAt: null, status: query.status ?? 'active',
+      deletedAt: query.lifecycle === 'deleted' ? { not: null } : null,
+      ...(query.lifecycle === 'current' ? { status: query.status ?? 'active' } : query.status ? { status: query.status } : {}),
       ...(query.deliverySlotId ? { deliverySlotId: query.deliverySlotId } : {}),
       ...(query.search ? { OR: [{ code: { contains: query.search, mode: 'insensitive' } }, { name: { contains: query.search, mode: 'insensitive' } }] } : {}),
       ...(cursor ? { AND: [{ OR: [{ createdAt: { lt: cursor.createdAt } }, { createdAt: cursor.createdAt, id: { lt: cursor.id } }] }] } : {}),
@@ -27,8 +28,8 @@ export class PrismaRouteStore extends RouteStore {
     const items = rows.slice(0, limit).map(toRecord); const last = items.at(-1);
     return { items, ...(rows.length > limit && last ? { nextCursor: this.cursors.encode({ createdAt: last.createdAt, id: last.id }) } : {}) };
   }
-  async get(context: TransactionContext, id: string) {
-    const row = await unwrapPrismaTransaction(context).route.findFirst({ where: { id, deletedAt: null }, select });
+  async get(context: TransactionContext, id: string, lifecycle: 'current' | 'deleted') {
+    const row = await unwrapPrismaTransaction(context).route.findFirst({ where: { id, deletedAt: lifecycle === 'deleted' ? { not: null } : null }, select });
     if (!row) throw error('ROUTE_NOT_FOUND', 'Route was not found', 404);
     return toRecord(row);
   }
