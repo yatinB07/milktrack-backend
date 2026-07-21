@@ -156,11 +156,13 @@ async function forbidden(response: Response) {
   });
 }
 
-async function waitForRun(vendorId: string): Promise<string> {
+async function waitForRun(vendorId: string, excludedRunId?: string): Promise<string> {
   for (let attempt = 0; attempt < 100; attempt += 1) {
     const row = await owner.query<{ id: string }>(
-      "SELECT id FROM schedule_generation_runs WHERE vendor_id=$1 AND trigger='manual' AND status='running'",
-      [vendorId],
+      `SELECT id FROM schedule_generation_runs
+       WHERE vendor_id=$1 AND trigger='manual' AND status='running'
+         AND ($2::uuid IS NULL OR id<>$2::uuid)`,
+      [vendorId, excludedRunId ?? null],
     );
     if (row.rows[0]) return row.rows[0].id;
     await new Promise((resolve) => setTimeout(resolve, 10));
@@ -369,6 +371,115 @@ void test('repeat and concurrent manual requests create distinct runs but one sc
     'SELECT 1 FROM scheduled_deliveries WHERE vendor_id=$1 AND service_date=$2',
     [current.vendorId, current.serviceDate],
   )).rowCount, 1);
+});
+
+void test('automatic and manual generation serialize to one business-key delivery', { timeout: 10_000 }, async () => {
+  const current = await fixture('AUTO_MANUAL_CONCURRENT');
+  const transactions = app.get(TenantTransactionRunner);
+  const runs = app.get(ScheduleGenerationRunStore);
+  const processor = app.get(ScheduleRunProcessor);
+  const lock = await owner.connect();
+  let released = false;
+  let automaticProcessing: ReturnType<ScheduleRunProcessor['process']> | undefined;
+  let manualResponse: Promise<Response> | undefined;
+
+  try {
+    assert.equal(await transactions.run(current.vendorId, (transaction) => runs.seedAutomatic(
+      transaction,
+      {
+        vendorId: current.vendorId,
+        triggerLocalDate: current.serviceDate,
+        serviceDates: [current.serviceDate],
+        now: new Date(),
+      },
+    )), 1);
+    const automaticClaim = await transactions.run(
+      current.vendorId,
+      (transaction) => runs.claimNext(transaction, {
+        vendorId: current.vendorId,
+        leaseToken: randomUUID(),
+        now: new Date(),
+      }),
+    );
+    assert.ok(automaticClaim);
+    assert.equal(automaticClaim.trigger, 'automatic');
+    assert.equal(automaticClaim.serviceDate, current.serviceDate);
+
+    await lock.query('BEGIN');
+    await lock.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [
+      `scheduling-vendor-date:${current.vendorId}:${current.serviceDate}`,
+    ]);
+
+    automaticProcessing = processor.process(automaticClaim, randomUUID());
+    manualResponse = api(
+      `/v1/vendors/${current.vendorId}/schedule-generation-runs/manual`,
+      current.ownerToken,
+      { method: 'POST', body: { serviceDate: current.serviceDate } },
+    );
+    const manualRunId = await waitForRun(current.vendorId, automaticClaim.id);
+    assert.notEqual(manualRunId, automaticClaim.id);
+
+    await lock.query('COMMIT');
+    released = true;
+    const [automaticResult, response] = await Promise.all([automaticProcessing, manualResponse]);
+    const manualResult = await json<{
+      id: string;
+      trigger: string;
+      status: string;
+      counts: { created: number; existing: number };
+    }>(response, 200);
+
+    assert.equal(automaticResult.id, automaticClaim.id);
+    assert.equal(automaticResult.trigger, 'automatic');
+    assert.equal(automaticResult.status, 'succeeded');
+    assert.equal(manualResult.id, manualRunId);
+    assert.equal(manualResult.trigger, 'manual');
+    assert.equal(manualResult.status, 'succeeded');
+    assert.notEqual(automaticResult.id, manualResult.id);
+    assert.ok(automaticResult.counts);
+    assert.deepEqual(
+      [automaticResult.counts, manualResult.counts]
+        .map(({ created, existing }) => [created, existing])
+        .sort(([left], [right]) => left - right),
+      [[0, 1], [1, 0]],
+    );
+
+    const persisted = await owner.query<{
+      id: string;
+      trigger: string;
+      status: string;
+      lease_token: string | null;
+      claimed_at: Date | null;
+      lease_expires_at: Date | null;
+    }>(
+      `SELECT id,trigger,status,lease_token,claimed_at,lease_expires_at
+       FROM schedule_generation_runs WHERE id=ANY($1::uuid[]) ORDER BY trigger`,
+      [[automaticResult.id, manualResult.id]],
+    );
+    assert.deepEqual(persisted.rows.map(({ id, trigger, status }) => ({ id, trigger, status })), [
+      { id: automaticResult.id, trigger: 'automatic', status: 'succeeded' },
+      { id: manualResult.id, trigger: 'manual', status: 'succeeded' },
+    ]);
+    assert.ok(persisted.rows.every(({ lease_token, claimed_at, lease_expires_at }) =>
+      lease_token === null && claimed_at === null && lease_expires_at === null));
+
+    const deliveries = await owner.query<{ delivery_count: number }>(
+      `SELECT count(*)::int AS delivery_count FROM (
+         SELECT vendor_id,subscription_id,service_date,delivery_slot_id
+         FROM scheduled_deliveries WHERE vendor_id=$1 AND service_date=$2
+         GROUP BY vendor_id,subscription_id,service_date,delivery_slot_id
+       ) business_keys`,
+      [current.vendorId, current.serviceDate],
+    );
+    assert.deepEqual(deliveries.rows, [{ delivery_count: 1 }]);
+  } finally {
+    if (!released) await lock.query('ROLLBACK').catch(() => undefined);
+    lock.release();
+    await Promise.allSettled([
+      automaticProcessing ?? Promise.resolve(),
+      manualResponse ?? Promise.resolve(),
+    ]);
+  }
 });
 
 void test('a live directly-running manual lease cannot be stolen', { timeout: 10_000 }, async () => {
