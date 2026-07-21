@@ -1,45 +1,25 @@
 #!/bin/sh
 set -eu
 
-PROJECT="milktrack-p2be05-drift-$(date +%s)-$$"
-ENV_FILE='.env.example'
-COMPOSE_FILE='compose.yaml'
-APP_URL='postgresql://milktrack_app:milktrack_app_local@postgres:5432/milktrack'
-OWNER_URL='postgresql://milktrack_owner:milktrack_owner_local@postgres:5432/milktrack'
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+PROJECT_PREFIX='milktrack-p2be05-drift'
+. "$SCRIPT_DIR/isolated-compose.sh"
+
 SHADOW_URL='postgresql://milktrack_owner:milktrack_owner_local@postgres:5432/milktrack_shadow'
 
-if [ "$PROJECT" = "milktrack-backend" ]; then
-  echo 'Refusing to run against the persistent development Compose project' >&2
-  exit 1
-fi
-
-cleanup() {
-  status=$?
-  trap - EXIT
-  compose down -v --remove-orphans >/dev/null 2>&1 || true
-  exit "$status"
-}
-
-trap cleanup EXIT
-trap 'exit 130' HUP INT TERM
-
-compose() {
-  POSTGRES_DB=milktrack \
-  POSTGRES_USER=milktrack_owner \
-  POSTGRES_PASSWORD=milktrack_owner_local \
-  MILKTRACK_APP_PASSWORD=milktrack_app_local \
-  DATABASE_URL="$APP_URL" \
-  MIGRATION_DATABASE_URL="$OWNER_URL" \
-    docker compose --project-name "$PROJECT" --profile test \
-      --env-file "$ENV_FILE" --file "$COMPOSE_FILE" "$@"
-}
+reject_override SHADOW_DATABASE_URL "$SHADOW_URL"
+isolated_preflight
+isolated_install_traps
 
 diff_schema() {
-  compose run --rm -e SHADOW_DATABASE_URL="$SHADOW_URL" migrate sh -eu <<'SH'
+  isolated_compose run --rm -e SHADOW_DATABASE_URL="$SHADOW_URL" migrate sh -eu <<'SH'
 MIGRATIONS="$(mktemp -d)"
 CONFIG="$(mktemp ./p2-drift-prisma.XXXXXX.ts)"
 cleanup_diff() { rm -rf "$MIGRATIONS" "$CONFIG"; }
-trap cleanup_diff EXIT HUP INT TERM
+trap cleanup_diff EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
 cp -R prisma/migrations/. "$MIGRATIONS"
 printf 'provider = "postgresql"\n' > "$MIGRATIONS/migration_lock.toml"
 printf '%s\n' \
@@ -59,19 +39,15 @@ SH
 }
 
 psql_owner() {
-  compose exec -T postgres sh -c \
+  isolated_compose exec -T postgres sh -c \
     'psql --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" --set=ON_ERROR_STOP=1'
 }
 
-command -v docker >/dev/null
-test -f "$ENV_FILE"
-test -f "$COMPOSE_FILE"
-
-compose build migrate
-compose up -d --wait --wait-timeout 120 postgres
-compose run --rm migrate
-compose run --rm migrate npx prisma migrate status
-printf '%s\n' 'CREATE DATABASE milktrack_shadow;' | compose exec -T postgres sh -c \
+isolated_compose build migrate
+isolated_compose up -d --wait --wait-timeout 120 postgres
+isolated_compose run --rm migrate
+isolated_compose run --rm migrate npx prisma migrate status
+printf '%s\n' 'CREATE DATABASE milktrack_shadow;' | isolated_compose exec -T postgres sh -c \
   'psql --username "$POSTGRES_USER" --dbname postgres --set=ON_ERROR_STOP=1'
 diff_schema
 

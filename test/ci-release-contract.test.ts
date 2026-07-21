@@ -18,8 +18,6 @@ void test('CI runs Phase 1 release gates in order without a host database URL', 
     'Verify application',
     'Validate Prisma schema',
     'Check migration drift',
-    'Start empty PostgreSQL',
-    'Deploy migrations',
     'Run integration tests',
     'Run security release gate',
     'Check OpenAPI drift',
@@ -40,8 +38,7 @@ void test('CI runs Phase 1 release gates in order without a host database URL', 
 
   assert.doesNotMatch(workflow, /127\.0\.0\.1:5432/);
   assert.match(workflow, /timeout-minutes: 25/);
-  assert.match(workflow, /if: always\(\)/);
-  assert.match(workflow, /docker compose[^\n]* down -v --remove-orphans/);
+  assert.doesNotMatch(workflow, /docker compose[^\n]* down -v --remove-orphans/);
 });
 
 void test('CI enforces migration and supported-client compatibility without the manual volume gate', () => {
@@ -96,16 +93,9 @@ void test('runtime inputs and database role are fixed and reproducible', () => {
 void test('documented runtime contract uses the isolated Compose project', () => {
   assert.match(
     readme,
-    /COMPOSE_PROJECT_NAME=milktrack-production-contract docker compose --env-file \.env up --build -d --wait --wait-timeout 120/,
+    /sh test\/runtime-contract\.sh milktrack-backend:production/,
   );
-  assert.match(
-    readme,
-    /COMPOSE_PROJECT_NAME=milktrack-production-contract bash test\/runtime-contract\.sh milktrack-backend:production/,
-  );
-  assert.match(
-    readme,
-    /COMPOSE_PROJECT_NAME=milktrack-production-contract docker compose --env-file \.env down/,
-  );
+  assert.doesNotMatch(readme, /COMPOSE_PROJECT_NAME=milktrack-production-contract/);
 });
 
 void test('runtime and retained-volume scripts exercise real production and persistence paths', async () => {
@@ -121,13 +111,13 @@ void test('runtime and retained-volume scripts exercise real production and pers
   assert.match(runtime, /docker port "\$worker_container"/);
   assert.match(runtime, /docker stop --time 10 "\$worker_container"/);
   assert.match(runtime, /\{\{\.State\.ExitCode\}\}/);
-  assert.doesNotMatch(runtime, /TEST_OWNER_DATABASE_URL=/);
-  assert.doesNotMatch(runtime, /MIGRATION_DATABASE_URL=/);
-  assert.match(retained, /COMPOSE_PROJECT_NAME:\?/);
-  assert.match(retained, /docker compose restart postgres/);
-  assert.match(retained, /docker compose down --remove-orphans/);
-  assert.match(retained, /docker compose build migrate/);
-  assert.match(retained, /docker compose run --rm migrate/);
+  assert.doesNotMatch(runtime, /--env (TEST_OWNER_DATABASE_URL|MIGRATION_DATABASE_URL)=/);
+  assert.match(retained, /PROJECT_PREFIX='milktrack-retained'/);
+  assert.match(retained, /\. "\$SCRIPT_DIR\/isolated-compose\.sh"/);
+  assert.match(retained, /compose restart postgres/);
+  assert.match(retained, /compose down --remove-orphans/);
+  assert.match(retained, /compose build migrate/);
+  assert.match(retained, /compose run --rm migrate/);
   assert.match(retained, /find prisma\/migrations/);
   assert.match(retained, /if \[ "\$before" != "\$expected" \]/);
   assert.match(
@@ -136,8 +126,8 @@ void test('runtime and retained-volume scripts exercise real production and pers
   );
   assert.match(retained, /_prisma_migrations/);
 
-  const build = retained.indexOf('docker compose build migrate');
-  const deploy = retained.indexOf('docker compose run --rm migrate');
+  const build = retained.indexOf('compose build migrate');
+  const deploy = retained.indexOf('compose run --rm migrate');
   const count = retained.indexOf('before="$(migration_count)"');
   assert.ok(build >= 0 && build < deploy && deploy < count);
 });

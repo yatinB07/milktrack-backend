@@ -56,17 +56,11 @@ Stop the stack while preserving its database:
 docker compose --env-file .env down
 ```
 
-Delete the containers **and all local PostgreSQL data** only for an intentional
-reset:
-
-```bash
-docker compose --env-file .env down -v
-```
-
 PostgreSQL stores data in the named `postgres_data` volume. The volume survives
 container restart or recreation, host reboot, and normal `docker compose down`.
-It is not a backup and can be removed by `down -v`, explicit volume deletion, or
-volume pruning.
+Repository test and cleanup instructions never delete the default development
+volume. Back up local data and use an independently reviewed recovery procedure
+if an intentional reset is ever required.
 
 ## Database operations
 
@@ -152,14 +146,13 @@ or test.
 Run the repository checks in its own Compose project:
 
 ```bash
-docker compose --env-file .env run --rm backend npm test
-docker compose --env-file .env run --rm backend npm run verify
-docker compose --env-file .env run --rm backend npm run db:validate
-docker compose --profile test --env-file .env run --rm integration npm run test:integration
-bash test/security-release.sh
-bash test/compose-contract.sh
-COMPOSE_PROJECT_NAME=milktrack-retained-contract bash test/retained-volume-contract.sh
-COMPOSE_PROJECT_NAME=milktrack-retained-contract docker compose --env-file .env down -v --remove-orphans
+docker compose --env-file .env run --rm --no-deps backend npm test
+docker compose --env-file .env run --rm --no-deps backend npm run verify
+docker compose --env-file .env run --rm --no-deps backend npm run db:validate
+sh test/integration-release.sh
+sh test/security-release.sh
+sh test/compose-contract.sh
+sh test/retained-volume-contract.sh
 ```
 
 Phase 2 backend release gates:
@@ -180,10 +173,12 @@ validates the migration path and retained records, and runs the release-blocking
 RLS, cross-tenant, privilege, session, authentication, and audit checks. It
 removes only its own temporary volume.
 
-`test/retained-volume-contract.sh` requires an explicit, isolated
-`COMPOSE_PROJECT_NAME`. It deploys the current migration set, restarts PostgreSQL,
-takes the Compose project down and back up, and confirms migration history was
-retained. The following `down -v` removes only that named test project's volume.
+`test/integration-release.sh`, `test/security-release.sh`, and
+`test/retained-volume-contract.sh` each generate a unique Compose project, pin
+their service-local database URLs from `.env.example`, reject unsafe caller
+overrides, and remove only their own disposable volumes. The retained-volume
+gate takes only its disposable project down and back up before proving migration
+history was retained.
 
 CI installs from the lockfile, runs lint/type-check/unit/build verification,
 validates Prisma, deploys every migration to an empty database, runs integration
@@ -191,15 +186,13 @@ and security tests, checks OpenAPI and Compose drift, audits the production
 dependency set, probes the production image contract, and always tears down its
 isolated stack. A failure in any of these gates blocks release.
 
-With the Compose stack running, build and inspect the least-privileged
-production image:
+Build and inspect the least-privileged production image. The runtime contract
+provisions and removes its own isolated PostgreSQL project:
 
 ```bash
-COMPOSE_PROJECT_NAME=milktrack-production-contract docker compose --env-file .env up --build -d --wait --wait-timeout 120
 docker build --target production -t milktrack-backend:production .
 docker run --rm --entrypoint npm milktrack-backend:production audit --omit=dev --omit=optional
-COMPOSE_PROJECT_NAME=milktrack-production-contract bash test/runtime-contract.sh milktrack-backend:production
-COMPOSE_PROJECT_NAME=milktrack-production-contract docker compose --env-file .env down
+sh test/runtime-contract.sh milktrack-backend:production
 ```
 
 The committed images are fixed for reproducible builds: PostgreSQL 18.4 and
@@ -250,10 +243,10 @@ The committed contract is `openapi/v1.json`. Regenerate it from the same Nest
 application and Swagger configuration used at runtime, then check for drift:
 
 ```bash
-docker compose --env-file .env run --rm \
+docker compose --env-file .env run --rm --no-deps \
   --volume "$PWD/openapi:/app/openapi" \
   backend npm run openapi:generate
-docker compose --env-file .env run --rm backend npm run openapi:check
+docker compose --env-file .env run --rm --no-deps backend npm run openapi:check
 ```
 
 Review and commit intentional contract changes before updating generated clients

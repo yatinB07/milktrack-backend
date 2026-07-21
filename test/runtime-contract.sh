@@ -2,17 +2,21 @@
 set -eu
 
 production_image="${1:-milktrack-backend:production}"
-project="${COMPOSE_PROJECT_NAME:-}"
-runtime_container="${project:-milktrack}-production-api-contract"
-worker_container="${project:-milktrack}-production-worker-contract"
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+PROJECT_PREFIX='milktrack-runtime'
+. "$SCRIPT_DIR/isolated-compose.sh"
 
-cleanup() {
+runtime_container="${PROJECT}-production-api-contract"
+worker_container="${PROJECT}-production-worker-contract"
+
+cleanup_runtime_containers() {
   docker rm --force "$runtime_container" >/dev/null 2>&1 || true
   docker rm --force "$worker_container" >/dev/null 2>&1 || true
 }
+ISOLATED_CLEANUP_HOOK=cleanup_runtime_containers
 
-trap cleanup EXIT
-trap 'exit 130' HUP INT TERM
+isolated_preflight
+isolated_install_traps
 
 docker run --rm --entrypoint node "$production_image" --input-type=module --eval '
   import { existsSync } from "node:fs";
@@ -35,8 +39,12 @@ docker run --rm --entrypoint node "$production_image" --input-type=module --eval
 '
 echo 'production image contract: passed'
 
+isolated_compose build migrate
+isolated_compose up -d --wait --wait-timeout 120 postgres
+isolated_compose run --rm migrate
+
 role_flags="$(
-  docker compose exec -T postgres psql \
+  isolated_compose exec -T postgres psql \
     --username milktrack_owner \
     --dbname milktrack \
     --tuples-only \
@@ -51,7 +59,7 @@ fi
 echo 'runtime role flags: passed'
 
 privileges="$(
-  docker compose exec -T postgres psql \
+  isolated_compose exec -T postgres psql \
     --username milktrack_owner \
     --dbname milktrack \
     --tuples-only \
@@ -65,20 +73,16 @@ if [ "$privileges" != 't|f|t|f' ]; then
 fi
 echo 'runtime privileges: passed'
 
-if [ -z "$project" ]; then
-  echo 'COMPOSE_PROJECT_NAME is required to locate the isolated Compose network' >&2
-  exit 1
-fi
-
 docker run --detach \
   --name "$runtime_container" \
-  --network "${project}_default" \
-  --env DATABASE_URL=postgresql://milktrack_app:milktrack_app_local@postgres:5432/milktrack \
-  --env AUTH_HMAC_KEY=MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY= \
-  --env MFA_ENCRYPTION_KEY=ZmVkY2JhOTg3NjU0MzIxMGZlZGNiYTk4NzY1NDMyMTA= \
-  --env SESSION_TTL_SECONDS=2592000 \
-  --env APP_ENV=test \
-  --env OTP_PROVIDER=local \
+  --network "${PROJECT}_default" \
+  --env DATABASE_URL="$APP_URL" \
+  --env AUTH_HMAC_KEY="$AUTH_HMAC_KEY_VALUE" \
+  --env MFA_ENCRYPTION_KEY="$MFA_ENCRYPTION_KEY_VALUE" \
+  --env SESSION_TTL_SECONDS="$SESSION_TTL_SECONDS_VALUE" \
+  --env APP_ENV="$APP_ENV_VALUE" \
+  --env OTP_PROVIDER="$OTP_PROVIDER_VALUE" \
+  --env TRUST_PROXY_CIDRS="$TRUST_PROXY_CIDRS_VALUE" \
   "$production_image" >/dev/null
 
 attempt=0
@@ -97,15 +101,15 @@ done
 if docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$runtime_container" \
   | grep -Eq '^(TEST_OWNER_DATABASE_URL|MIGRATION_DATABASE_URL)='
 then
-    echo 'production runtime received an owner database URL' >&2
-    exit 1
+  echo 'production runtime received an owner database URL' >&2
+  exit 1
 fi
 echo 'production runtime boot and owner URL isolation: passed'
 
 docker run --detach \
   --name "$worker_container" \
-  --network "${project}_default" \
-  --env DATABASE_URL=postgresql://milktrack_app:milktrack_app_local@postgres:5432/milktrack \
+  --network "${PROJECT}_default" \
+  --env DATABASE_URL="$APP_URL" \
   "$production_image" \
   node dist/worker.js >/dev/null
 

@@ -82,10 +82,13 @@ void test('OpenAPI compatibility gate uses the pinned semantic checker for both 
 
 void test('migration drift gate is isolated and proves both clean and detected states', async () => {
   const script = await readFile(files.drift, 'utf8');
-  assert.match(script, /PROJECT="milktrack-p2be05-drift-\$\(date \+%s\)-\$\$"/);
-  assert.match(script, /\[ "\$PROJECT" = "milktrack-backend" \]/);
-  assert.match(script, /--env-file "\$ENV_FILE"/);
-  assert.match(script, /down -v --remove-orphans/);
+  const helper = await readFile('test/isolated-compose.sh', 'utf8');
+  assert.match(script, /PROJECT_PREFIX='milktrack-p2be05-drift'/);
+  assert.match(script, /\. "\$SCRIPT_DIR\/isolated-compose\.sh"/);
+  assert.match(helper, /PROJECT="\$\{PROJECT_PREFIX\}-\$\(date \+%s\)-\$\$"/);
+  assert.match(helper, /milktrack-backend/);
+  assert.match(helper, /--env-file "\$ENV_FILE"/);
+  assert.match(helper, /down -v --remove-orphans/);
   assert.match(script, /npx prisma migrate status/);
   assert.match(script, /--from-migrations "\$MIGRATIONS"/);
   assert.match(script, /--to-config-datasource/);

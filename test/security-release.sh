@@ -1,46 +1,31 @@
 #!/bin/sh
 set -eu
 
-PROJECT="milktrack-security-$(date +%s)-$$"
-COMPOSE_FILE="compose.yaml"
-ENV_FILE=".env.example"
-FOUNDATION="prisma/migrations/202607180001_phase_1_security_foundation/migration.sql"
-SENTINEL_USER_ID="13000000-0000-4000-8000-000000000001"
-SENTINEL_VENDOR_ID="13000000-0000-4000-8000-000000000002"
-SENTINEL_MEMBERSHIP_ID="13000000-0000-4000-8000-000000000003"
-SENTINEL_AUDIT_ID="13000000-0000-4000-8000-000000000004"
-SENTINEL_SESSION_ID="13000000-0000-4000-8000-000000000005"
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+PROJECT_PREFIX='milktrack-security'
+. "$SCRIPT_DIR/isolated-compose.sh"
 
-cleanup() {
-  status=$?
-  trap - EXIT
-  docker compose --project-name "$PROJECT" --profile test \
-    --env-file "$ENV_FILE" --file "$COMPOSE_FILE" \
-    down -v --remove-orphans >/dev/null 2>&1 || true
-  exit "$status"
-}
+FOUNDATION='prisma/migrations/202607180001_phase_1_security_foundation/migration.sql'
+SENTINEL_USER_ID='13000000-0000-4000-8000-000000000001'
+SENTINEL_VENDOR_ID='13000000-0000-4000-8000-000000000002'
+SENTINEL_MEMBERSHIP_ID='13000000-0000-4000-8000-000000000003'
+SENTINEL_AUDIT_ID='13000000-0000-4000-8000-000000000004'
+SENTINEL_SESSION_ID='13000000-0000-4000-8000-000000000005'
 
-trap cleanup EXIT
-trap 'exit 130' HUP INT TERM
-
-compose() {
-  docker compose --project-name "$PROJECT" --profile test \
-    --env-file "$ENV_FILE" --file "$COMPOSE_FILE" "$@"
-}
-
-command -v docker >/dev/null
+isolated_preflight
 test -f "$FOUNDATION"
+isolated_install_traps
 
-compose build migrate integration
-compose up -d --wait --wait-timeout 120 postgres
+isolated_compose build migrate integration
+isolated_compose up -d --wait --wait-timeout 120 postgres
 
-compose exec -T postgres sh -c \
+isolated_compose exec -T postgres sh -c \
   'psql --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" --set=ON_ERROR_STOP=1' \
   < "$FOUNDATION"
-compose run --rm migrate npx prisma migrate resolve \
+isolated_compose run --rm migrate npx prisma migrate resolve \
   --applied 202607180001_phase_1_security_foundation
 
-compose exec -T postgres sh -c \
+isolated_compose exec -T postgres sh -c \
   'psql --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" --set=ON_ERROR_STOP=1' <<SQL
 INSERT INTO users (id, display_name, updated_at)
 VALUES ('$SENTINEL_USER_ID', 'Task 13 retained sentinel', now());
@@ -71,15 +56,18 @@ VALUES
    now() + interval '15 minutes', now() + interval '30 days', now());
 SQL
 
-compose run --rm migrate
-if compose run --rm integration npm run test:security; then
-  echo "test:security accepted missing SECURITY_SENTINEL_* variables" >&2
+isolated_compose run --rm migrate
+if isolated_compose run --rm --env ISOLATED_DB_TEST=1 \
+  integration npm run test:security:raw
+then
+  echo 'test:security:raw accepted missing SECURITY_SENTINEL_* variables' >&2
   exit 1
 fi
-compose run --rm \
+isolated_compose run --rm \
   -e SECURITY_SENTINEL_USER_ID="$SENTINEL_USER_ID" \
   -e SECURITY_SENTINEL_VENDOR_ID="$SENTINEL_VENDOR_ID" \
   -e SECURITY_SENTINEL_MEMBERSHIP_ID="$SENTINEL_MEMBERSHIP_ID" \
   -e SECURITY_SENTINEL_AUDIT_ID="$SENTINEL_AUDIT_ID" \
   -e SECURITY_SENTINEL_SESSION_ID="$SENTINEL_SESSION_ID" \
-  integration npm run test:security
+  -e ISOLATED_DB_TEST=1 \
+  integration npm run test:security:raw
