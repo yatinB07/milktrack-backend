@@ -7,7 +7,7 @@ import { RouteController } from '../src/routing/http/route.controller.js';
 const actor = { userId: '00000000-0000-4000-8000-000000000001', sessionId: '00000000-0000-4000-8000-000000000003', displayName: 'Owner', authenticationMethod: 'administrator_mfa', platformRoles: [], memberships: [] } as const;
 
 void test('route controller maps ordered stop projection and explicit replace status', async () => {
-  const value = { routeId: 'route', routeVersion: 2, deliverySlotId: 'slot', serviceDate: '2026-07-20', startDate: '2026-07-20', endDate: '2026-07-31', stops: [{ id: 'stop', householdId: 'household', sequence: 1 }], nextCursor: 'next' };
+  const value = { routeId: 'route', routeVersion: 2, deliverySlotId: 'slot', serviceDate: '2026-07-20', startDate: '2026-07-20', endDate: '2026-07-31', stops: [{ id: 'stop', householdId: 'household', sequence: 1, household: { id: 'household', accountNumber: 'A-1', name: 'Home', addressLine1: 'Road', city: 'Pune', region: 'MH', postalCode: '411001', countryCode: 'IN', status: 'active' } }], nextCursor: 'next' };
   const calls: unknown[]=[]; const service = { listStops: (...args:unknown[]) => { calls.push(args); return Promise.resolve(value); }, replaceStops: () => Promise.resolve(value) };
   const controller = new RouteController(service as never);
   await requestContextStore.run({ correlationId: '00000000-0000-4000-8000-000000000002', actor }, async () => {

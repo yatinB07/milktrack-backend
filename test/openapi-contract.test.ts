@@ -570,7 +570,11 @@ void test('publishes secured route stop projection and atomic replacement contra
   }
   const getParameters=object(paths[path],path).get as JsonObject;const names=(getParameters.parameters as JsonObject[]).map(({name})=>name).sort();assert.deepEqual(names,['cursor','limit','routeId','serviceDate','vendorId']);
   assert.equal(object(properties('ReplaceRouteStopsRequestDto').householdIds,'householdIds').maxItems,undefined);
-  assert.deepEqual(Object.keys(properties('RouteStopResponseDto')).sort(), ['householdId','id','sequence']);
+  assert.deepEqual(Object.keys(properties('RouteStopResponseDto')).sort(), ['household','householdId','id','sequence']);
+  assert.equal(object(properties('RouteStopResponseDto').household,'household').$ref,'#/components/schemas/RouteStopHouseholdResponseDto');
+  assert.deepEqual(Object.keys(properties('RouteStopHouseholdResponseDto')).sort(), ['accountNumber','addressLine1','addressLine2','city','countryCode','id','latitude','locality','longitude','name','postalCode','region','status']);
+  assert.deepEqual((object(schemas.RouteStopResponseDto,'RouteStopResponseDto').required as string[]).sort(), ['household','householdId','id','sequence']);
+  assert.deepEqual((object(schemas.RouteStopHouseholdResponseDto,'RouteStopHouseholdResponseDto').required as string[]).sort(), ['accountNumber','addressLine1','city','countryCode','id','name','postalCode','region','status']);
   assert.deepEqual(Object.keys(properties('RouteStopsResponseDto')).sort(), ['deliverySlotId','endDate','nextCursor','routeId','routeVersion','serviceDate','startDate','stops']);
 });
 

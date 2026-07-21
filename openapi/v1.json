@@ -2260,8 +2260,73 @@
         ],
         "type": "object"
       },
+      "RouteStopHouseholdResponseDto": {
+        "properties": {
+          "accountNumber": {
+            "type": "string"
+          },
+          "addressLine1": {
+            "type": "string"
+          },
+          "addressLine2": {
+            "type": "string"
+          },
+          "city": {
+            "type": "string"
+          },
+          "countryCode": {
+            "maxLength": 2,
+            "minLength": 2,
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "latitude": {
+            "type": "string"
+          },
+          "locality": {
+            "type": "string"
+          },
+          "longitude": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "postalCode": {
+            "type": "string"
+          },
+          "region": {
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "active",
+              "inactive"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "accountNumber",
+          "name",
+          "addressLine1",
+          "city",
+          "region",
+          "postalCode",
+          "countryCode",
+          "status"
+        ],
+        "type": "object"
+      },
       "RouteStopResponseDto": {
         "properties": {
+          "household": {
+            "$ref": "#/components/schemas/RouteStopHouseholdResponseDto"
+          },
           "householdId": {
             "format": "uuid",
             "type": "string"
@@ -2278,7 +2343,8 @@
         "required": [
           "id",
           "householdId",
-          "sequence"
+          "sequence",
+          "household"
         ],
         "type": "object"
       },

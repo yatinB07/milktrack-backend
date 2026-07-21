@@ -9,6 +9,7 @@ import type {
   CreateHousehold,
   HouseholdDiscoveryQuery,
   PageQuery,
+  RouteHouseholdSummary,
   UpdateHousehold,
 } from "../application/household.service.js";
 
@@ -79,6 +80,21 @@ const memberSelect = {
   createdAt: true,
   updatedAt: true,
 } as const;
+const routeHouseholdSummarySelect = {
+  id: true,
+  accountNumber: true,
+  name: true,
+  addressLine1: true,
+  addressLine2: true,
+  locality: true,
+  city: true,
+  region: true,
+  postalCode: true,
+  countryCode: true,
+  latitude: true,
+  longitude: true,
+  status: true,
+} as const;
 type HouseholdRow = Prisma.HouseholdGetPayload<{
   select: typeof householdSelect;
 }>;
@@ -125,9 +141,35 @@ function toMember(row: HouseholdMemberRow): HouseholdMemberRecord {
     updatedAt: row.updatedAt,
   };
 }
+function toRouteHouseholdSummary(row: Prisma.HouseholdGetPayload<{ select: typeof routeHouseholdSummarySelect }>): RouteHouseholdSummary {
+  return {
+    id: row.id,
+    accountNumber: row.accountNumber,
+    name: row.name,
+    addressLine1: row.addressLine1,
+    ...(row.addressLine2 ? { addressLine2: row.addressLine2 } : {}),
+    ...(row.locality ? { locality: row.locality } : {}),
+    city: row.city,
+    region: row.region,
+    postalCode: row.postalCode,
+    countryCode: row.countryCode,
+    ...(row.latitude ? { latitude: row.latitude.toString() } : {}),
+    ...(row.longitude ? { longitude: row.longitude.toString() } : {}),
+    status: row.status,
+  };
+}
 
 @Injectable()
 export class PrismaHouseholdStore {
+  async getRouteHouseholdSummaries(context: TransactionContext, householdIds: readonly string[]) {
+    const ids = [...new Set(householdIds)].sort();
+    if (ids.length === 0) return [];
+    const rows = await unwrapPrismaTransaction(context).household.findMany({
+      where: { id: { in: ids } },
+      select: routeHouseholdSummarySelect,
+    });
+    return rows.map(toRouteHouseholdSummary);
+  }
   async requireRouteHouseholds(context: TransactionContext, householdIds: readonly string[]) {
     const ids = [...new Set(householdIds)].sort();
     if (ids.length === 0) return { householdIds: ids };

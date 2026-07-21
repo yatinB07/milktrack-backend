@@ -5,7 +5,7 @@ import { DateTime } from 'luxon';
 import { AuditWriter } from '../../audit/application/audit-writer.js';
 import { TenantAuthorizationExecutor } from '../../authorization/application/tenant-authorization.executor.js';
 import { CatalogService } from '../../catalog/application/catalog.service.js';
-import { HouseholdService } from '../../customers/application/household.service.js';
+import { HouseholdService, type RouteHouseholdSummary } from '../../customers/application/household.service.js';
 import { MembershipService } from '../../memberships/application/membership.service.js';
 import type { TransactionContext } from '../../common/application/transaction-context.js';
 import type { Actor } from '../../common/context/request-context.js';
@@ -19,7 +19,7 @@ import { normalizeRouteCode, normalizeRouteName, normalizeRouteReason } from '..
 import { normalizeRouteAssignmentMutation, validateRouteAssignmentDate } from '../domain/route-assignment-rules.js';
 import { RouteAssignmentStore, type RouteAssignmentMutation, type RouteAssignmentPage, type RouteAssignmentPageQuery } from './route-assignment.store.js';
 import { normalizeRouteStopReplacement, validateRouteStopDate } from '../domain/route-stop-rules.js';
-import { RouteStopPlanStore, type RouteStopPageQuery, type RouteStopProjection, type RouteStopSnapshot } from './route-stop-plan.store.js';
+import { RouteStopPlanStore, type RouteStopPageQuery, type RouteStopProjection, type RouteStopRecord, type RouteStopSnapshot } from './route-stop-plan.store.js';
 import { RouteStore, type RoutePageQuery, type RouteRecord, type RouteStatus } from './route.store.js';
 
 export type CreateRouteCommand = Readonly<{ code: string; name: string; deliverySlotId: string }>;
@@ -27,6 +27,9 @@ export type RenameRouteCommand = Readonly<{ name: string; expectedVersion: numbe
 export type RouteVersionReason = Readonly<{ expectedVersion: number; reason: string }>;
 export type ReplaceRouteStopsCommand = Readonly<{ effectiveDate: string; expectedVersion: number; reason: string; householdIds: readonly string[] }>;
 export type AssignRouteCommand = Readonly<{ agentMembershipId: string; expectedVersion: number; reason: string }>;
+export type RouteStopResult = Omit<RouteStopProjection, 'stops'> & Readonly<{
+  stops: readonly (RouteStopRecord & Readonly<{ household: RouteHouseholdSummary }>)[];
+}>;
 
 export abstract class RouteService {
   abstract list(actor: Actor, vendorId: string, query: RoutePageQuery): Promise<Readonly<{ items: readonly RouteRecord[]; nextCursor?: string }>>;
@@ -37,8 +40,8 @@ export abstract class RouteService {
   abstract reactivate(actor: Actor, vendorId: string, routeId: string, command: RouteVersionReason): Promise<RouteRecord>;
   abstract softDelete(actor: Actor, vendorId: string, routeId: string, command: RouteVersionReason): Promise<void>;
   abstract restore(actor: Actor, vendorId: string, routeId: string, command: RouteVersionReason): Promise<RouteRecord>;
-  abstract listStops(actor: Actor, vendorId: string, routeId: string, query: RouteStopPageQuery): Promise<RouteStopProjection>;
-  abstract replaceStops(actor: Actor, vendorId: string, routeId: string, command: ReplaceRouteStopsCommand): Promise<RouteStopProjection>;
+  abstract listStops(actor: Actor, vendorId: string, routeId: string, query: RouteStopPageQuery): Promise<RouteStopResult>;
+  abstract replaceStops(actor: Actor, vendorId: string, routeId: string, command: ReplaceRouteStopsCommand): Promise<RouteStopResult>;
   abstract listAssignments(actor: Actor, vendorId: string, routeId: string, query: RouteAssignmentPageQuery): Promise<RouteAssignmentPage>;
   abstract assign(actor: Actor, vendorId: string, routeId: string, serviceDate: string, command: AssignRouteCommand): Promise<RouteAssignmentMutation>;
   abstract cancelAssignment(actor: Actor, vendorId: string, routeId: string, serviceDate: string, command: RouteVersionReason): Promise<RouteAssignmentMutation>;
@@ -115,8 +118,10 @@ export class DefaultRouteService extends RouteService {
   }
   listStops(actor: Actor, vendorId: string, routeId: string, query: RouteStopPageQuery) {
     validateRouteStopDate(query.serviceDate);
-    return this.execute(actor, vendorId, 'route:read', 'route.stops-list', async (tx) =>
-      this.stopPlans.list(tx, await this.routes.get(tx, routeId), query));
+    return this.execute(actor, vendorId, 'route:read', 'route.stops-list', async (tx) => {
+      const projection = await this.stopPlans.list(tx, await this.routes.get(tx, routeId), query);
+      return this.enrichStops(tx, projection);
+    });
   }
   replaceStops(actor: Actor, vendorId: string, routeId: string, command: ReplaceRouteStopsCommand) {
     return this.execute(actor, vendorId, 'route:manage', 'route.stops-replace', async (tx) => {
@@ -131,7 +136,7 @@ export class DefaultRouteService extends RouteService {
       const {projection,previous}=await this.stopPlans.replace(tx, { route, ...normalized, createdBy: actor.userId });
       await this.auditStops(tx,actor,vendorId,route,normalized.effectiveDate,normalized.householdIds,normalized.reason,previous,projection);
       await this.regenerate(tx, vendorId, today, dates, actor.userId);
-      return projection;
+      return this.enrichStops(tx, projection);
     });
   }
   listAssignments(actor: Actor, vendorId: string, routeId: string, query: RouteAssignmentPageQuery) {
@@ -244,6 +249,17 @@ export class DefaultRouteService extends RouteService {
   }
   private regenerate(tx: TransactionContext, vendorId: string, today: string, dates: readonly string[], userId: string) {
     return this.regeneration.write(tx, vendorId, today, dates, userId);
+  }
+  private async enrichStops(tx: TransactionContext, projection: RouteStopProjection): Promise<RouteStopResult> {
+    const householdIds = [...new Set(projection.stops.map(({ householdId }) => householdId))].sort();
+    const households = await this.households.getRouteHouseholdSummaries(tx, householdIds);
+    const byId = new Map(households.map((household) => [household.id, household]));
+    const stops = projection.stops.map((stop) => {
+      const household = byId.get(stop.householdId);
+      if (!household) throw new ApplicationError('ROUTE_HOUSEHOLD_NOT_FOUND', 'Route household was not found', 404);
+      return { ...stop, household };
+    });
+    return { ...projection, stops };
   }
   private auditStops(tx:TransactionContext,actor:Actor,vendorId:string,route:RouteRecord,effectiveDate:string,householdIds:readonly string[],reason:string,previous:RouteStopSnapshot,projection:RouteStopProjection) {
     const safe=(ids:readonly string[],value:RouteStopSnapshot|RouteStopProjection,version:number)=>({householdIds:[...ids],effectiveDate,...(value.startDate?{startDate:value.startDate}:{}),...(value.endDate?{endDate:value.endDate}:{}),deliverySlotId:route.deliverySlotId,routeStatus:route.status,routeVersion:version});

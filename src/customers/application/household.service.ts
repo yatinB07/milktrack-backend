@@ -59,6 +59,21 @@ export type HouseholdResult = Omit<
   HouseholdRecord,
   "deletedAt" | "deletedBy" | "deletionReason"
 >;
+export type RouteHouseholdSummary = Readonly<{
+  id: string;
+  accountNumber: string;
+  name: string;
+  addressLine1: string;
+  addressLine2?: string;
+  locality?: string;
+  city: string;
+  region: string;
+  postalCode: string;
+  countryCode: string;
+  latitude?: string;
+  longitude?: string;
+  status: "active" | "inactive";
+}>;
 export type HouseholdMemberResult = HouseholdMemberRecord &
   Readonly<{ userId: string; displayName?: string; phone?: string }>;
 export type HouseholdPage = Readonly<{
@@ -71,6 +86,7 @@ export type HouseholdMemberPage = Readonly<{
 }>;
 export abstract class HouseholdService {
   abstract requireRouteHouseholds(tx: TransactionContext, householdIds: readonly string[]): Promise<Readonly<{ householdIds: readonly string[] }>>;
+  abstract getRouteHouseholdSummaries(tx: TransactionContext, householdIds: readonly string[]): Promise<readonly RouteHouseholdSummary[]>;
   abstract requireSubscriptionHousehold(tx: TransactionContext, householdId: string): Promise<Readonly<{ householdId: string }>>;
   abstract requireCustomerSubscriptionHousehold(tx: TransactionContext, actor: Actor, vendorId: string, householdId: string): Promise<Readonly<{ householdId: string }>>;
   abstract requirePricingHousehold(tx: TransactionContext, householdId: string): Promise<Readonly<{ householdId: string }>>;
@@ -181,6 +197,9 @@ export class PrismaHouseholdService extends HouseholdService {
   }
   requireRouteHouseholds(tx: TransactionContext, householdIds: readonly string[]) {
     return this.households.requireRouteHouseholds(tx, householdIds);
+  }
+  getRouteHouseholdSummaries(tx: TransactionContext, householdIds: readonly string[]) {
+    return this.households.getRouteHouseholdSummaries(tx, householdIds);
   }
   requireSubscriptionHousehold(tx: TransactionContext, householdId: string) {
     return this.households.requireSubscriptionHousehold(tx, householdId);

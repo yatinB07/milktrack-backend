@@ -41,10 +41,26 @@ export class ReplaceRouteStopsRequestDto {
   @ApiProperty({ type: String, minLength: 3, maxLength: 500 }) @IsString() reason!: string;
   @ApiProperty({ type: String, format: 'uuid', isArray: true }) @IsArray() @IsUUID('4', { each: true }) householdIds!: string[];
 }
+export class RouteStopHouseholdResponseDto {
+  @ApiProperty({ type: String, format: 'uuid' }) id!: string;
+  @ApiProperty({ type: String }) accountNumber!: string;
+  @ApiProperty({ type: String }) name!: string;
+  @ApiProperty({ type: String }) addressLine1!: string;
+  @ApiPropertyOptional({ type: String }) addressLine2?: string;
+  @ApiPropertyOptional({ type: String }) locality?: string;
+  @ApiProperty({ type: String }) city!: string;
+  @ApiProperty({ type: String }) region!: string;
+  @ApiProperty({ type: String }) postalCode!: string;
+  @ApiProperty({ type: String, minLength: 2, maxLength: 2 }) countryCode!: string;
+  @ApiPropertyOptional({ type: String }) latitude?: string;
+  @ApiPropertyOptional({ type: String }) longitude?: string;
+  @ApiProperty({ enum: ['active', 'inactive'] }) status!: 'active' | 'inactive';
+}
 export class RouteStopResponseDto {
   @ApiProperty({ type: String, format: 'uuid' }) id!: string;
   @ApiProperty({ type: String, format: 'uuid' }) householdId!: string;
   @ApiProperty({ type: Number, minimum: 1 }) sequence!: number;
+  @ApiProperty({ type: () => RouteStopHouseholdResponseDto }) household!: RouteStopHouseholdResponseDto;
 }
 export class RouteStopsResponseDto {
   @ApiProperty({ type: String, format: 'uuid' }) routeId!: string;
