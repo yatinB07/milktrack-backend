@@ -3,9 +3,14 @@ import { Injectable } from '@nestjs/common';
 import type { TransactionContext } from '../../common/application/transaction-context.js';
 import { CursorCodec } from '../../common/cursor/cursor.js';
 import type { VendorRole } from '../../common/context/request-context.js';
+import type { RecordLifecycle } from '../../common/application/record-lifecycle.js';
 import { ApplicationError } from '../../common/errors/application.error.js';
 import { unwrapPrismaTransaction } from '../../database/infrastructure/prisma-transaction-context.js';
-import type { CustomerMembershipSummary, RouteAgentSummary } from '../application/membership.service.js';
+import type {
+  CustomerMembershipSummary,
+  MembershipDiscoveryQuery,
+  RouteAgentSummary,
+} from '../application/membership.service.js';
 
 export type MembershipRecord = Readonly<{
   id: string;
@@ -124,23 +129,24 @@ export class PrismaMembershipStore {
     });
   }
 
-  async listActive(
+  async listDiscovery(
     context: TransactionContext,
-    query: Readonly<{
-      cursor?: string;
-      limit?: number;
-      role?: VendorRole;
-      status?: 'invited' | 'active' | 'ended';
-    }>,
+    query: Omit<MembershipDiscoveryQuery, 'search'>,
   ): Promise<MembershipRecordPage> {
     const tx = unwrapPrismaTransaction(context);
     const limit = this.cursors.parseLimit(query.limit);
     const cursor = query.cursor ? this.cursors.decode(query.cursor) : undefined;
     const rows = await tx.vendorMembership.findMany({
       where: {
-        status: query.status ?? 'active',
-        ...((query.status ?? 'active') === 'ended' ? {} : { endedAt: null }),
-        deletedAt: null,
+        ...(query.status
+          ? {
+              status: query.status,
+              ...(query.status === 'ended' ? {} : { endedAt: null }),
+            }
+          : query.lifecycle === 'current'
+            ? { status: 'active' as const, endedAt: null }
+            : {}),
+        deletedAt: query.lifecycle === 'current' ? null : { not: null },
         ...(query.role ? { role: query.role } : {}),
         ...(cursor
           ? {
@@ -163,6 +169,20 @@ export class PrismaMembershipStore {
         ? { nextCursor: this.cursors.encode({ createdAt: last.createdAt, id: last.id }) }
         : {}),
     };
+  }
+
+  getDiscovery(
+    context: TransactionContext,
+    id: string,
+    lifecycle: RecordLifecycle,
+  ): Promise<MembershipRecord | null> {
+    return unwrapPrismaTransaction(context).vendorMembership.findFirst({
+      where: {
+        id,
+        deletedAt: lifecycle === 'current' ? null : { not: null },
+      },
+      select: resultFields,
+    });
   }
 
   cursorFor(record: MembershipRecord): string {

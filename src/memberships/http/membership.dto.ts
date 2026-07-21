@@ -15,6 +15,8 @@ import {
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 import type { VendorRole } from '../../common/context/request-context.js';
+import { LifecycleQueryDto } from '../../common/http/record-lifecycle.dto.js';
+import { recordLifecycles, type RecordLifecycle } from '../../common/application/record-lifecycle.js';
 
 const vendorRoles = [
   'vendor_owner',
@@ -25,7 +27,7 @@ const vendorRoles = [
 const onboardingRoles = ['customer', 'delivery_agent'] as const;
 const e164Pattern = /^\+[1-9]\d{7,14}$/;
 
-export class ListMembershipsQueryDto {
+export class ListMembershipsQueryDto extends LifecycleQueryDto {
   @ApiPropertyOptional({ type: String })
   @IsOptional()
   @IsString()
@@ -119,6 +121,9 @@ export class MembershipResponseDto {
 
   @ApiProperty({ type: String, enum: ['invited', 'active', 'ended'] })
   status!: 'invited' | 'active' | 'ended';
+
+  @ApiProperty({ type: String, enum: recordLifecycles })
+  lifecycle!: RecordLifecycle;
 
   @ApiPropertyOptional({ type: String, format: 'date-time' })
   joinedAt?: Date;

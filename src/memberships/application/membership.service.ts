@@ -10,6 +10,10 @@ import {
 } from '../../common/context/request-context.js';
 import { ApplicationError } from '../../common/errors/application.error.js';
 import type { TransactionContext } from '../../common/application/transaction-context.js';
+import {
+  type RecordLifecycle,
+  recordLifecycleOf,
+} from '../../common/application/record-lifecycle.js';
 import { MemberIdentityService } from '../../identity/application/member-identity.service.js';
 import { normalizePhone } from '../../identity/domain/identity-normalization.js';
 import { TenantAuthorizationExecutor } from '../../authorization/application/tenant-authorization.executor.js';
@@ -24,6 +28,7 @@ export type MembershipResult = Readonly<{
   userId: string;
   role: VendorRole;
   status: 'invited' | 'active' | 'ended';
+  lifecycle: RecordLifecycle;
   joinedAt?: Date;
   endedAt?: Date;
   createdAt: Date;
@@ -37,6 +42,15 @@ export type MembershipPage = Readonly<{
 
 export type MembershipDirectoryResult = MembershipResult &
   Readonly<{ displayName: string; phone?: string; email?: string }>;
+
+export type MembershipDiscoveryQuery = Readonly<{
+  cursor?: string;
+  limit?: number;
+  role?: VendorRole;
+  status?: 'invited' | 'active' | 'ended';
+  search?: string;
+  lifecycle: RecordLifecycle;
+}>;
 
 export type CustomerMembershipSummary = Readonly<{
   membershipId: string;
@@ -62,14 +76,14 @@ export abstract class MembershipService {
   abstract list(
     actor: Actor,
     vendorId: string,
-    query: Readonly<{
-      cursor?: string;
-      limit?: number;
-      role?: VendorRole;
-      status?: 'invited' | 'active' | 'ended';
-      search?: string;
-    }>,
+    query: MembershipDiscoveryQuery,
   ): Promise<MembershipPage>;
+  abstract get(
+    actor: Actor,
+    vendorId: string,
+    membershipId: string,
+    lifecycle: RecordLifecycle,
+  ): Promise<MembershipDirectoryResult>;
   abstract create(
     actor: Actor,
     vendorId: string,
@@ -113,6 +127,7 @@ function result(record: MembershipRecord): MembershipResult {
     userId: record.userId,
     role: record.role,
     status: record.status,
+    lifecycle: recordLifecycleOf(record.deletedAt),
     ...(record.joinedAt ? { joinedAt: record.joinedAt } : {}),
     ...(record.endedAt ? { endedAt: record.endedAt } : {}),
     createdAt: record.createdAt,
@@ -195,26 +210,31 @@ export class PrismaMembershipService extends MembershipService {
   list(
     actor: Actor,
     vendorId: string,
-    query: Readonly<{
-      cursor?: string;
-      limit?: number;
-      role?: VendorRole;
-      status?: 'invited' | 'active' | 'ended';
-      search?: string;
-    }>,
+    query: MembershipDiscoveryQuery,
   ): Promise<MembershipPage> {
+    const lifecycle = query.lifecycle;
     return this.authorization.execute(
-      { actor, vendorId, permission: 'membership:read', operation: 'membership.list' },
+      {
+        actor,
+        vendorId,
+        permission: lifecycle === 'current' ? 'membership:read' : 'membership:manage',
+        operation: lifecycle === 'current' ? 'membership.list' : 'membership.deleted-list',
+      },
       async (tx) => {
         const wanted = query.limit ?? 25;
         const search = query.search?.trim().toLocaleLowerCase('en-IN');
-        const page = await this.memberships.listActive(tx, {
+        const page = await this.memberships.listDiscovery(tx, {
           cursor: query.cursor,
           limit: search ? 100 : wanted,
+          lifecycle,
           role: query.role,
           status: query.status,
         });
-        const profiles = await this.identities.profiles(tx, page.items.map((item) => item.userId));
+        const profiles = await this.identities.discoveryProfiles(
+          tx,
+          page.items.map((item) => item.userId),
+          lifecycle,
+        );
         if (!search) {
           return {
             items: page.items.flatMap((membership) => {
@@ -244,6 +264,33 @@ export class PrismaMembershipService extends MembershipService {
             ? { nextCursor: this.memberships.cursorFor(lastExamined) }
             : {}),
         };
+      },
+    );
+  }
+
+  get(
+    actor: Actor,
+    vendorId: string,
+    membershipId: string,
+    lifecycle: RecordLifecycle,
+  ): Promise<MembershipDirectoryResult> {
+    return this.authorization.execute(
+      {
+        actor,
+        vendorId,
+        permission: lifecycle === 'current' ? 'membership:read' : 'membership:manage',
+        operation: lifecycle === 'current' ? 'membership.get' : 'membership.deleted-get',
+      },
+      async (tx) => {
+        const membership = await this.memberships.getDiscovery(tx, membershipId, lifecycle);
+        if (!membership) throw membershipNotFound();
+        const profile = (await this.identities.discoveryProfiles(
+          tx,
+          [membership.userId],
+          lifecycle,
+        )).get(membership.userId);
+        if (!profile) throw membershipNotFound();
+        return { ...result(membership), ...profile };
       },
     );
   }

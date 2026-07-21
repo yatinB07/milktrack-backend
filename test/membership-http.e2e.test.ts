@@ -361,6 +361,153 @@ void describe('membership and user lifecycle HTTP API', () => {
     }
   });
 
+  void it('separates current and deleted membership discovery with stable authorization and projection rules', async () => {
+    const seed: Seed = { vendorIds: [], userIds: [] };
+    const ownerId = await insertUser(seed, 'Lifecycle Owner');
+    const otherOwnerId = await insertUser(seed, 'Other Owner');
+    const supportId = await insertUser(seed, 'Read-only Support');
+    const currentUserId = await insertUser(seed, 'Current Contact');
+    const invitedUserId = await insertUser(seed, 'Invited Member');
+    const endedUserId = await insertUser(seed, 'Ended Member');
+    const vendorId = await insertVendor(seed);
+    const otherVendorId = await insertVendor(seed);
+    await insertMembership({ vendorId, userId: ownerId, role: 'vendor_owner' });
+    await insertMembership({ vendorId: otherVendorId, userId: otherOwnerId, role: 'vendor_owner' });
+    const currentIds = [
+      await insertMembership({ vendorId, userId: currentUserId, role: 'customer' }),
+      await insertMembership({ vendorId, userId: invitedUserId, role: 'delivery_agent', status: 'invited' }),
+      await insertMembership({ vendorId, userId: endedUserId, role: 'vendor_administrator', status: 'ended' }),
+    ];
+    await insertEmailIdentity(currentUserId, 'current-contact@example.test');
+    const sameCreatedAt = '2099-07-18T12:00:00.000000Z';
+    const deletedIds = [
+      await insertMembership({ vendorId, userId: currentUserId, role: 'customer', deleted: true, createdAt: sameCreatedAt }),
+      await insertMembership({ vendorId, userId: invitedUserId, role: 'delivery_agent', status: 'invited', deleted: true, createdAt: sameCreatedAt }),
+      await insertMembership({ vendorId, userId: endedUserId, role: 'vendor_administrator', status: 'ended', deleted: true, createdAt: sameCreatedAt }),
+    ];
+    const crossTenantId = await insertMembership({
+      vendorId: otherVendorId,
+      userId: otherOwnerId,
+      role: 'vendor_administrator',
+      deleted: true,
+    });
+    await ownerPool.query(
+      `INSERT INTO platform_role_assignments (id, user_id, role, granted_by)
+       VALUES ($1, $2, 'support_operations', $2)`,
+      [randomUUID(), supportId],
+    );
+    await ownerPool.query(
+      `INSERT INTO support_access_grants
+         (id, vendor_id, grantee_user_id, requested_by, approved_by, purpose,
+          scope_json, access_mode, starts_at, expires_at)
+       VALUES ($1, $2, $3, $3, $3, 'Membership lifecycle read',
+               '["membership:read"]'::jsonb, 'read',
+               now() - interval '1 minute', now() + interval '1 hour')`,
+      [randomUUID(), vendorId, supportId],
+    );
+    const ownerToken = await issueSession(ownerId);
+    const otherOwnerToken = await issueSession(otherOwnerId);
+    const supportToken = await issueSession(supportId);
+
+    try {
+      const omitted = await request(baseUrl, ownerToken, `/v1/vendors/${vendorId}/memberships`);
+      const omittedBody = await omitted.json() as { items: Array<Record<string, unknown>> };
+      assert.equal(omitted.status, 200, JSON.stringify(omittedBody));
+      assert.ok(omittedBody.items.length >= 2);
+      assert.ok(omittedBody.items.every((item) => item.lifecycle === 'current' && item.status === 'active'));
+
+      for (const id of currentIds) {
+        const response = await request(baseUrl, ownerToken, `/v1/vendors/${vendorId}/memberships/${id}`);
+        const body = await response.json() as Record<string, unknown>;
+        assert.equal(response.status, 200, JSON.stringify(body));
+        assert.equal(body.lifecycle, 'current');
+      }
+
+      const seen = new Set<string>();
+      let cursor: string | undefined;
+      do {
+        const response = await request(
+          baseUrl,
+          ownerToken,
+          `/v1/vendors/${vendorId}/memberships?lifecycle=deleted&limit=1${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`,
+        );
+        const body = await response.json() as { items: Array<Record<string, unknown>>; nextCursor?: string };
+        assert.equal(response.status, 200, JSON.stringify(body));
+        assert.equal(body.items.length, 1);
+        assert.equal(body.items[0]?.lifecycle, 'deleted');
+        seen.add(String(body.items[0]?.id));
+        cursor = body.nextCursor;
+      } while (cursor);
+      assert.deepEqual(seen, new Set(deletedIds));
+
+      const explicitEnded = await request(
+        baseUrl,
+        ownerToken,
+        `/v1/vendors/${vendorId}/memberships?lifecycle=deleted&status=ended`,
+      );
+      const endedBody = await explicitEnded.json() as { items: Array<{ id: string; status: string; lifecycle: string }> };
+      assert.equal(explicitEnded.status, 200, JSON.stringify(endedBody));
+      assert.deepEqual(endedBody.items.map(({ id }) => id), [deletedIds[2]]);
+      assert.ok(endedBody.items.every(({ status, lifecycle }) => status === 'ended' && lifecycle === 'deleted'));
+
+      const deletedCurrentUser = await request(
+        baseUrl,
+        ownerToken,
+        `/v1/vendors/${vendorId}/memberships/${deletedIds[0]}?lifecycle=deleted`,
+      );
+      const deletedCurrentUserBody = await deletedCurrentUser.json() as Record<string, unknown>;
+      assert.equal(deletedCurrentUser.status, 200, JSON.stringify(deletedCurrentUserBody));
+      assert.equal(deletedCurrentUserBody.email, 'current-contact@example.test');
+      for (const field of ['deletedAt', 'deletedBy', 'deletionReason']) assert.equal(field in deletedCurrentUserBody, false);
+
+      assert.equal((await request(
+        baseUrl,
+        supportToken,
+        `/v1/vendors/${vendorId}/memberships/${currentIds[0]}`,
+      )).status, 200);
+      assert.equal((await request(
+        baseUrl,
+        supportToken,
+        `/v1/vendors/${vendorId}/memberships?lifecycle=deleted`,
+      )).status, 403);
+      assert.equal((await request(
+        baseUrl,
+        supportToken,
+        `/v1/vendors/${vendorId}/memberships/${deletedIds[0]}?lifecycle=deleted`,
+      )).status, 403);
+
+      assert.equal((await request(
+        baseUrl,
+        otherOwnerToken,
+        `/v1/vendors/${vendorId}/memberships/${deletedIds[0]}?lifecycle=deleted`,
+      )).status, 403);
+      assert.equal((await request(
+        baseUrl,
+        ownerToken,
+        `/v1/vendors/${vendorId}/memberships/${crossTenantId}?lifecycle=deleted`,
+      )).status, 404);
+      assert.equal((await request(
+        baseUrl,
+        ownerToken,
+        `/v1/vendors/${vendorId}/memberships/${currentIds[0]}?lifecycle=deleted`,
+      )).status, 404);
+      assert.equal((await request(
+        baseUrl,
+        ownerToken,
+        `/v1/vendors/${vendorId}/memberships/${deletedIds[0]}?lifecycle=current`,
+      )).status, 404);
+
+      const invalidLifecycle = await request(
+        baseUrl,
+        ownerToken,
+        `/v1/vendors/${vendorId}/memberships/${currentIds[0]}?lifecycle=archived`,
+      );
+      assert.equal(invalidLifecycle.status, 400, await invalidLifecycle.text());
+    } finally {
+      await cleanup(seed);
+    }
+  });
+
   void it('onboards and searches invited members without exposing global match state', async () => {
     const seed: Seed = { vendorIds: [], userIds: [] };
     const ownerId = await insertUser(seed, 'Vendor Owner');
@@ -393,6 +540,7 @@ void describe('membership and user lifecycle HTTP API', () => {
       assert.equal(new Set(bodies.map(({ id }) => id)).size, 1);
       assert.equal(new Set(bodies.map(({ userId }) => userId)).size, 1);
       assert.ok(bodies.every(({ status }) => status === 'invited'));
+      assert.ok(bodies.every((body) => (body as { lifecycle?: string }).lifecycle === 'current'));
       assert.ok(bodies.every(({ displayName }) => displayName === 'Priya Customer'));
       assert.ok(bodies.every((body) => body.phone === phone));
       assert.ok(bodies.every((body) => body.matchedExistingUser === undefined && body.otp === undefined));
@@ -572,6 +720,7 @@ void describe('membership and user lifecycle HTTP API', () => {
         joinedAt?: string;
       };
       assert.equal(createdBody.status, 'active');
+      assert.equal((createdBody as { lifecycle?: string }).lifecycle, 'current');
       assert.ok(createdBody.joinedAt);
 
       const duplicate = await request(
@@ -596,7 +745,9 @@ void describe('membership and user lifecycle HTTP API', () => {
         },
       );
       assert.equal(updated.status, 200);
-      assert.equal(((await updated.json()) as { role: string }).role, 'vendor_owner');
+      const updatedBody = await updated.json() as { role: string; lifecycle: string };
+      assert.equal(updatedBody.role, 'vendor_owner');
+      assert.equal(updatedBody.lifecycle, 'current');
 
       const ended = await request(
         baseUrl,
@@ -605,7 +756,16 @@ void describe('membership and user lifecycle HTTP API', () => {
         { method: 'POST', body: JSON.stringify({ reason: 'Role no longer required' }) },
       );
       assert.equal(ended.status, 200);
-      assert.equal(((await ended.json()) as { status: string }).status, 'ended');
+      const endedBody = await ended.json() as { status: string; lifecycle: string };
+      assert.equal(endedBody.status, 'ended');
+      assert.equal(endedBody.lifecycle, 'current');
+      const endedDetail = await request(
+        baseUrl,
+        ownerToken,
+        `/v1/vendors/${vendorId}/memberships/${createdBody.id}?lifecycle=current`,
+      );
+      assert.equal(endedDetail.status, 200);
+      assert.equal(((await endedDetail.json()) as { lifecycle: string }).lifecycle, 'current');
 
       const restoredCandidate = await request(
         baseUrl,
@@ -634,6 +794,23 @@ void describe('membership and user lifecycle HTTP API', () => {
         { method: 'DELETE', body: JSON.stringify({ reason: 'Duplicate administrator record' }) },
       );
       assert.equal(deleted.status, 204);
+      const deletedDetail = await request(
+        baseUrl,
+        ownerToken,
+        `/v1/vendors/${vendorId}/memberships/${restoredCandidateId}?lifecycle=deleted`,
+      );
+      const deletedDetailBody = await deletedDetail.json() as Record<string, unknown>;
+      assert.equal(deletedDetail.status, 200, JSON.stringify(deletedDetailBody));
+      assert.equal(deletedDetailBody.lifecycle, 'deleted');
+      assert.equal(deletedDetailBody.id, restoredCandidateId);
+      for (const field of ['deletedAt', 'deletedBy', 'deletionReason']) {
+        assert.equal(field in deletedDetailBody, false);
+      }
+      assert.equal((await request(
+        baseUrl,
+        ownerToken,
+        `/v1/vendors/${vendorId}/memberships/${restoredCandidateId}?lifecycle=current`,
+      )).status, 404);
       const deletion = await ownerPool.query<{
         deleted_at: Date | null;
         deleted_by: string | null;
@@ -654,6 +831,7 @@ void describe('membership and user lifecycle HTTP API', () => {
         { method: 'POST', body: JSON.stringify({ reason: 'Deletion was incorrect' }) },
       );
       assert.equal(restored.status, 200);
+      assert.equal(((await restored.json()) as { lifecycle: string }).lifecycle, 'current');
       const restoredFields = await ownerPool.query<{
         deleted_at: Date | null;
         deleted_by: string | null;
@@ -703,6 +881,7 @@ void describe('membership and user lifecycle HTTP API', () => {
     const vendorOwnerId = await insertUser(seed, 'Vendor Owner');
     await grantPlatformAdministrator(administratorId);
     const vendorId = await insertVendor(seed);
+    await insertEmailIdentity(targetId, 'hidden-membership@example.test');
     await insertMembership({ vendorId, userId: vendorOwnerId, role: 'vendor_owner' });
     const targetMembershipId = await insertMembership({
       vendorId,
@@ -752,6 +931,44 @@ void describe('membership and user lifecycle HTTP API', () => {
       assert.ok(user.rows[0]?.deleted_at);
       assert.equal(user.rows[0]?.deleted_by, administratorId);
       assert.equal(user.rows[0]?.deletion_reason, 'Confirmed user deletion');
+
+      const deletedMembership = await request(
+        baseUrl,
+        vendorOwnerToken,
+        `/v1/vendors/${vendorId}/memberships/${targetMembershipId}`,
+        { method: 'DELETE', body: JSON.stringify({ reason: 'Archive deleted user membership' }) },
+      );
+      assert.equal(deletedMembership.status, 204);
+      const retained = await request(
+        baseUrl,
+        vendorOwnerToken,
+        `/v1/vendors/${vendorId}/memberships/${targetMembershipId}?lifecycle=deleted`,
+      );
+      const retainedBody = await retained.json() as Record<string, unknown>;
+      assert.equal(retained.status, 200, JSON.stringify(retainedBody));
+      assert.equal(retainedBody.displayName, 'Delete Target');
+      assert.equal(retainedBody.lifecycle, 'deleted');
+      for (const field of ['phone', 'email', 'deletedAt', 'deletedBy', 'deletionReason']) {
+        assert.equal(field in retainedBody, false);
+      }
+      const retainedSearch = await request(
+        baseUrl,
+        vendorOwnerToken,
+        `/v1/vendors/${vendorId}/memberships?lifecycle=deleted&search=delete%20target`,
+      );
+      assert.deepEqual(
+        ((await retainedSearch.json()) as { items: Array<{ id: string }> }).items.map(({ id }) => id),
+        [targetMembershipId],
+      );
+      const hiddenContactSearch = await request(
+        baseUrl,
+        vendorOwnerToken,
+        `/v1/vendors/${vendorId}/memberships?lifecycle=deleted&search=hidden-membership`,
+      );
+      assert.deepEqual(
+        ((await hiddenContactSearch.json()) as { items: unknown[] }).items,
+        [],
+      );
 
       const rejectedSession = await request(
         baseUrl,

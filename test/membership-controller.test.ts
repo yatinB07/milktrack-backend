@@ -33,6 +33,7 @@ const membership = {
   userId: '00000000-0000-4000-8000-000000000004',
   role: 'customer' as const,
   status: 'active' as const,
+  lifecycle: 'current' as const,
   joinedAt: at,
   createdAt: at,
   updatedAt: at,
@@ -46,13 +47,17 @@ const directoryMembership = {
 };
 
 void test('membership controller maps list results to the public DTO shape', async () => {
+  let receivedLifecycle: unknown;
   const service = {
-    list: () =>
+    list: (_actor: Actor, _vendorId: string, query: { lifecycle: string }) => {
+      receivedLifecycle = query.lifecycle;
+      return (
       Promise.resolve({
         items: [{ ...directoryMembership, deletedAt: at }],
         nextCursor: membership.id,
         internalCount: 1,
-      }),
+      }));
+    },
   } as unknown as MembershipService;
   const controller = new MembershipController(service);
 
@@ -65,6 +70,7 @@ void test('membership controller maps list results to the public DTO shape', asy
     items: [directoryMembership],
     nextCursor: membership.id,
   });
+  assert.equal(receivedLifecycle, 'current');
 });
 
 void test('membership controller forwards vendor directory filters', async () => {
@@ -77,6 +83,7 @@ void test('membership controller forwards vendor directory filters', async () =>
   } as unknown as MembershipService;
   const controller = new MembershipController(service);
   const query = {
+    lifecycle: 'deleted' as const,
     role: 'delivery_agent' as const,
     status: 'invited' as const,
     search: '  priya  ',
@@ -90,6 +97,47 @@ void test('membership controller forwards vendor directory filters', async () =>
   assert.deepEqual(received, query);
 });
 
+void test('membership controller exposes lifecycle-aware detail without deletion metadata', async () => {
+  let received: unknown;
+  const service = {
+    get: (_actor: Actor, _vendorId: string, membershipId: string, lifecycle: string) => {
+      received = { membershipId, lifecycle };
+      return Promise.resolve({ ...directoryMembership, lifecycle: 'deleted', deletedAt: at });
+    },
+  } as unknown as MembershipService;
+  const controller = new MembershipController(service);
+
+  const response = await requestContextStore.run(
+    { correlationId: '00000000-0000-4000-8000-000000000005', actor },
+    () => controller.get(membership.vendorId, membership.id, { lifecycle: 'deleted' }),
+  );
+
+  assert.deepEqual(received, { membershipId: membership.id, lifecycle: 'deleted' });
+  assert.deepEqual(response, { ...directoryMembership, lifecycle: 'deleted' });
+});
+
+void test('membership controller normalizes omitted detail lifecycle and publishes tsx metadata', async () => {
+  let receivedLifecycle: unknown;
+  const service = {
+    get: (_actor: Actor, _vendorId: string, _membershipId: string, lifecycle: string) => {
+      receivedLifecycle = lifecycle;
+      return Promise.resolve(directoryMembership);
+    },
+  } as unknown as MembershipService;
+  const controller = new MembershipController(service);
+
+  await requestContextStore.run(
+    { correlationId: '00000000-0000-4000-8000-000000000005', actor },
+    () => controller.get(membership.vendorId, membership.id, {}),
+  );
+
+  assert.equal(receivedLifecycle, 'current');
+  assert.deepEqual(
+    Reflect.getMetadata('design:paramtypes', MembershipController.prototype, 'get'),
+    [String, String, (await import('../src/common/http/record-lifecycle.dto.js')).LifecycleQueryDto],
+  );
+});
+
 void test('membership controller returns only the enriched onboarding result', async () => {
   const result = {
     id: directoryMembership.id,
@@ -97,6 +145,7 @@ void test('membership controller returns only the enriched onboarding result', a
     userId: directoryMembership.userId,
     role: directoryMembership.role,
     status: 'invited' as const,
+    lifecycle: 'current' as const,
     displayName: directoryMembership.displayName,
     phone: directoryMembership.phone,
     email: directoryMembership.email,

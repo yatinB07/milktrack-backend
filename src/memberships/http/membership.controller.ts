@@ -24,6 +24,7 @@ import {
 import { ActorGuard } from '../../identity/http/actor.guard.js';
 import { requestContextStore } from '../../common/context/request-context.js';
 import { ApiErrorResponseDto } from '../../common/errors/application-error.filter.js';
+import { LifecycleQueryDto } from '../../common/http/record-lifecycle.dto.js';
 import {
   UserLifecycleService,
   type UserResult,
@@ -64,6 +65,7 @@ function membershipResponse(result: MembershipResult): MembershipResponseDto {
     userId: result.userId,
     role: result.role,
     status: result.status,
+    lifecycle: result.lifecycle,
     ...(result.joinedAt ? { joinedAt: result.joinedAt } : {}),
     ...(result.endedAt ? { endedAt: result.endedAt } : {}),
     createdAt: result.createdAt,
@@ -123,9 +125,26 @@ export class MembershipController {
     const page = await this.memberships.list(
       requestContextStore.requireActor(),
       vendorId,
-      query,
+      { ...query, lifecycle: query.lifecycle ?? 'current' },
     );
     return membershipPageResponse(page);
+  }
+
+  @Get(':id')
+  @ApiOkResponse({ type: MembershipDirectoryResponseDto })
+  async get(
+    @Param('vendorId', uuidPipe) vendorId: string,
+    @Param('id', uuidPipe) membershipId: string,
+    @Query() query: LifecycleQueryDto,
+  ) {
+    return directoryMembershipResponse(
+      await this.memberships.get(
+        requestContextStore.requireActor(),
+        vendorId,
+        membershipId,
+        query.lifecycle ?? 'current',
+      ),
+    );
   }
 
   @Post()
@@ -426,6 +445,12 @@ Reflect.defineMetadata(
   [String, ListMembershipsQueryDto],
   MembershipController.prototype,
   'list',
+);
+Reflect.defineMetadata(
+  'design:paramtypes',
+  [String, String, LifecycleQueryDto],
+  MembershipController.prototype,
+  'get',
 );
 Reflect.defineMetadata(
   'design:paramtypes',

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import type { TransactionContext } from '../src/common/application/transaction-context.js';
+import type { RecordLifecycle } from '../src/common/application/record-lifecycle.js';
 import type { Actor, VendorRole } from '../src/common/context/request-context.js';
 import {
   PrismaMembershipService,
@@ -44,11 +45,11 @@ function harness(
   records: readonly MembershipRecord[],
   names: ReadonlyMap<string, string>,
 ) {
-  const listQueries: Array<Readonly<{ cursor?: string; limit?: number; role?: VendorRole; status?: MembershipRecord['status'] }>> = [];
+  const listQueries: Array<Readonly<{ cursor?: string; limit?: number; lifecycle: RecordLifecycle; role?: VendorRole; status?: MembershipRecord['status'] }>> = [];
   const profileRequests: string[][] = [];
   const cursorFor = (membership: MembershipRecord) => `after:${membership.id}`;
   const store = {
-    listActive: (_context: TransactionContext, query: (typeof listQueries)[number]): Promise<MembershipRecordPage> => {
+    listDiscovery: (_context: TransactionContext, query: (typeof listQueries)[number]): Promise<MembershipRecordPage> => {
       listQueries.push(query);
       const start = query.cursor
         ? records.findIndex(({ id }) => cursorFor({ id } as MembershipRecord) === query.cursor) + 1
@@ -65,6 +66,16 @@ function harness(
   };
   const identities = {
     profiles: (_context: TransactionContext, userIds: readonly string[]) => {
+      profileRequests.push([...userIds]);
+      return Promise.resolve(new Map(userIds.map((userId) => [userId, {
+        userId,
+        displayName: names.get(userId) ?? `Member ${userId}`,
+        phone: `+91${userId}`,
+        email: `${userId}@example.test`,
+      }])));
+    },
+    discoveryProfiles: (_context: TransactionContext, userIds: readonly string[], lifecycle: RecordLifecycle) => {
+      assert.equal(lifecycle, 'current');
       profileRequests.push([...userIds]);
       return Promise.resolve(new Map(userIds.map((userId) => [userId, {
         userId,
@@ -92,11 +103,11 @@ void test('non-search membership pages retain the requested database limit and c
   const records = [record(0), record(1), record(2)];
   const { service, listQueries, profileRequests } = harness(records, new Map());
 
-  const page = await service.list(actor, vendorId, { limit: 2 });
+  const page = await service.list(actor, vendorId, { lifecycle: 'current', limit: 2 });
 
   assert.deepEqual(page.items.map(({ id }) => id), ['membership-0', 'membership-1']);
   assert.equal(page.nextCursor, 'after:membership-1');
-  assert.deepEqual(listQueries, [{ cursor: undefined, limit: 2, role: undefined, status: undefined }]);
+  assert.deepEqual(listQueries, [{ cursor: undefined, limit: 2, lifecycle: 'current', role: undefined, status: undefined }]);
   assert.deepEqual(profileRequests, [['user-0', 'user-1']]);
 });
 
@@ -108,7 +119,7 @@ void test('search continuation resumes after first, middle, and tail matches wit
   let cursor: string | undefined;
 
   do {
-    const page = await service.list(actor, vendorId, { search: 'needle', limit: 1, ...(cursor ? { cursor } : {}) });
+    const page = await service.list(actor, vendorId, { lifecycle: 'current', search: 'needle', limit: 1, ...(cursor ? { cursor } : {}) });
     seen.push(...page.items.map(({ id }) => id));
     cursor = page.nextCursor;
   } while (cursor);
@@ -126,8 +137,9 @@ void test('a full search window with no matches returns continuation to the unex
     new Map([['user-100', 'Only tail needle']]),
   );
 
-  const first = await service.list(actor, vendorId, { search: 'needle', limit: 25 });
+  const first = await service.list(actor, vendorId, { lifecycle: 'current', search: 'needle', limit: 25 });
   const second = await service.list(actor, vendorId, {
+    lifecycle: 'current',
     search: 'needle',
     limit: 25,
     cursor: first.nextCursor,
@@ -147,9 +159,9 @@ void test('search treats text literally, composes role and status, and bounds a 
   let profileCalls = 0;
   let examined = 0;
   const store = {
-    listActive: (_context: TransactionContext, query: { limit?: number; role?: VendorRole; status?: MembershipRecord['status'] }) => {
+    listDiscovery: (_context: TransactionContext, query: { limit?: number; lifecycle: RecordLifecycle; role?: VendorRole; status?: MembershipRecord['status'] }) => {
       storeCalls += 1;
-      assert.deepEqual(query, { cursor: undefined, limit: 100, role: 'delivery_agent', status: 'invited' });
+      assert.deepEqual(query, { cursor: undefined, limit: 100, lifecycle: 'current', role: 'delivery_agent', status: 'invited' });
       const items = Array.from({ length: query.limit ?? 25 }, (_, index) => record(index, 'delivery_agent', 'invited'));
       return Promise.resolve({ items, nextCursor: totalCandidates > items.length ? 'after:membership-99' : undefined });
     },
@@ -164,11 +176,20 @@ void test('search treats text literally, composes role and status, and bounds a 
         displayName: userId === 'user-75' ? 'Literal %_\\ match' : `Other ${userId}`,
       }])));
     },
+    discoveryProfiles: (_context: TransactionContext, userIds: readonly string[]) => {
+      profileCalls += 1;
+      examined = userIds.length;
+      return Promise.resolve(new Map(userIds.map((userId) => [userId, {
+        userId,
+        displayName: userId === 'user-75' ? 'Literal %_\\ match' : `Other ${userId}`,
+      }])));
+    },
   };
   const authorization = { execute: <T>(_input: unknown, operation: (context: TransactionContext) => Promise<T>) => operation(tx) };
   const service = new PrismaMembershipService(authorization, store as never, {} as never, identities as never);
 
   const page = await service.list(actor, vendorId, {
+    lifecycle: 'current',
     search: '%_\\',
     limit: 1,
     role: 'delivery_agent',
@@ -180,4 +201,83 @@ void test('search treats text literally, composes role and status, and bounds a 
   assert.equal(storeCalls, 1);
   assert.equal(profileCalls, 1);
   assert.equal(examined, 100);
+});
+
+void test('deleted discovery searches retained names without hidden contacts', async () => {
+  const deleted = { ...record(0), deletedAt: new Date('2030-01-02T00:00:00.000Z') };
+  const queries: unknown[] = [];
+  const store = {
+    listDiscovery: (_context: TransactionContext, query: unknown) => {
+      queries.push(query);
+      return Promise.resolve({ items: [deleted] });
+    },
+    cursorFor: () => 'unused',
+  };
+  const identities = {
+    profiles: () => Promise.reject(new Error('current profiles must not be used')),
+    discoveryProfiles: (_context: TransactionContext, userIds: readonly string[], lifecycle: RecordLifecycle) => {
+      assert.deepEqual(userIds, [deleted.userId]);
+      assert.equal(lifecycle, 'deleted');
+      return Promise.resolve(new Map([[deleted.userId, {
+        userId: deleted.userId,
+        displayName: 'Retained Needle',
+      }]]));
+    },
+  };
+  const authorization = {
+    execute: <T>(input: { permission: string; operation: string }, operation: (context: TransactionContext) => Promise<T>) => {
+      assert.deepEqual(input, { actor, vendorId, permission: 'membership:manage', operation: 'membership.deleted-list' });
+      return operation(tx);
+    },
+  };
+  const service = new PrismaMembershipService(authorization, store as never, {} as never, identities as never);
+
+  const page = await service.list(actor, vendorId, { lifecycle: 'deleted', search: 'needle' });
+
+  assert.deepEqual(page.items, [{
+    id: deleted.id,
+    vendorId: deleted.vendorId,
+    userId: deleted.userId,
+    role: deleted.role,
+    status: deleted.status,
+    joinedAt: deleted.joinedAt,
+    lifecycle: 'deleted',
+    createdAt: deleted.createdAt,
+    updatedAt: deleted.updatedAt,
+    displayName: 'Retained Needle',
+  }]);
+  assert.deepEqual(queries, [{ cursor: undefined, limit: 100, lifecycle: 'deleted', role: undefined, status: undefined }]);
+});
+
+void test('deleted search continuation advances from the last examined candidate', async () => {
+  const deleted = [0, 1, 2].map((index) => ({
+    ...record(index),
+    deletedAt: new Date('2030-01-02T00:00:00.000Z'),
+  }));
+  const store = {
+    listDiscovery: () => Promise.resolve({ items: deleted, nextCursor: 'database-tail' }),
+    cursorFor: (membership: MembershipRecord) => `after:${membership.id}`,
+  };
+  const identities = {
+    discoveryProfiles: (_context: TransactionContext, userIds: readonly string[], lifecycle: RecordLifecycle) => {
+      assert.equal(lifecycle, 'deleted');
+      return Promise.resolve(new Map(userIds.map((userId) => [userId, {
+        userId,
+        displayName: userId === 'user-1' ? 'Needle' : 'Other',
+      }])));
+    },
+  };
+  const authorization = {
+    execute: <T>(_input: unknown, operation: (context: TransactionContext) => Promise<T>) => operation(tx),
+  };
+  const service = new PrismaMembershipService(authorization, store as never, {} as never, identities as never);
+
+  const page = await service.list(actor, vendorId, {
+    lifecycle: 'deleted',
+    search: 'needle',
+    limit: 1,
+  });
+
+  assert.deepEqual(page.items.map(({ id }) => id), ['membership-1']);
+  assert.equal(page.nextCursor, 'after:membership-1');
 });

@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 
 import type { TransactionContext } from '../../common/application/transaction-context.js';
+import type { RecordLifecycle } from '../../common/application/record-lifecycle.js';
 import { ApplicationError } from '../../common/errors/application.error.js';
 import { unwrapPrismaTransaction } from '../../database/infrastructure/prisma-transaction-context.js';
 import {
@@ -43,6 +44,35 @@ export class PrismaMemberIdentityService extends MemberIdentityService {
       },
     });
     return new Map(users.map((user) => [user.id, profile(user)]));
+  }
+
+  async discoveryProfiles(
+    context: TransactionContext,
+    userIds: readonly string[],
+    lifecycle: RecordLifecycle,
+  ): Promise<ReadonlyMap<string, MemberIdentityProfile>> {
+    if (userIds.length === 0) return new Map();
+    const users = await unwrapPrismaTransaction(context).user.findMany({
+      where: {
+        id: { in: [...new Set(userIds)] },
+        ...(lifecycle === 'current' ? { deletedAt: null } : {}),
+      },
+      select: {
+        id: true,
+        displayName: true,
+        deletedAt: true,
+        identities: {
+          where: { isPrimary: true },
+          select: { type: true, normalizedValue: true },
+        },
+      },
+    });
+    return new Map(users.map((user) => [
+      user.id,
+      user.deletedAt
+        ? { userId: user.id, displayName: user.displayName }
+        : profile(user),
+    ]));
   }
 
   async resolvePhoneUser(
