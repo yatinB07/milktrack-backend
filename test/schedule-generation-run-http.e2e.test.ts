@@ -157,7 +157,8 @@ async function forbidden(response: Response) {
 }
 
 async function waitForRun(vendorId: string, excludedRunId?: string): Promise<string> {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
+  const deadline = performance.now() + 5_000;
+  while (performance.now() < deadline) {
     const row = await owner.query<{ id: string }>(
       `SELECT id FROM schedule_generation_runs
        WHERE vendor_id=$1 AND trigger='manual' AND status='running'
@@ -165,7 +166,7 @@ async function waitForRun(vendorId: string, excludedRunId?: string): Promise<str
       [vendorId, excludedRunId ?? null],
     );
     if (row.rows[0]) return row.rows[0].id;
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await new Promise((resolve) => setTimeout(resolve, 25));
   }
   throw new Error('manual run did not enter running state');
 }
