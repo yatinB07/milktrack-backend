@@ -25,6 +25,7 @@ import {
 } from '../src/customers/http/household.dto.js';
 import { PrismaHouseholdStore } from '../src/customers/infrastructure/prisma-household.store.js';
 import { LifecycleQueryDto } from '../src/common/http/record-lifecycle.dto.js';
+import { ApplicationError } from '../src/common/errors/application.error.js';
 
 const actor: Actor = {
   userId: '00000000-0000-4000-8000-000000000001',
@@ -228,4 +229,42 @@ void test('household store applies lifecycle predicates without filtering detail
   });
   assert.deepEqual(detailWhere[0], { id: household.id, deletedAt: null });
   assert.equal(detail.status, 'inactive');
+});
+
+void test('household member listing retains the active-current root guard', async () => {
+  const row = {
+    ...household,
+    addressLine2: null,
+    locality: null,
+    latitude: null,
+    longitude: null,
+    notes: null,
+    deletedAt: null,
+    deletedBy: null,
+    deletionReason: null,
+    status: 'inactive' as const,
+  };
+  let where: unknown;
+  const context = wrapPrismaTransaction({
+    household: {
+      findFirst: (input: { where: { status?: string } }) => {
+        where = input.where;
+        return Promise.resolve(input.where.status === 'active' ? null : row);
+      },
+    },
+    householdMember: { findMany: () => Promise.resolve([]) },
+  } as never);
+
+  await assert.rejects(
+    new PrismaHouseholdStore().listMembers(context, household.id, {}),
+    (error: unknown) =>
+      error instanceof ApplicationError &&
+      error.code === 'HOUSEHOLD_NOT_FOUND' &&
+      error.status === 404,
+  );
+  assert.deepEqual(where, {
+    id: household.id,
+    deletedAt: null,
+    status: 'active',
+  });
 });

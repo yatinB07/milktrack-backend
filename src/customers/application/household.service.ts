@@ -454,7 +454,7 @@ export class PrismaHouseholdService extends HouseholdService {
       "household:manage",
       "household.member-attach",
       async (tx) => {
-        await this.households.get(tx, householdId, "current");
+        await this.households.requireActiveCurrent(tx, householdId);
         const customer = await this.memberships.requireActiveCustomerMembership(
           tx,
           vendorId,

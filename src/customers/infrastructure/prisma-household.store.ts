@@ -276,6 +276,15 @@ export class PrismaHouseholdStore {
       throw error("HOUSEHOLD_NOT_FOUND", "Household was not found", 404);
     return toHousehold(row);
   }
+  async requireActiveCurrent(context: TransactionContext, id: string) {
+    const row = await unwrapPrismaTransaction(context).household.findFirst({
+      where: { id, deletedAt: null, status: "active" },
+      select: householdSelect,
+    });
+    if (!row)
+      throw error("HOUSEHOLD_NOT_FOUND", "Household was not found", 404);
+    return toHousehold(row);
+  }
   async create(
     context: TransactionContext,
     input: CreateHousehold & { id: string; vendorId: string },
@@ -412,7 +421,7 @@ export class PrismaHouseholdStore {
     householdId: string,
     query: PageQuery,
   ) {
-    await this.get(context, householdId, "current");
+    await this.requireActiveCurrent(context, householdId);
     const tx = unwrapPrismaTransaction(context);
     const limit = this.cursors.parseLimit(query.limit);
     const cursor = query.cursor ? this.cursors.decode(query.cursor) : undefined;

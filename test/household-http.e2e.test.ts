@@ -551,6 +551,21 @@ void test("inactive lifecycle projections, conflicts, audit shapes, and customer
     ((await updated.json()) as { status: string }).status,
     "inactive",
   );
+  const [inactiveMembers, inactiveAttach] = await Promise.all([
+    api(
+      `/v1/vendors/${vendorId}/households/${household.id}/members`,
+      ownerToken,
+    ),
+    api(
+      `/v1/vendors/${vendorId}/households/${household.id}/members`,
+      ownerToken,
+      { method: "POST", body: { customerMembershipId } },
+    ),
+  ]);
+  assert.deepEqual(
+    [inactiveMembers.status, inactiveAttach.status],
+    [404, 404],
+  );
   await expectError(
     await api(
       `/v1/vendors/${vendorId}/households/${duplicate.id}`,
