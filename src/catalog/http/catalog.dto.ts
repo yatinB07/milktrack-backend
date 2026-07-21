@@ -1,7 +1,9 @@
 import { Type } from 'class-transformer';
 import { IsIn, IsInt, IsOptional, IsString, IsUUID, Length, Matches, Max, Min } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import type { DeliverySlotRecord, ProductRecord, UnitRecord } from '../infrastructure/prisma-catalog.store.js';
+import type { ProductResult } from '../application/catalog.service.js';
+import type { DeliverySlotRecord, UnitRecord } from '../infrastructure/prisma-catalog.store.js';
+import { type RecordLifecycle, recordLifecycles } from '../../common/application/record-lifecycle.js';
 
 const code = /^[A-Za-z0-9_-]{2,32}$/;
 const localTime = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
@@ -10,6 +12,12 @@ export class CatalogPageQueryDto {
   @ApiPropertyOptional({ default: 25, minimum: 1, maximum: 100 }) @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(100) limit?: number;
   @ApiPropertyOptional({ enum: ['active', 'inactive'], default: 'active' }) @IsOptional() @IsIn(['active', 'inactive']) status?: 'active' | 'inactive';
   @IsOptional() @IsString() @Length(1, 160) search?: string;
+}
+export class ProductPageQueryDto extends CatalogPageQueryDto {
+  @ApiPropertyOptional({ enum: recordLifecycles, default: 'current' })
+  @IsOptional()
+  @IsIn(recordLifecycles)
+  lifecycle?: RecordLifecycle;
 }
 export class CreateUnitRequestDto {
   @ApiProperty({ type: String, pattern: code.source }) @IsString() @Matches(code) code!: string;
@@ -61,6 +69,7 @@ export class ProductResponseDto {
   @ApiProperty({ type: String, format: 'uuid' }) defaultUnitId!: string;
   @ApiProperty({ enum: ['active', 'inactive'] }) status!: string;
   version!: number;
+  @ApiProperty({ enum: recordLifecycles }) lifecycle!: RecordLifecycle;
   @ApiProperty({ type: String, format: 'date-time' }) createdAt!: string;
   @ApiProperty({ type: String, format: 'date-time' }) updatedAt!: string;
 }
@@ -83,5 +92,16 @@ export class DeliverySlotListResponseDto {
   @ApiPropertyOptional({ type: String }) nextCursor?: string;
 }
 export const toUnitResponse = (value: UnitRecord): UnitResponseDto => ({ ...value, createdAt: value.createdAt.toISOString(), updatedAt: value.updatedAt.toISOString() });
-export const toProductResponse = (value: ProductRecord): ProductResponseDto => ({ ...value, createdAt: value.createdAt.toISOString(), updatedAt: value.updatedAt.toISOString() });
+export const toProductResponse = (value: ProductResult): ProductResponseDto => ({
+  id: value.id,
+  vendorId: value.vendorId,
+  code: value.code,
+  name: value.name,
+  defaultUnitId: value.defaultUnitId,
+  status: value.status,
+  version: value.version,
+  lifecycle: value.lifecycle,
+  createdAt: value.createdAt.toISOString(),
+  updatedAt: value.updatedAt.toISOString(),
+});
 export const toDeliverySlotResponse = (value: DeliverySlotRecord): DeliverySlotResponseDto => ({ ...value, createdAt: value.createdAt.toISOString(), updatedAt: value.updatedAt.toISOString() });

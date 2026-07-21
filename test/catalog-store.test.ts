@@ -44,3 +44,56 @@ void test('unit search remains applied on cursor pages', async () => {
     }],
   });
 });
+
+void test('product store applies lifecycle and status predicates without changing cursor order', async () => {
+  const where: unknown[] = [];
+  const orderBy: unknown[] = [];
+  const row = {
+    id: '00000000-0000-4000-8000-000000000030',
+    vendorId: '00000000-0000-4000-8000-000000000020',
+    code: 'MILK',
+    name: 'Milk',
+    defaultUnitId: '00000000-0000-4000-8000-000000000010',
+    status: 'inactive' as const,
+    version: 3,
+    deletedAt: new Date('2026-07-21T10:00:00.000Z'),
+    deletedBy: null,
+    deletionReason: null,
+    createdAt: new Date('2026-07-20T10:00:00.000Z'),
+    updatedAt: new Date('2026-07-20T10:00:00.000Z'),
+  };
+  const tx = {
+    product: {
+      findMany: (input: { where: unknown; orderBy: unknown }) => {
+        where.push(input.where);
+        orderBy.push(input.orderBy);
+        return Promise.resolve([]);
+      },
+      findFirst: (input: { where: unknown }) => {
+        where.push(input.where);
+        return Promise.resolve(row);
+      },
+    },
+  } as unknown as Prisma.TransactionClient;
+  const context = wrapPrismaTransaction(tx);
+  const store = new PrismaCatalogStore();
+
+  await store.listProducts(context, { lifecycle: 'current' });
+  await store.listProducts(context, { lifecycle: 'deleted' });
+  await store.listProducts(context, { lifecycle: 'deleted', status: 'active' });
+  const detail = await store.getProduct(context, row.id, 'deleted');
+
+  assert.deepEqual(where, [
+    { deletedAt: null, status: 'active' },
+    { deletedAt: { not: null } },
+    { deletedAt: { not: null }, status: 'active' },
+    { id: row.id, deletedAt: { not: null } },
+  ]);
+  assert.deepEqual(orderBy, [
+    [{ createdAt: 'desc' }, { id: 'desc' }],
+    [{ createdAt: 'desc' }, { id: 'desc' }],
+    [{ createdAt: 'desc' }, { id: 'desc' }],
+  ]);
+  assert.equal(detail.status, 'inactive');
+  assert.equal(detail.deletedAt, row.deletedAt);
+});

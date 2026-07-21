@@ -5,6 +5,10 @@ import { Inject, Injectable } from '@nestjs/common';
 import { AuditWriter } from '../../audit/application/audit-writer.js';
 import { TenantAuthorizationExecutor } from '../../authorization/application/tenant-authorization.executor.js';
 import type { TransactionContext } from '../../common/application/transaction-context.js';
+import {
+  type RecordLifecycle,
+  recordLifecycleOf,
+} from '../../common/application/record-lifecycle.js';
 import type { Actor } from '../../common/context/request-context.js';
 import { requestContextStore } from '../../common/context/request-context.js';
 import { ApplicationError } from '../../common/errors/application.error.js';
@@ -22,6 +26,13 @@ export type CatalogPageQuery = Readonly<{
   status?: CatalogStatus;
   search?: string;
 }>;
+export type ProductPageQuery = CatalogPageQuery & Readonly<{
+  lifecycle: RecordLifecycle;
+}>;
+export type ProductResult = Omit<
+  ProductRecord,
+  'deletedAt' | 'deletedBy' | 'deletionReason'
+> & Readonly<{ lifecycle: RecordLifecycle }>;
 export type CreateUnit = Readonly<{ code: string; name: string; decimalScale: number }>;
 export type RenameUnit = Readonly<{ name: string }>;
 export type Reason = Readonly<{ reason: string }>;
@@ -52,12 +63,12 @@ export abstract class CatalogService {
   abstract renameUnit(actor: Actor, vendorId: string, unitId: string, command: RenameUnit): Promise<UnitRecord>;
   abstract deactivateUnit(actor: Actor, vendorId: string, unitId: string, command: Reason): Promise<UnitRecord>;
   abstract reactivateUnit(actor: Actor, vendorId: string, unitId: string, command: Reason): Promise<UnitRecord>;
-  abstract listProducts(actor: Actor, vendorId: string, query: CatalogPageQuery): Promise<CatalogPage<ProductRecord>>;
-  abstract getProduct(actor: Actor, vendorId: string, productId: string): Promise<ProductRecord>;
-  abstract createProduct(actor: Actor, vendorId: string, command: CreateProduct): Promise<ProductRecord>;
-  abstract updateProduct(actor: Actor, vendorId: string, productId: string, command: UpdateProduct): Promise<ProductRecord>;
+  abstract listProducts(actor: Actor, vendorId: string, query: ProductPageQuery): Promise<CatalogPage<ProductResult>>;
+  abstract getProduct(actor: Actor, vendorId: string, productId: string, lifecycle: RecordLifecycle): Promise<ProductResult>;
+  abstract createProduct(actor: Actor, vendorId: string, command: CreateProduct): Promise<ProductResult>;
+  abstract updateProduct(actor: Actor, vendorId: string, productId: string, command: UpdateProduct): Promise<ProductResult>;
   abstract deleteProduct(actor: Actor, vendorId: string, productId: string, command: VersionedReason): Promise<void>;
-  abstract restoreProduct(actor: Actor, vendorId: string, productId: string, command: RestoreProduct): Promise<ProductRecord>;
+  abstract restoreProduct(actor: Actor, vendorId: string, productId: string, command: RestoreProduct): Promise<ProductResult>;
   abstract listDeliverySlots(actor: Actor, vendorId: string, query: CatalogPageQuery): Promise<CatalogPage<DeliverySlotRecord>>;
   abstract getDeliverySlot(actor: Actor, vendorId: string, slotId: string): Promise<DeliverySlotRecord>;
   abstract createDeliverySlot(actor: Actor, vendorId: string, command: CreateDeliverySlot): Promise<DeliverySlotRecord>;
@@ -78,6 +89,12 @@ const normalizedReason = (value: string) => {
   if (result.length < 1 || result.length > 500)
     throw new ApplicationError('INVALID_REASON', 'Reason must be between 1 and 500 characters', 400);
   return result;
+};
+const projectProduct = (record: ProductRecord): ProductResult => {
+  const { deletedAt, deletedBy, deletionReason, ...value } = record;
+  void deletedBy;
+  void deletionReason;
+  return { ...value, lifecycle: recordLifecycleOf(deletedAt) };
 };
 
 @Injectable()
@@ -130,18 +147,38 @@ export class PrismaCatalogService extends CatalogService {
   reactivateUnit(actor: Actor, vendorId: string, unitId: string, command: Reason) {
     return this.changeUnitStatus(actor, vendorId, unitId, 'active', 'catalog.unit-reactivate', 'unit.reactivated', normalizedReason(command.reason));
   }
-  listProducts(actor: Actor, vendorId: string, query: CatalogPageQuery) {
-    return this.execute(actor, vendorId, 'catalog:read', 'catalog.product-list', (tx) => this.catalog.listProducts(tx, this.normalizeQuery(query)));
+  listProducts(actor: Actor, vendorId: string, query: ProductPageQuery) {
+    const deleted = query.lifecycle === 'deleted';
+    return this.execute(
+      actor,
+      vendorId,
+      deleted ? 'catalog:manage' : 'catalog:read',
+      deleted ? 'catalog.product-deleted-list' : 'catalog.product-list',
+      async (tx) => {
+        const page = await this.catalog.listProducts(tx, this.normalizeProductQuery(query));
+        return {
+          items: page.items.map(projectProduct),
+          ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}),
+        };
+      },
+    );
   }
-  getProduct(actor: Actor, vendorId: string, productId: string) {
-    return this.execute(actor, vendorId, 'catalog:read', 'catalog.product-get', (tx) => this.catalog.getProduct(tx, productId));
+  getProduct(actor: Actor, vendorId: string, productId: string, lifecycle: RecordLifecycle) {
+    const deleted = lifecycle === 'deleted';
+    return this.execute(
+      actor,
+      vendorId,
+      deleted ? 'catalog:manage' : 'catalog:read',
+      deleted ? 'catalog.product-deleted-get' : 'catalog.product-get',
+      async (tx) => projectProduct(await this.catalog.getProduct(tx, productId, lifecycle)),
+    );
   }
   createProduct(actor: Actor, vendorId: string, command: CreateProduct) {
     return this.execute(actor, vendorId, 'catalog:manage', 'catalog.product-create', async (tx) => {
-      const product = await this.catalog.createProduct(tx, {
+      const product = projectProduct(await this.catalog.createProduct(tx, {
         id: randomUUID(), vendorId, code: normalizedCode(command.code),
         name: normalizedName(command.name, 160), defaultUnitId: command.defaultUnitId,
-      });
+      }));
       await this.audit(tx, actor, vendorId, product.id, 'product.created', 'product', undefined, product);
       return product;
     });
@@ -154,23 +191,27 @@ export class PrismaCatalogService extends CatalogService {
         ...(command.name === undefined ? {} : { name: normalizedName(command.name, 160) }),
         ...(command.status === undefined ? {} : { status: command.status }),
       });
-      await this.audit(tx, actor, vendorId, productId, 'product.updated', 'product', change.before, change.after);
-      return change.after;
+      const before = projectProduct(change.before);
+      const after = projectProduct(change.after);
+      await this.audit(tx, actor, vendorId, productId, 'product.updated', 'product', before, after);
+      return after;
     });
   }
   async deleteProduct(actor: Actor, vendorId: string, productId: string, command: VersionedReason) {
     const reason = normalizedReason(command.reason);
     await this.execute(actor, vendorId, 'catalog:manage', 'catalog.product-delete', async (tx) => {
       const change = await this.catalog.deleteProduct(tx, productId, command.expectedVersion, actor.userId, reason);
-      await this.audit(tx, actor, vendorId, productId, 'product.deleted', 'product', change.before, change.after, reason);
+      await this.audit(tx, actor, vendorId, productId, 'product.deleted', 'product', projectProduct(change.before), projectProduct(change.after), reason);
     });
   }
   restoreProduct(actor: Actor, vendorId: string, productId: string, command: RestoreProduct) {
     const reason = command.reason === undefined ? undefined : normalizedReason(command.reason);
     return this.execute(actor, vendorId, 'catalog:manage', 'catalog.product-restore', async (tx) => {
       const change = await this.catalog.restoreProduct(tx, productId, command.expectedVersion);
-      await this.audit(tx, actor, vendorId, productId, 'product.restored', 'product', change.before, change.after, reason);
-      return change.after;
+      const before = projectProduct(change.before);
+      const after = projectProduct(change.after);
+      await this.audit(tx, actor, vendorId, productId, 'product.restored', 'product', before, after, reason);
+      return after;
     });
   }
   listDeliverySlots(actor: Actor, vendorId: string, query: CatalogPageQuery) {
@@ -223,6 +264,10 @@ export class PrismaCatalogService extends CatalogService {
   private normalizeQuery(query: CatalogPageQuery): CatalogPageQuery {
     const search = query.search?.trim();
     return { ...query, status: query.status ?? 'active', ...(search ? { search } : { search: undefined }) };
+  }
+  private normalizeProductQuery(query: ProductPageQuery): ProductPageQuery {
+    const search = query.search?.trim();
+    return { ...query, ...(search ? { search } : { search: undefined }) };
   }
   private execute<T>(actor: Actor, vendorId: string, permission: 'catalog:read' | 'catalog:manage', operation: string, work: (tx: TransactionContext) => Promise<T>) {
     return this.authorization.execute({ actor, vendorId, permission, operation }, work);

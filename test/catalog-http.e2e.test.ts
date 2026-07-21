@@ -143,3 +143,125 @@ void test('catalog HTTP lifecycle enforces validation, cursor filters, unit rule
   for (const action of ['unit.created', 'unit.deactivated', 'unit.reactivated', 'product.created', 'product.updated', 'product.deleted', 'product.restored']) assert.ok(actions.includes(action));
   assert.equal(actions.includes('product.deactivated'), false);
 });
+
+void test('product lifecycle discovery separates current and deleted records', async () => {
+  const { vendorId, token } = await fixture();
+  const other = await fixture();
+  const path = `/v1/vendors/${vendorId}`;
+  type Unit = { id: string };
+  type Product = {
+    id: string;
+    status: 'active' | 'inactive';
+    version: number;
+    lifecycle: 'current' | 'deleted';
+  };
+  const unit = await json<Unit>(await api(`${path}/units`, token, {
+    method: 'POST',
+    body: { code: 'LTR', name: 'Litre', decimalScale: 2 },
+  }), 201);
+  const active = await json<Product>(await api(`${path}/products`, token, {
+    method: 'POST',
+    body: { code: 'ACTIVE', name: 'Active milk', defaultUnitId: unit.id },
+  }), 201);
+  assert.equal(active.lifecycle, 'current');
+  const createdInactive = await json<Product>(await api(`${path}/products`, token, {
+    method: 'POST',
+    body: { code: 'INACTIVE', name: 'Inactive milk', defaultUnitId: unit.id },
+  }), 201);
+  const inactive = await json<Product>(await api(`${path}/products/${createdInactive.id}`, token, {
+    method: 'PATCH',
+    body: { expectedVersion: 1, status: 'inactive' },
+  }), 200);
+  assert.equal(inactive.lifecycle, 'current');
+
+  const current = await json<{ items: Product[] }>(
+    await api(`${path}/products`, token),
+    200,
+  );
+  assert.deepEqual(current.items.map(({ id }) => id), [active.id]);
+  assert.equal(current.items[0]?.lifecycle, 'current');
+  await error(await api(`${path}/products?lifecycle=all`, token), 400);
+  await error(await api(`${path}/units?lifecycle=deleted`, token), 400);
+  await error(await api(`${path}/delivery-slots?lifecycle=deleted`, token), 400);
+
+  assert.equal((await api(`${path}/products/${active.id}`, token, {
+    method: 'DELETE',
+    body: { expectedVersion: 1, reason: 'Archive active product' },
+  })).status, 204);
+  assert.equal((await api(`${path}/products/${inactive.id}`, token, {
+    method: 'DELETE',
+    body: { expectedVersion: 2, reason: 'Archive inactive product' },
+  })).status, 204);
+  await error(await api(`${path}/products/${active.id}`, token), 404, 'CATALOG_PRODUCT_NOT_FOUND');
+
+  const firstPage = await json<{ items: Product[]; nextCursor: string }>(
+    await api(`${path}/products?lifecycle=deleted&limit=1`, token),
+    200,
+  );
+  assert.equal(firstPage.items.length, 1);
+  assert.ok(firstPage.nextCursor);
+  const secondPage = await json<{ items: Product[] }>(
+    await api(`${path}/products?lifecycle=deleted&limit=1&cursor=${encodeURIComponent(firstPage.nextCursor)}`, token),
+    200,
+  );
+  const deletedItems = [...firstPage.items, ...secondPage.items];
+  assert.deepEqual(new Set(deletedItems.map(({ status }) => status)), new Set(['active', 'inactive']));
+  for (const item of deletedItems) {
+    assert.equal(item.lifecycle, 'deleted');
+    assert.equal('deletedAt' in item, false);
+    assert.equal('deletedBy' in item, false);
+    assert.equal('deletionReason' in item, false);
+  }
+  const inactiveOnly = await json<{ items: Product[] }>(
+    await api(`${path}/products?lifecycle=deleted&status=inactive`, token),
+    200,
+  );
+  assert.deepEqual(inactiveOnly.items.map(({ id }) => id), [inactive.id]);
+
+  const deletedActive = await json<Product>(
+    await api(`${path}/products/${active.id}?lifecycle=deleted`, token),
+    200,
+  );
+  assert.equal(deletedActive.version, 2);
+  assert.equal(deletedActive.lifecycle, 'deleted');
+  assert.equal('deletedAt' in deletedActive, false);
+  await error(
+    await api(`${path}/products/${active.id}?lifecycle=deleted`, other.token),
+    403,
+    'FORBIDDEN',
+  );
+
+  const otherUnit = await json<Unit>(await api(`/v1/vendors/${other.vendorId}/units`, other.token, {
+    method: 'POST',
+    body: { code: 'LTR', name: 'Other litre', decimalScale: 2 },
+  }), 201);
+  const foreign = await json<Product>(await api(`/v1/vendors/${other.vendorId}/products`, other.token, {
+    method: 'POST',
+    body: { code: 'FOREIGN', name: 'Foreign milk', defaultUnitId: otherUnit.id },
+  }), 201);
+  await error(
+    await api(`${path}/products/${foreign.id}?lifecycle=current`, token),
+    404,
+    'CATALOG_PRODUCT_NOT_FOUND',
+  );
+
+  await error(await api(`${path}/products/${active.id}/restore`, token, {
+    method: 'POST',
+    body: { expectedVersion: 1 },
+  }), 409, 'CATALOG_PRODUCT_VERSION_CONFLICT');
+  const restored = await json<Product>(await api(`${path}/products/${active.id}/restore`, token, {
+    method: 'POST',
+    body: { expectedVersion: deletedActive.version },
+  }), 200);
+  assert.equal(restored.version, 3);
+  assert.equal(restored.lifecycle, 'current');
+  assert.equal((await json<Product>(
+    await api(`${path}/products/${active.id}`, token),
+    200,
+  )).lifecycle, 'current');
+  await error(
+    await api(`${path}/products/${active.id}?lifecycle=deleted`, token),
+    404,
+    'CATALOG_PRODUCT_NOT_FOUND',
+  );
+});

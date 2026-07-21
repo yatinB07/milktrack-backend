@@ -5,11 +5,10 @@ import { CursorCodec } from '../../common/cursor/cursor.js';
 import { ApplicationError } from '../../common/errors/application.error.js';
 import { unwrapPrismaTransaction } from '../../database/infrastructure/prisma-transaction-context.js';
 import { Prisma } from '../../generated/prisma/client.js';
-import type { CatalogPageQuery, CatalogStatus, CreateDeliverySlot, CreateProduct, CreateUnit } from '../application/catalog.service.js';
+import type { CatalogPageQuery, CatalogStatus, CreateDeliverySlot, CreateProduct, CreateUnit, ProductPageQuery } from '../application/catalog.service.js';
 
 export type UnitRecord = Readonly<{ id: string; vendorId: string; code: string; name: string; decimalScale: number; status: CatalogStatus; createdAt: Date; updatedAt: Date }>;
-export type ProductRecord = Readonly<{ id: string; vendorId: string; code: string; name: string; defaultUnitId: string; status: CatalogStatus; version: number; createdAt: Date; updatedAt: Date }>;
-type ProductRow = ProductRecord & Readonly<{ deletedAt: Date | null; deletedBy: string | null; deletionReason: string | null }>;
+export type ProductRecord = Readonly<{ id: string; vendorId: string; code: string; name: string; defaultUnitId: string; status: CatalogStatus; version: number; deletedAt: Date | null; deletedBy: string | null; deletionReason: string | null; createdAt: Date; updatedAt: Date }>;
 export type DeliverySlotRecord = Readonly<{
   id: string; vendorId: string; code: string; name: string;
   startLocalTime: string; endLocalTime: string; status: CatalogStatus;
@@ -108,21 +107,22 @@ export class PrismaCatalogStore {
     const after = await tx.unit.update({ where: { id }, data: { status }, select: unitSelect });
     return { before, after };
   }
-  async listProducts(context: TransactionContext, query: CatalogPageQuery) {
+  async listProducts(context: TransactionContext, query: ProductPageQuery) {
     const tx = unwrapPrismaTransaction(context);
     const limit = this.cursors.parseLimit(query.limit);
     const cursor = query.cursor ? this.cursors.decode(query.cursor) : undefined;
     const rows = await tx.product.findMany({
       where: {
-        deletedAt: null, status: query.status ?? 'active',
+        deletedAt: query.lifecycle === 'deleted' ? { not: null } : null,
+        ...(query.status ? { status: query.status } : query.lifecycle === 'current' ? { status: 'active' } : {}),
         ...(query.search ? { OR: [{ code: { contains: query.search, mode: 'insensitive' } }, { name: { contains: query.search, mode: 'insensitive' } }] } : {}),
         ...(cursor ? { AND: [{ OR: [{ createdAt: { lt: cursor.createdAt } }, { createdAt: cursor.createdAt, id: { lt: cursor.id } }] }] } : {}),
       }, orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], take: limit + 1, select: productSelect,
     });
     return this.page(rows.map((row) => this.product(row)), limit);
   }
-  async getProduct(context: TransactionContext, id: string) {
-    const row = await unwrapPrismaTransaction(context).product.findFirst({ where: { id, deletedAt: null }, select: productSelect });
+  async getProduct(context: TransactionContext, id: string, lifecycle: ProductPageQuery['lifecycle']) {
+    const row = await unwrapPrismaTransaction(context).product.findFirst({ where: { id, deletedAt: lifecycle === 'deleted' ? { not: null } : null }, select: productSelect });
     if (!row) throw error('CATALOG_PRODUCT_NOT_FOUND', 'Product was not found', 404);
     return this.product(row);
   }
@@ -216,8 +216,8 @@ export class PrismaCatalogStore {
       SELECT id FROM units WHERE id = ${id}::uuid AND status = 'active' FOR UPDATE`);
     if (!rows[0]) throw error('CATALOG_UNIT_NOT_AVAILABLE', 'Active unit was not found', 409);
   }
-  private async lockProduct(context: TransactionContext, id: string, deleted: boolean): Promise<ProductRow> {
-    const rows = await unwrapPrismaTransaction(context).$queryRaw<ProductRow[]>(Prisma.sql`
+  private async lockProduct(context: TransactionContext, id: string, deleted: boolean): Promise<ProductRecord> {
+    const rows = await unwrapPrismaTransaction(context).$queryRaw<ProductRecord[]>(Prisma.sql`
       SELECT id, vendor_id AS "vendorId", code, name, default_unit_id AS "defaultUnitId", status,
              version, deleted_at AS "deletedAt", deleted_by AS "deletedBy",
              deletion_reason AS "deletionReason", created_at AS "createdAt", updated_at AS "updatedAt"
@@ -237,8 +237,14 @@ export class PrismaCatalogStore {
   private expectVersion(actual: number, expected: number) {
     if (actual !== expected) throw error('CATALOG_PRODUCT_VERSION_CONFLICT', 'Product was changed by another request', 409);
   }
-  private product(row: ProductRow): ProductRecord {
-    return { id: row.id, vendorId: row.vendorId, code: row.code, name: row.name, defaultUnitId: row.defaultUnitId, status: row.status, version: row.version, createdAt: row.createdAt, updatedAt: row.updatedAt };
+  private product(row: ProductRecord): ProductRecord {
+    return {
+      id: row.id, vendorId: row.vendorId, code: row.code, name: row.name,
+      defaultUnitId: row.defaultUnitId, status: row.status, version: row.version,
+      deletedAt: row.deletedAt, deletedBy: row.deletedBy,
+      deletionReason: row.deletionReason, createdAt: row.createdAt,
+      updatedAt: row.updatedAt,
+    };
   }
   private deliverySlot(row: Prisma.DeliverySlotGetPayload<{ select: typeof deliverySlotSelect }>): DeliverySlotRecord {
     return {
