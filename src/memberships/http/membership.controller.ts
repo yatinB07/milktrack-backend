@@ -17,6 +17,7 @@ import {
   ApiCreatedResponse,
   ApiNoContentResponse,
   ApiOkResponse,
+  ApiOperation,
   ApiResponse,
   ApiTags,
 } from '@nestjs/swagger';
@@ -41,7 +42,7 @@ import {
   CompleteOwnerEnrollmentResponseDto,
   CreateMembershipRequestDto,
   EstablishVendorOwnerRequestDto,
-  ListUsersQueryDto,
+  PlatformUserPageQueryDto,
   ListMembershipsQueryDto,
   MembershipPageResponseDto,
   MembershipDirectoryResponseDto,
@@ -120,6 +121,7 @@ export class MembershipController {
   ) {}
 
   @Get()
+  @ApiOperation({ summary: 'List memberships in the selected lifecycle' })
   @ApiOkResponse({ type: MembershipPageResponseDto })
   async list(
     @Param('vendorId', uuidPipe) vendorId: string,
@@ -134,6 +136,7 @@ export class MembershipController {
   }
 
   @Get(':id')
+  @ApiOperation({ summary: 'Read a membership in the selected lifecycle' })
   @ApiOkResponse({ type: MembershipDirectoryResponseDto })
   async get(
     @Param('vendorId', uuidPipe) vendorId: string,
@@ -273,8 +276,9 @@ export class UserLifecycleController {
   ) {}
 
   @Get()
+  @ApiOperation({ summary: 'List platform users in the selected lifecycle' })
   @ApiOkResponse({ type: PlatformUserListResponseDto })
-  async list(@Query() query: ListUsersQueryDto): Promise<PlatformUserListResponseDto> {
+  async list(@Query() query: PlatformUserPageQueryDto): Promise<PlatformUserListResponseDto> {
     const page = await this.users.list(requestContextStore.requireActor(), {
       ...query,
       lifecycle: query.lifecycle ?? 'current',
@@ -286,6 +290,7 @@ export class UserLifecycleController {
   }
 
   @Get(':id')
+  @ApiOperation({ summary: 'Read a platform user in the selected lifecycle' })
   @ApiOkResponse({ type: UserResponseDto })
   async get(
     @Param('id', uuidPipe) userId: string,
@@ -517,7 +522,7 @@ for (const method of ['softDelete', 'restore', 'deactivate'] as const) {
 }
 Reflect.defineMetadata(
   'design:paramtypes',
-  [ListUsersQueryDto],
+  [PlatformUserPageQueryDto],
   UserLifecycleController.prototype,
   'list',
 );

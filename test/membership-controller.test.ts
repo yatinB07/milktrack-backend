@@ -16,6 +16,7 @@ import {
   type Actor,
   requestContextStore,
 } from '../src/common/context/request-context.js';
+import { ListMembershipsQueryDto } from '../src/memberships/http/membership.dto.js';
 
 const actor: Actor = {
   userId: '00000000-0000-4000-8000-000000000001',
@@ -45,6 +46,35 @@ const directoryMembership = {
   phone: '+919876543210',
   email: 'customer@example.test',
 };
+
+void test('lifecycle controllers publish accurate OpenAPI operation summaries', () => {
+  for (const [controller, method, summary] of [
+    [MembershipController, 'list', 'List memberships in the selected lifecycle'],
+    [MembershipController, 'get', 'Read a membership in the selected lifecycle'],
+    [UserLifecycleController, 'list', 'List platform users in the selected lifecycle'],
+    [UserLifecycleController, 'get', 'Read a platform user in the selected lifecycle'],
+  ] as const) {
+    const operation = Reflect.getMetadata(
+      'swagger/apiOperation',
+      controller.prototype[method],
+    ) as { summary?: string } | undefined;
+
+    assert.equal(
+      operation?.summary,
+      summary,
+    );
+  }
+});
+
+void test('membership status OpenAPI metadata does not claim an unconditional active default', () => {
+  const metadata = Reflect.getMetadata(
+    'swagger/apiModelProperties',
+    ListMembershipsQueryDto.prototype,
+    'status',
+  ) as Record<string, unknown> | undefined;
+
+  assert.equal(metadata?.default, undefined);
+});
 
 void test('membership controller maps list results to the public DTO shape', async () => {
   let receivedLifecycle: unknown;

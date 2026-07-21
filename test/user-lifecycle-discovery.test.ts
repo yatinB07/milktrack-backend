@@ -9,6 +9,7 @@ import {
   type UserLifecycleStore,
 } from '../src/identity/application/user-lifecycle.service.js';
 import { PrismaUserLifecycleStore } from '../src/identity/infrastructure/prisma-user-lifecycle.store.js';
+import { UserLifecycleController } from '../src/memberships/http/membership.controller.js';
 import * as membershipDtos from '../src/memberships/http/membership.dto.js';
 
 const at = new Date('2030-01-01T00:00:00.000Z');
@@ -21,10 +22,23 @@ const admin: Actor = {
   memberships: [],
 };
 
-void test('platform user list publishes the frozen deterministic DTO schema name', () => {
+void test('platform user list publishes the frozen query DTO symbol and tsx metadata', () => {
+  const queryDto = (membershipDtos as Record<string, unknown>).PlatformUserPageQueryDto;
   assert.equal(
     typeof (membershipDtos as Record<string, unknown>).PlatformUserListResponseDto,
     'function',
+  );
+  assert.equal(
+    typeof queryDto,
+    'function',
+  );
+  assert.equal(
+    (membershipDtos as Record<string, unknown>).ListUsersQueryDto,
+    undefined,
+  );
+  assert.deepEqual(
+    Reflect.getMetadata('design:paramtypes', UserLifecycleController.prototype, 'list'),
+    [queryDto],
   );
 });
 

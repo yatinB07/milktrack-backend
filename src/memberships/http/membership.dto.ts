@@ -46,7 +46,7 @@ export class ListMembershipsQueryDto extends LifecycleQueryDto {
   @IsIn(vendorRoles)
   role?: VendorRole;
 
-  @ApiPropertyOptional({ type: String, enum: ['invited', 'active', 'ended'], default: 'active' })
+  @ApiPropertyOptional({ type: String, enum: ['invited', 'active', 'ended'] })
   @IsOptional()
   @IsIn(['invited', 'active', 'ended'])
   status?: 'invited' | 'active' | 'ended';
@@ -186,7 +186,7 @@ export class UserResponseDto {
   deactivatedAt?: Date;
 }
 
-export class ListUsersQueryDto extends LifecycleQueryDto {
+export class PlatformUserPageQueryDto extends LifecycleQueryDto {
   @ApiPropertyOptional({ type: String })
   @IsOptional()
   @IsString()
