@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 1,
+  "oasdiffImage": "tufin/oasdiff:v1.23.0@sha256:47c5709a744083d278df45cf24643b6fe30d98bde2a40a929cb512fbca6a0cc0",
+  "baselines": {
+    "web": {
+      "file": "web-phase1.json",
+      "sha256": "f8042b34f7b3bfee66e64262c5aa63e5b4f5022876b975bbf272d410bd3c37ce",
+      "consumerRepository": "milktrack-web",
+      "consumerPath": "openapi/milktrack-backend-v1.json",
+      "consumerCommit": "eb0ba4db3b3f3aff841de5983bdce60235b46f79",
+      "backendSourceCommit": "5ade987a2f42337655eb5018275933679ccb3b27"
+    },
+    "mobile": {
+      "file": "mobile-phase1.json",
+      "sha256": "97b29edd4b21ce88c7fb1d33d6ca0f24d9040323f5b1b3366d3878c4e8d6faa1",
+      "consumers": [
+        {
+          "repository": "milktrack-customer-app",
+          "path": "openapi/openapi.json",
+          "commit": "7bf98f70a6db2387cad642afb971708f78e2f518"
+        },
+        {
+          "repository": "milktrack-agent-app",
+          "path": "openapi/openapi.json",
+          "commit": "87e035347f5738a720cbd6875f280a52300437a9"
+        }
+      ],
+      "backendSourceCommit": "3d433b2631c2bcc3391b6a3730cf8884623d4870"
+    }
+  }
+}
