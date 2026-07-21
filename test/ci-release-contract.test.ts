@@ -5,6 +5,7 @@ import test from 'node:test';
 const workflow = await readFile('.github/workflows/ci.yml', 'utf8');
 const compose = await readFile('compose.yaml', 'utf8');
 const dockerfile = await readFile('Dockerfile', 'utf8');
+const gitignore = await readFile('.gitignore', 'utf8');
 const readme = await readFile('README.md', 'utf8');
 const packageJson = JSON.parse(await readFile('package.json', 'utf8')) as {
   dependencies: Record<string, string>;
@@ -60,6 +61,14 @@ void test('CI enforces migration and supported-client compatibility without the 
     /name: Check supported-client compatibility\s+run: npm run test:openapi-compatibility/,
   );
   assert.doesNotMatch(workflow, /test:schedule-volume|schedule-generation-volume/);
+});
+
+void test('verification generates the ignored Prisma client before linting', () => {
+  assert.match(gitignore, /^src\/generated\/prisma\/$/m);
+  assert.equal(
+    packageJson.scripts.verify,
+    'npm run db:generate && npm run lint && npm run typecheck && npm test && npm run build',
+  );
 });
 
 void test('tagged CI publishes the versioned OpenAPI artifact after verification', () => {
