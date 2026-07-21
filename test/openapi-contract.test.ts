@@ -16,7 +16,8 @@ const phaseOneOperations = {
   '/v1/auth/otp/verify': ['post'],
   '/v1/auth/refresh': ['post'],
   '/v1/health': ['get'],
-  '/v1/platform/users/{id}': ['delete'],
+  '/v1/platform/users': ['get'],
+  '/v1/platform/users/{id}': ['delete', 'get'],
   '/v1/platform/users/{id}/deactivate': ['post'],
   '/v1/platform/users/{id}/restore': ['post'],
   '/v1/platform/vendors': ['get', 'post'],
@@ -27,7 +28,7 @@ const phaseOneOperations = {
   '/v1/vendors/{vendorId}/audit-events': ['get'],
   '/v1/vendors/{vendorId}/memberships': ['get', 'post'],
   '/v1/vendors/{vendorId}/memberships/onboard': ['post'],
-  '/v1/vendors/{vendorId}/memberships/{id}': ['delete', 'patch'],
+  '/v1/vendors/{vendorId}/memberships/{id}': ['delete', 'get', 'patch'],
   '/v1/vendors/{vendorId}/memberships/{id}/end': ['post'],
   '/v1/vendors/{vendorId}/memberships/{id}/restore': ['post'],
   '/v1/vendors/{vendorId}/profile': ['get'],
@@ -60,7 +61,9 @@ const protectedOperations = new Set([
   'post /v1/auth/logout',
   'post /v1/auth/logout-all',
   'get /v1/auth/me',
+  'get /v1/platform/users',
   'delete /v1/platform/users/{id}',
+  'get /v1/platform/users/{id}',
   'post /v1/platform/users/{id}/deactivate',
   'post /v1/platform/users/{id}/restore',
   'get /v1/platform/vendors',
@@ -75,6 +78,7 @@ const protectedOperations = new Set([
   'post /v1/vendors/{vendorId}/memberships',
   'post /v1/vendors/{vendorId}/memberships/onboard',
   'delete /v1/vendors/{vendorId}/memberships/{id}',
+  'get /v1/vendors/{vendorId}/memberships/{id}',
   'patch /v1/vendors/{vendorId}/memberships/{id}',
   'post /v1/vendors/{vendorId}/memberships/{id}/end',
   'post /v1/vendors/{vendorId}/memberships/{id}/restore',
@@ -549,7 +553,7 @@ void test('publishes the effective-dated subscription contract with customer-saf
   const vendorList = object(object(paths['/v1/vendors/{vendorId}/subscriptions'], 'vendor subscriptions').get, 'vendor subscriptions get');
   const vendorParameters = vendorList.parameters as JsonObject[];
   assert.deepEqual(vendorParameters.map(({ name }) => name).sort(), [
-    'cursor', 'deliverySlotId', 'householdId', 'limit', 'productId', 'routeId', 'routeServiceDate', 'status', 'vendorId',
+    'cursor', 'deliverySlotId', 'householdId', 'lifecycle', 'limit', 'productId', 'routeId', 'routeServiceDate', 'status', 'vendorId',
   ]);
   assert.equal(object(object(vendorParameters.find(({ name }) => name === 'routeId'), 'routeId parameter').schema, 'routeId schema').format, 'uuid');
   assert.equal(object(object(vendorParameters.find(({ name }) => name === 'routeServiceDate'), 'routeServiceDate parameter').schema, 'routeServiceDate schema').format, 'date');
@@ -651,11 +655,12 @@ void test('publishes the additive vendor catalog contract', async () => {
     const parameters = object(paths[path], path).get as JsonObject;
     const names = (parameters.parameters as JsonObject[]).map(({ name }) => name);
     for (const name of ['cursor', 'limit', 'status', 'search']) assert.ok(names.includes(name));
+    assert.equal(names.includes('lifecycle'), path.endsWith('/products'));
   }
   const schemas = object(object(document.components, 'components').schemas, 'schemas');
   const properties = (name: string) => object(object(schemas[name], name).properties, `${name} properties`);
   assert.deepEqual(Object.keys(properties('UnitResponseDto')).sort(), ['code', 'createdAt', 'decimalScale', 'id', 'name', 'status', 'updatedAt', 'vendorId']);
-  assert.deepEqual(Object.keys(properties('ProductResponseDto')).sort(), ['code', 'createdAt', 'defaultUnitId', 'id', 'name', 'status', 'updatedAt', 'vendorId', 'version']);
+  assert.deepEqual(Object.keys(properties('ProductResponseDto')).sort(), ['code', 'createdAt', 'defaultUnitId', 'id', 'lifecycle', 'name', 'status', 'updatedAt', 'vendorId', 'version']);
   assert.deepEqual(Object.keys(properties('DeliverySlotResponseDto')).sort(), ['code', 'createdAt', 'endLocalTime', 'id', 'name', 'startLocalTime', 'status', 'updatedAt', 'vendorId']);
   assert.equal('expectedVersion' in properties('CreateProductRequestDto'), false);
   assert.equal(object(properties('CreateUnitRequestDto').code, 'unit code').pattern, '^[A-Za-z0-9_-]{2,32}$');
@@ -914,7 +919,7 @@ void test('publishes the complete additive household contract', async () => {
   const vendorParameters = vendorList.parameters as JsonObject[];
   assert.deepEqual(
     vendorParameters.map(({ name }) => name).sort(),
-    ['cursor', 'limit', 'search', 'status', 'vendorId'],
+    ['cursor', 'lifecycle', 'limit', 'search', 'status', 'vendorId'],
   );
   const searchSchema = object(
     object(
@@ -935,7 +940,7 @@ void test('publishes the complete additive household contract', async () => {
     'vendor household status schema',
   );
   assert.deepEqual(statusSchema.enum, ['active', 'inactive']);
-  assert.equal(statusSchema.default, 'active');
+  assert.equal(statusSchema.default, undefined);
   for (const path of [
     '/v1/vendors/{vendorId}/households/{id}/members',
     '/v1/customer/vendors/{vendorId}/households',
@@ -974,7 +979,7 @@ void test('publishes the complete additive household contract', async () => {
   const member = properties('HouseholdMemberResponseDto');
   assert.deepEqual(Object.keys(vendorHousehold).sort(), [
     'accountNumber', 'addressLine1', 'addressLine2', 'city', 'countryCode',
-    'createdAt', 'id', 'latitude', 'locality', 'longitude', 'name', 'notes',
+    'createdAt', 'id', 'latitude', 'lifecycle', 'locality', 'longitude', 'name', 'notes',
     'postalCode', 'region', 'status', 'updatedAt', 'vendorId', 'version',
   ]);
   assert.deepEqual(Object.keys(customerHousehold).sort(), [
@@ -1049,4 +1054,151 @@ void test('publishes the complete additive household contract', async () => {
         `${schemaName} must not expose ${forbidden}`,
       );
   }
+});
+
+void test('publishes the frozen restorable lifecycle OpenAPI contract', async () => {
+  const { document } = await readDocument();
+  const paths = object(document.paths, 'OpenAPI paths must be documented');
+  const schemas = object(
+    object(document.components, 'OpenAPI components must be documented').schemas,
+    'OpenAPI schemas must be documented',
+  );
+  const lifecycleOperations = [
+    ['get', '/v1/platform/users'],
+    ['get', '/v1/platform/users/{id}'],
+    ['get', '/v1/vendors/{vendorId}/households'],
+    ['get', '/v1/vendors/{vendorId}/households/{id}'],
+    ['get', '/v1/vendors/{vendorId}/memberships'],
+    ['get', '/v1/vendors/{vendorId}/memberships/{id}'],
+    ['get', '/v1/vendors/{vendorId}/products'],
+    ['get', '/v1/vendors/{vendorId}/products/{productId}'],
+    ['get', '/v1/vendors/{vendorId}/routes'],
+    ['get', '/v1/vendors/{vendorId}/routes/{routeId}'],
+    ['get', '/v1/vendors/{vendorId}/subscriptions'],
+    ['get', '/v1/vendors/{vendorId}/subscriptions/{subscriptionId}'],
+  ] as const;
+
+  for (const [method, path] of lifecycleOperations) {
+    const operation = object(
+      object(paths[path], `missing lifecycle path ${path}`)[method],
+      `missing ${method.toUpperCase()} ${path}`,
+    );
+    const parameter = (operation.parameters as JsonObject[]).find(
+      ({ name }) => name === 'lifecycle',
+    );
+    assert(parameter, `${method.toUpperCase()} ${path} must document lifecycle`);
+    assert.equal(parameter.in, 'query');
+    assert.equal(parameter.required, false);
+    const schema = object(parameter.schema, `${path} lifecycle schema`);
+    assert.deepEqual(schema.enum, ['current', 'deleted']);
+    assert.equal(schema.default, 'current');
+  }
+
+  const actualLifecycleOperations: string[] = [];
+  for (const [path, pathValue] of Object.entries(paths)) {
+    const pathItem = object(pathValue, `${path} path item`);
+    for (const method of ['get', 'post', 'put', 'patch', 'delete']) {
+      const operationValue = pathItem[method];
+      if (operationValue === undefined) continue;
+      const operation = object(operationValue, `${method} ${path}`);
+      const parameters = Array.isArray(operation.parameters)
+        ? operation.parameters as JsonObject[]
+        : [];
+      if (parameters.some(({ name }) => name === 'lifecycle'))
+        actualLifecycleOperations.push(`${method} ${path}`);
+    }
+  }
+  assert.deepEqual(
+    actualLifecycleOperations.sort(),
+    lifecycleOperations.map(([method, path]) => `${method} ${path}`).sort(),
+    'customer/agent, route-stop, assignment, schedule, unit, and delivery-slot routes must not expose lifecycle',
+  );
+
+  for (const path of [
+    '/v1/vendors/{vendorId}/households',
+    '/v1/vendors/{vendorId}/memberships',
+    '/v1/vendors/{vendorId}/products',
+    '/v1/vendors/{vendorId}/routes',
+    '/v1/vendors/{vendorId}/subscriptions',
+  ]) {
+    const operation = object(object(paths[path], path).get, `GET ${path}`);
+    const status = (operation.parameters as JsonObject[]).find(
+      ({ name }) => name === 'status',
+    );
+    assert(status, `GET ${path} must document status`);
+    assert.equal(
+      object(status.schema, `${path} status schema`).default,
+      undefined,
+      `${path} status default is conditional on lifecycle`,
+    );
+  }
+
+  const platformList = object(
+    object(paths['/v1/platform/users'], 'platform users path').get,
+    'platform users GET',
+  );
+  const platformParameters = platformList.parameters as JsonObject[];
+  const platformLimit = object(
+    platformParameters.find(({ name }) => name === 'limit'),
+    'platform users must document limit',
+  );
+  assert.equal(object(platformLimit.schema, 'platform user limit schema').maximum, 100);
+  assert.equal(
+    object(
+      object(
+        platformParameters.find(({ name }) => name === 'cursor'),
+        'platform users must document cursor',
+      ).schema,
+      'platform user cursor schema',
+    ).type,
+    'string',
+  );
+
+  for (const schemaName of [
+    'HouseholdResponseDto',
+    'MembershipResponseDto',
+    'MembershipDirectoryResponseDto',
+    'ProductResponseDto',
+    'RouteResponseDto',
+    'SubscriptionResponseDto',
+    'UserResponseDto',
+  ]) {
+    const schema = object(schemas[schemaName], `${schemaName} must be documented`);
+    const properties = object(schema.properties, `${schemaName} properties`);
+    assert.deepEqual(
+      object(properties.lifecycle, `${schemaName} lifecycle`).enum,
+      ['current', 'deleted'],
+    );
+    assert(
+      (schema.required as string[]).includes('lifecycle'),
+      `${schemaName} lifecycle must be required`,
+    );
+  }
+
+  for (const [schemaName, schemaValue] of Object.entries(schemas)) {
+    const schema = object(schemaValue, `${schemaName} schema`);
+    if (schema.properties === undefined) continue;
+    const properties = object(schema.properties, `${schemaName} properties`);
+    for (const forbidden of ['deletedAt', 'deletedBy', 'deletionReason']) {
+      assert.equal(
+        forbidden in properties,
+        false,
+        `${schemaName} must not expose ${forbidden}`,
+      );
+    }
+  }
+
+  let deleteCount = 0;
+  for (const [path, pathValue] of Object.entries(paths)) {
+    const deleteOperation = object(pathValue, `${path} path`).delete;
+    if (deleteOperation === undefined) continue;
+    deleteCount += 1;
+    const responses = object(
+      object(deleteOperation, `DELETE ${path}`).responses,
+      `DELETE ${path} responses`,
+    );
+    assert(responses['204'], `DELETE ${path} must retain 204`);
+    assert.equal(object(responses['204'], `DELETE ${path} 204`).content, undefined);
+  }
+  assert(deleteCount > 0, 'the contract must include delete operations');
 });

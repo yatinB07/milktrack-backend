@@ -1233,6 +1233,13 @@
           "latitude": {
             "type": "string"
           },
+          "lifecycle": {
+            "enum": [
+              "current",
+              "deleted"
+            ],
+            "type": "string"
+          },
           "locality": {
             "type": "string"
           },
@@ -1274,6 +1281,7 @@
           "id",
           "vendorId",
           "status",
+          "lifecycle",
           "createdAt",
           "updatedAt",
           "accountNumber",
@@ -1340,6 +1348,13 @@
             "format": "date-time",
             "type": "string"
           },
+          "lifecycle": {
+            "enum": [
+              "current",
+              "deleted"
+            ],
+            "type": "string"
+          },
           "phone": {
             "type": "string"
           },
@@ -1379,6 +1394,7 @@
           "userId",
           "role",
           "status",
+          "lifecycle",
           "createdAt",
           "updatedAt",
           "displayName"
@@ -1421,6 +1437,13 @@
             "format": "date-time",
             "type": "string"
           },
+          "lifecycle": {
+            "enum": [
+              "current",
+              "deleted"
+            ],
+            "type": "string"
+          },
           "role": {
             "enum": [
               "vendor_owner",
@@ -1457,6 +1480,7 @@
           "userId",
           "role",
           "status",
+          "lifecycle",
           "createdAt",
           "updatedAt"
         ],
@@ -1713,6 +1737,23 @@
         ],
         "type": "object"
       },
+      "PlatformUserListResponseDto": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/UserResponseDto"
+            },
+            "type": "array"
+          },
+          "nextCursor": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
       "PriceListResponseDto": {
         "properties": {
           "items": {
@@ -1821,6 +1862,13 @@
             "format": "uuid",
             "type": "string"
           },
+          "lifecycle": {
+            "enum": [
+              "current",
+              "deleted"
+            ],
+            "type": "string"
+          },
           "name": {
             "type": "string"
           },
@@ -1848,6 +1896,7 @@
           "vendorId",
           "defaultUnitId",
           "status",
+          "lifecycle",
           "createdAt",
           "updatedAt",
           "code",
@@ -2226,6 +2275,13 @@
             "format": "uuid",
             "type": "string"
           },
+          "lifecycle": {
+            "enum": [
+              "current",
+              "deleted"
+            ],
+            "type": "string"
+          },
           "name": {
             "type": "string"
           },
@@ -2253,6 +2309,7 @@
           "vendorId",
           "deliverySlotId",
           "status",
+          "lifecycle",
           "createdAt",
           "updatedAt",
           "code",
@@ -2731,6 +2788,13 @@
             "format": "uuid",
             "type": "string"
           },
+          "lifecycle": {
+            "enum": [
+              "current",
+              "deleted"
+            ],
+            "type": "string"
+          },
           "revisions": {
             "items": {
               "$ref": "#/components/schemas/SubscriptionRevisionResponseDto"
@@ -2767,6 +2831,7 @@
           "vendorId",
           "householdId",
           "status",
+          "lifecycle",
           "revisions",
           "createdAt",
           "updatedAt",
@@ -3128,6 +3193,13 @@
             "format": "uuid",
             "type": "string"
           },
+          "lifecycle": {
+            "enum": [
+              "current",
+              "deleted"
+            ],
+            "type": "string"
+          },
           "locale": {
             "type": "string"
           },
@@ -3149,6 +3221,7 @@
           "displayName",
           "status",
           "locale",
+          "lifecycle",
           "createdAt",
           "updatedAt"
         ],
@@ -4842,6 +4915,116 @@
         ]
       }
     },
+    "/v1/platform/users": {
+      "get": {
+        "operationId": "UserLifecycleController_list",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "lifecycle",
+            "required": false,
+            "schema": {
+              "default": "current",
+              "enum": [
+                "current",
+                "deleted"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 25,
+              "maximum": 100,
+              "minimum": 1,
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlatformUserListResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "opaqueBearer": []
+          }
+        ],
+        "summary": "List platform users in the selected lifecycle",
+        "tags": [
+          "Platform users"
+        ]
+      }
+    },
     "/v1/platform/users/{id}": {
       "delete": {
         "operationId": "UserLifecycleController_softDelete",
@@ -4925,6 +5108,103 @@
             "opaqueBearer": []
           }
         ],
+        "tags": [
+          "Platform users"
+        ]
+      },
+      "get": {
+        "operationId": "UserLifecycleController_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "lifecycle",
+            "required": false,
+            "schema": {
+              "default": "current",
+              "enum": [
+                "current",
+                "deleted"
+              ],
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "opaqueBearer": []
+          }
+        ],
+        "summary": "Read a platform user in the selected lifecycle",
         "tags": [
           "Platform users"
         ]
@@ -7076,10 +7356,22 @@
             "name": "status",
             "required": false,
             "schema": {
-              "default": "active",
               "enum": [
                 "active",
                 "inactive"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "lifecycle",
+            "required": false,
+            "schema": {
+              "default": "current",
+              "enum": [
+                "current",
+                "deleted"
               ],
               "type": "string"
             }
@@ -7170,6 +7462,7 @@
             "opaqueBearer": []
           }
         ],
+        "summary": "List households in the selected lifecycle",
         "tags": [
           "Vendor households"
         ]
@@ -7884,6 +8177,19 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "in": "query",
+            "name": "lifecycle",
+            "required": false,
+            "schema": {
+              "default": "current",
+              "enum": [
+                "current",
+                "deleted"
+              ],
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -7963,6 +8269,7 @@
             "opaqueBearer": []
           }
         ],
+        "summary": "Read a household in the selected lifecycle",
         "tags": [
           "Vendor households"
         ]
@@ -8560,6 +8867,19 @@
           },
           {
             "in": "query",
+            "name": "lifecycle",
+            "required": false,
+            "schema": {
+              "default": "current",
+              "enum": [
+                "current",
+                "deleted"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
             "name": "cursor",
             "required": false,
             "schema": {
@@ -8596,7 +8916,6 @@
             "name": "status",
             "required": false,
             "schema": {
-              "default": "active",
               "enum": [
                 "invited",
                 "active",
@@ -8684,6 +9003,7 @@
             "opaqueBearer": []
           }
         ],
+        "summary": "List memberships in the selected lifecycle",
         "tags": [
           "Vendor memberships"
         ]
@@ -8978,6 +9298,111 @@
             "opaqueBearer": []
           }
         ],
+        "tags": [
+          "Vendor memberships"
+        ]
+      },
+      "get": {
+        "operationId": "MembershipController_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "vendorId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "lifecycle",
+            "required": false,
+            "schema": {
+              "default": "current",
+              "enum": [
+                "current",
+                "deleted"
+              ],
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MembershipDirectoryResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "opaqueBearer": []
+          }
+        ],
+        "summary": "Read a membership in the selected lifecycle",
         "tags": [
           "Vendor memberships"
         ]
@@ -9455,19 +9880,6 @@
           },
           {
             "in": "query",
-            "name": "status",
-            "required": false,
-            "schema": {
-              "default": "active",
-              "enum": [
-                "active",
-                "inactive"
-              ],
-              "type": "string"
-            }
-          },
-          {
-            "in": "query",
             "name": "cursor",
             "required": false,
             "schema": {
@@ -9481,6 +9893,31 @@
             "schema": {
               "maxLength": 160,
               "minLength": 1,
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "enum": [
+                "active",
+                "inactive"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "lifecycle",
+            "required": false,
+            "schema": {
+              "default": "current",
+              "enum": [
+                "current",
+                "deleted"
+              ],
               "type": "string"
             }
           }
@@ -9562,6 +9999,7 @@
             "opaqueBearer": []
           }
         ],
+        "summary": "List products in the selected lifecycle",
         "tags": [
           "Vendor catalog products"
         ]
@@ -9793,6 +10231,19 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "in": "query",
+            "name": "lifecycle",
+            "required": false,
+            "schema": {
+              "default": "current",
+              "enum": [
+                "current",
+                "deleted"
+              ],
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -9872,6 +10323,7 @@
             "opaqueBearer": []
           }
         ],
+        "summary": "Read a product in the selected lifecycle",
         "tags": [
           "Vendor catalog products"
         ]
@@ -10201,6 +10653,19 @@
           },
           {
             "in": "query",
+            "name": "lifecycle",
+            "required": false,
+            "schema": {
+              "default": "current",
+              "enum": [
+                "current",
+                "deleted"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
             "name": "limit",
             "required": false,
             "schema": {
@@ -10215,7 +10680,6 @@
             "name": "status",
             "required": false,
             "schema": {
-              "default": "active",
               "enum": [
                 "active",
                 "inactive"
@@ -10328,6 +10792,7 @@
             "opaqueBearer": []
           }
         ],
+        "summary": "List routes in the selected lifecycle",
         "tags": [
           "Vendor routes"
         ]
@@ -10559,6 +11024,19 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "in": "query",
+            "name": "lifecycle",
+            "required": false,
+            "schema": {
+              "default": "current",
+              "enum": [
+                "current",
+                "deleted"
+              ],
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -10638,6 +11116,7 @@
             "opaqueBearer": []
           }
         ],
+        "summary": "Read a route in the selected lifecycle",
         "tags": [
           "Vendor routes"
         ]
@@ -12011,6 +12490,19 @@
           },
           {
             "in": "query",
+            "name": "lifecycle",
+            "required": false,
+            "schema": {
+              "default": "current",
+              "enum": [
+                "current",
+                "deleted"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
             "name": "limit",
             "required": false,
             "schema": {
@@ -12166,6 +12658,7 @@
             "opaqueBearer": []
           }
         ],
+        "summary": "List subscriptions in the selected lifecycle",
         "tags": [
           "Subscriptions"
         ]
@@ -12397,6 +12890,19 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "in": "query",
+            "name": "lifecycle",
+            "required": false,
+            "schema": {
+              "default": "current",
+              "enum": [
+                "current",
+                "deleted"
+              ],
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -12476,6 +12982,7 @@
             "opaqueBearer": []
           }
         ],
+        "summary": "Read a subscription in the selected lifecycle",
         "tags": [
           "Subscriptions"
         ]
