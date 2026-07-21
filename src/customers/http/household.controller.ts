@@ -22,6 +22,7 @@ import {
   CreateHouseholdRequestDto,
   CustomerHouseholdListResponseDto,
   EndHouseholdMemberRequestDto,
+  HouseholdDiscoveryQueryDto,
   HouseholdListResponseDto,
   HouseholdMemberListResponseDto,
   HouseholdMemberResponseDto,
@@ -52,7 +53,7 @@ export class HouseholdController {
   @ApiResponse({ status: 200, type: HouseholdListResponseDto })
   async list(
     @Param("vendorId", ParseUUIDPipe) vendorId: string,
-    @Query() query: HouseholdPageQueryDto,
+    @Query() query: HouseholdDiscoveryQueryDto,
   ) {
     const page = await this.households.list(
       requestContextStore.requireActor(),
@@ -223,7 +224,7 @@ export class CustomerHouseholdController {
   }
 }
 for (const [target, key, types] of [
-  [HouseholdController.prototype, "list", [String, HouseholdPageQueryDto]],
+  [HouseholdController.prototype, "list", [String, HouseholdDiscoveryQueryDto]],
   [
     HouseholdController.prototype,
     "create",

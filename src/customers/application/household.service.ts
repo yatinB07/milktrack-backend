@@ -17,6 +17,11 @@ import {
 } from "../infrastructure/prisma-household.store.js";
 
 export type PageQuery = Readonly<{ cursor?: string; limit?: number }>;
+export type HouseholdDiscoveryQuery = PageQuery &
+  Readonly<{
+    search?: string;
+    status?: "active" | "inactive";
+  }>;
 export type HouseholdAddress = Readonly<{
   addressLine1: string;
   addressLine2?: string;
@@ -73,7 +78,7 @@ export abstract class HouseholdService {
   abstract list(
     actor: Actor,
     vendorId: string,
-    query: PageQuery,
+    query: HouseholdDiscoveryQuery,
   ): Promise<HouseholdPage>;
   abstract get(
     actor: Actor,
@@ -211,13 +216,19 @@ export class PrismaHouseholdService extends HouseholdService {
     }
     return this.households.requireCustomerPricingHousehold(tx, householdId, membershipIds);
   }
-  list(actor: Actor, vendorId: string, query: PageQuery) {
+  list(actor: Actor, vendorId: string, query: HouseholdDiscoveryQuery) {
+    const search = query.search?.trim();
+    const discoveryQuery: HouseholdDiscoveryQuery = {
+      ...query,
+      status: query.status ?? "active",
+      ...(search ? { search } : { search: undefined }),
+    };
     return this.authorize(
       actor,
       vendorId,
       "household:read",
       "household.list",
-      async (tx) => this.households.list(tx, query),
+      async (tx) => this.households.list(tx, discoveryQuery),
     );
   }
   get(actor: Actor, vendorId: string, id: string) {

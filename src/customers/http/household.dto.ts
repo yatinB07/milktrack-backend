@@ -26,6 +26,19 @@ export class HouseholdPageQueryDto {
   @Max(100)
   limit?: number;
 }
+export class HouseholdDiscoveryQueryDto extends HouseholdPageQueryDto {
+  @ApiPropertyOptional({ type: String, minLength: 1, maxLength: 160 })
+  @IsOptional()
+  @IsString()
+  @Length(1, 160)
+  @Matches(/\S/)
+  search?: string;
+
+  @ApiPropertyOptional({ enum: ["active", "inactive"], default: "active" })
+  @IsOptional()
+  @IsIn(["active", "inactive"])
+  status?: "active" | "inactive";
+}
 export class CreateHouseholdRequestDto {
   @IsString() @Length(1, 80) accountNumber!: string;
   @IsString() @Length(1, 160) name!: string;

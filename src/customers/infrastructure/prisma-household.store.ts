@@ -7,6 +7,7 @@ import { ApplicationError } from "../../common/errors/application.error.js";
 import { unwrapPrismaTransaction } from "../../database/infrastructure/prisma-transaction-context.js";
 import type {
   CreateHousehold,
+  HouseholdDiscoveryQuery,
   PageQuery,
   UpdateHousehold,
 } from "../application/household.service.js";
@@ -176,22 +177,33 @@ export class PrismaHouseholdStore {
     return { householdId };
   }
   private readonly cursors = new CursorCodec();
-  async list(context: TransactionContext, query: PageQuery) {
+  async list(context: TransactionContext, query: HouseholdDiscoveryQuery) {
     const tx = unwrapPrismaTransaction(context);
     const limit = this.cursors.parseLimit(query.limit);
     const cursor = query.cursor ? this.cursors.decode(query.cursor) : undefined;
+    const filters: Prisma.HouseholdWhereInput[] = [];
+    if (query.search)
+      filters.push({
+        OR: [
+          { accountNumber: { contains: query.search, mode: "insensitive" } },
+          { name: { contains: query.search, mode: "insensitive" } },
+          { addressLine1: { contains: query.search, mode: "insensitive" } },
+          { city: { contains: query.search, mode: "insensitive" } },
+          { postalCode: { contains: query.search, mode: "insensitive" } },
+        ],
+      });
+    if (cursor)
+      filters.push({
+        OR: [
+          { createdAt: { lt: cursor.createdAt } },
+          { createdAt: cursor.createdAt, id: { lt: cursor.id } },
+        ],
+      });
     const rows = await tx.household.findMany({
       where: {
         deletedAt: null,
-        status: "active",
-        ...(cursor
-          ? {
-              OR: [
-                { createdAt: { lt: cursor.createdAt } },
-                { createdAt: cursor.createdAt, id: { lt: cursor.id } },
-              ],
-            }
-          : {}),
+        status: query.status ?? "active",
+        AND: filters,
       },
       orderBy: [{ createdAt: "desc" }, { id: "desc" }],
       take: limit + 1,

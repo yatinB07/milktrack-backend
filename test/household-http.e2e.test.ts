@@ -740,6 +740,119 @@ void test("vendor list and get expose active non-deleted households only", async
   );
 });
 
+void test("vendor household discovery composes validated search, status, tenant, soft-delete, and cursor filters", async () => {
+  const vendorId = await vendor();
+  const otherVendorId = await vendor();
+  const owner = await user("Discovery owner");
+  await membership(vendorId, owner, "vendor_owner");
+  const token = await session(owner, "administrator_mfa");
+  const createdAt = new Date("2026-07-20T01:00:00.000Z");
+  const activeIds = Array.from({ length: 5 }, () => randomUUID());
+  const inactiveIds = Array.from({ length: 3 }, () => randomUUID()).sort().reverse();
+  const nonSearchableId = randomUUID();
+  const deletedId = randomUUID();
+  const otherVendorHouseholdId = randomUUID();
+
+  await ownerPool.query(
+    `INSERT INTO households
+       (id,vendor_id,account_number,name,address_line_1,address_line_2,locality,city,region,postal_code,country_code,status,notes,created_at,updated_at,deleted_at)
+     VALUES
+       ($1,$6,'Find-Account','Ordinary','Road',NULL,NULL,'City','Region','10001','IN','active',NULL,$7,$7,NULL),
+       ($2,$6,'ACCOUNT-2','Find-Name','Road',NULL,NULL,'City','Region','10002','IN','active',NULL,$7,$7,NULL),
+       ($3,$6,'ACCOUNT-3','Ordinary','Find-Address',NULL,NULL,'City','Region','10003','IN','active',NULL,$7,$7,NULL),
+       ($4,$6,'ACCOUNT-4','Ordinary','Road',NULL,NULL,'Find-City','Region','10004','IN','active',NULL,$7,$7,NULL),
+       ($5,$6,'ACCOUNT-5','Ordinary','Road',NULL,NULL,'City','Region','Find-Postal','IN','active',NULL,$7,$7,NULL)`,
+    [...activeIds, vendorId, createdAt],
+  );
+  await ownerPool.query(
+    `INSERT INTO households
+       (id,vendor_id,account_number,name,address_line_1,address_line_2,locality,city,region,postal_code,country_code,status,notes,created_at,updated_at)
+     VALUES ($1,$2,'ACCOUNT-6','Ordinary','Road','Hidden-Marker','Hidden-Marker','City','Hidden-Marker','10006','IN','active','Hidden-Marker',$3,$3)`,
+    [nonSearchableId, vendorId, createdAt],
+  );
+  await ownerPool.query(
+    `INSERT INTO households
+       (id,vendor_id,account_number,name,address_line_1,city,region,postal_code,country_code,status,created_at,updated_at)
+     SELECT id::uuid,$2,'DISCOVERY-NEEDLE-'||ordinality,'Inactive needle','Needle Road','Needle City','Region','Needle Postal','IN','inactive',$3,$3
+     FROM unnest($1::text[]) WITH ORDINALITY AS seeded(id,ordinality)`,
+    [inactiveIds, vendorId, createdAt],
+  );
+  await ownerPool.query(
+    `INSERT INTO households
+       (id,vendor_id,account_number,name,address_line_1,address_line_2,locality,city,region,postal_code,country_code,status,notes,created_at,updated_at,deleted_at)
+     VALUES
+       ($1,$3,'DELETED-NEEDLE','Deleted needle','Needle Road',NULL,NULL,'Needle City','Region','Needle Postal','IN','inactive',NULL,$5,$5,$5),
+       ($2,$4,'OTHER-NEEDLE','Other needle','Needle Road',NULL,NULL,'Needle City','Region','Needle Postal','IN','inactive',NULL,$5,$5,NULL)`,
+    [deletedId, otherVendorHouseholdId, vendorId, otherVendorId, createdAt],
+  );
+
+  for (const [term, expectedId] of [
+    ["find-account", activeIds[0]],
+    ["find-name", activeIds[1]],
+    ["find-address", activeIds[2]],
+    ["find-city", activeIds[3]],
+    ["find-postal", activeIds[4]],
+  ] as const) {
+    const response = await api(
+      `/v1/vendors/${vendorId}/households?search=${encodeURIComponent(`  ${term.toUpperCase()}  `)}`,
+      token,
+    );
+    assert.equal(response.status, 200);
+    const page = (await response.json()) as { items: { id: string }[] };
+    assert.deepEqual(page.items.map(({ id }) => id), [expectedId]);
+  }
+  const restrictedSearch = (await (
+    await api(
+      `/v1/vendors/${vendorId}/households?search=hidden-marker`,
+      token,
+    )
+  ).json()) as { items: { id: string }[] };
+  assert.deepEqual(restrictedSearch.items, []);
+
+  const defaultPage = (await (
+    await api(`/v1/vendors/${vendorId}/households`, token)
+  ).json()) as { items: { id: string; status: string }[] };
+  assert.equal(defaultPage.items.length, activeIds.length + 1);
+  assert.ok(defaultPage.items.every(({ status }) => status === "active"));
+
+  const firstResponse = await api(
+    `/v1/vendors/${vendorId}/households?search=NeEdLe&status=inactive&limit=2`,
+    token,
+  );
+  assert.equal(firstResponse.status, 200);
+  const firstPage = (await firstResponse.json()) as {
+    items: { id: string }[];
+    nextCursor?: string;
+  };
+  assert.deepEqual(firstPage.items.map(({ id }) => id), inactiveIds.slice(0, 2));
+  assert.ok(firstPage.nextCursor);
+  const secondResponse = await api(
+    `/v1/vendors/${vendorId}/households?search=needle&status=inactive&limit=2&cursor=${encodeURIComponent(firstPage.nextCursor)}`,
+    token,
+  );
+  assert.equal(secondResponse.status, 200);
+  const secondPage = (await secondResponse.json()) as {
+    items: { id: string }[];
+    nextCursor?: string;
+  };
+  assert.deepEqual(secondPage.items.map(({ id }) => id), inactiveIds.slice(2));
+  assert.equal(secondPage.nextCursor, undefined);
+
+  for (const query of [
+    "search=",
+    "search=%20%20",
+    `search=${"x".repeat(161)}`,
+    "status=archived",
+    "unknown=true",
+  ]) {
+    await expectError(
+      await api(`/v1/vendors/${vendorId}/households?${query}`, token),
+      400,
+      "INVALID_REQUEST",
+    );
+  }
+});
+
 void test("household cursor pagination is bounded and stable across equal timestamps", async () => {
   const vendorId = await vendor();
   const owner = await user("Pagination owner");

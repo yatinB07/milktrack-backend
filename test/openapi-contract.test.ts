@@ -842,6 +842,48 @@ void test('publishes the complete additive household contract', async () => {
     }
   }
 
+  const vendorList = object(
+    object(paths['/v1/vendors/{vendorId}/households'], 'vendor household list').get,
+    'vendor household list operation',
+  );
+  const vendorParameters = vendorList.parameters as JsonObject[];
+  assert.deepEqual(
+    vendorParameters.map(({ name }) => name).sort(),
+    ['cursor', 'limit', 'search', 'status', 'vendorId'],
+  );
+  const searchSchema = object(
+    object(
+      vendorParameters.find(({ name }) => name === 'search'),
+      'vendor household list must document search',
+    ).schema,
+    'vendor household search schema',
+  );
+  assert.equal(searchSchema.type, 'string');
+  assert.equal(searchSchema.minLength, 1);
+  assert.equal(searchSchema.maxLength, 160);
+  assert.equal(searchSchema.pattern, '\\S');
+  const statusSchema = object(
+    object(
+      vendorParameters.find(({ name }) => name === 'status'),
+      'vendor household list must document status',
+    ).schema,
+    'vendor household status schema',
+  );
+  assert.deepEqual(statusSchema.enum, ['active', 'inactive']);
+  assert.equal(statusSchema.default, 'active');
+  for (const path of [
+    '/v1/vendors/{vendorId}/households/{id}/members',
+    '/v1/customer/vendors/{vendorId}/households',
+  ]) {
+    const list = object(object(paths[path], path).get, `${path} GET`);
+    assert.deepEqual(
+      (list.parameters as JsonObject[]).map(({ name }) => name).sort(),
+      path.includes('/members')
+        ? ['cursor', 'id', 'limit', 'vendorId']
+        : ['cursor', 'limit', 'vendorId'],
+    );
+  }
+
   const approvedMethods = new Map<string, string[]>();
   for (const { method, path } of operations) {
     approvedMethods.set(path, [...(approvedMethods.get(path) ?? []), method]);
