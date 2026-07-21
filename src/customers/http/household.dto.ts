@@ -10,6 +10,10 @@ import {
   Min,
 } from "class-validator";
 import { ApiProperty, ApiPropertyOptional } from "@nestjs/swagger";
+import {
+  type RecordLifecycle,
+  recordLifecycles,
+} from "../../common/application/record-lifecycle.js";
 import type {
   HouseholdMemberResult,
   HouseholdResult,
@@ -38,6 +42,11 @@ export class HouseholdDiscoveryQueryDto extends HouseholdPageQueryDto {
   @IsOptional()
   @IsIn(["active", "inactive"])
   status?: "active" | "inactive";
+
+  @ApiPropertyOptional({ enum: recordLifecycles, default: "current" })
+  @IsOptional()
+  @IsIn(recordLifecycles)
+  lifecycle?: RecordLifecycle;
 }
 export class CreateHouseholdRequestDto {
   @IsString() @Length(1, 80) accountNumber!: string;
@@ -97,6 +106,7 @@ export class HouseholdResponseDto {
   @ApiProperty({ enum: ["active", "inactive"] }) status!: string;
   notes?: string;
   version!: number;
+  @ApiProperty({ enum: recordLifecycles }) lifecycle!: RecordLifecycle;
   @ApiProperty({ type: String, format: "date-time" }) createdAt!: string;
   @ApiProperty({ type: String, format: "date-time" }) updatedAt!: string;
 }
@@ -167,6 +177,7 @@ export const toHouseholdResponse = (
   status: value.status,
   ...(value.notes ? { notes: value.notes } : {}),
   version: value.version,
+  lifecycle: value.lifecycle,
   createdAt: value.createdAt.toISOString(),
   updatedAt: value.updatedAt.toISOString(),
 });

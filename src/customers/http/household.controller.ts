@@ -12,7 +12,13 @@ import {
   Query,
   UseGuards,
 } from "@nestjs/common";
-import { ApiBearerAuth, ApiResponse, ApiTags } from "@nestjs/swagger";
+import {
+  ApiBearerAuth,
+  ApiOperation,
+  ApiResponse,
+  ApiTags,
+} from "@nestjs/swagger";
+import { LifecycleQueryDto } from "../../common/http/record-lifecycle.dto.js";
 import { requestContextStore } from "../../common/context/request-context.js";
 import { ApiErrorResponseDto } from "../../common/errors/application-error.filter.js";
 import { ActorGuard } from "../../identity/http/actor.guard.js";
@@ -50,6 +56,7 @@ export class HouseholdController {
     @Inject(HouseholdService) private readonly households: HouseholdService,
   ) {}
   @Get()
+  @ApiOperation({ summary: "List households in the selected lifecycle" })
   @ApiResponse({ status: 200, type: HouseholdListResponseDto })
   async list(
     @Param("vendorId", ParseUUIDPipe) vendorId: string,
@@ -58,7 +65,7 @@ export class HouseholdController {
     const page = await this.households.list(
       requestContextStore.requireActor(),
       vendorId,
-      query,
+      { ...query, lifecycle: query.lifecycle ?? "current" },
     );
     return {
       items: page.items.map(toHouseholdResponse),
@@ -80,16 +87,19 @@ export class HouseholdController {
     );
   }
   @Get(":id")
+  @ApiOperation({ summary: "Read a household in the selected lifecycle" })
   @ApiResponse({ status: 200, type: HouseholdResponseDto })
   async get(
     @Param("vendorId", ParseUUIDPipe) vendorId: string,
     @Param("id", ParseUUIDPipe) id: string,
+    @Query() query: LifecycleQueryDto,
   ) {
     return toHouseholdResponse(
       await this.households.get(
         requestContextStore.requireActor(),
         vendorId,
         id,
+        query.lifecycle ?? "current",
       ),
     );
   }
@@ -230,7 +240,11 @@ for (const [target, key, types] of [
     "create",
     [String, CreateHouseholdRequestDto],
   ],
-  [HouseholdController.prototype, "get", [String, String]],
+  [
+    HouseholdController.prototype,
+    "get",
+    [String, String, LifecycleQueryDto],
+  ],
   [
     HouseholdController.prototype,
     "update",

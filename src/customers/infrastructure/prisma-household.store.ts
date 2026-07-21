@@ -2,6 +2,7 @@ import { Injectable } from "@nestjs/common";
 
 import { Prisma } from "../../generated/prisma/client.js";
 import type { TransactionContext } from "../../common/application/transaction-context.js";
+import type { RecordLifecycle } from "../../common/application/record-lifecycle.js";
 import { CursorCodec } from "../../common/cursor/cursor.js";
 import { ApplicationError } from "../../common/errors/application.error.js";
 import { unwrapPrismaTransaction } from "../../database/infrastructure/prisma-transaction-context.js";
@@ -227,6 +228,8 @@ export class PrismaHouseholdStore {
     const limit = this.cursors.parseLimit(query.limit);
     const cursor = query.cursor ? this.cursors.decode(query.cursor) : undefined;
     const search = query.search?.replace(/[\\%_]/g, "\\$&");
+    const status =
+      query.status ?? (query.lifecycle === "current" ? "active" : undefined);
     const filters: Prisma.HouseholdWhereInput[] = [];
     if (search)
       filters.push({
@@ -247,8 +250,8 @@ export class PrismaHouseholdStore {
       });
     const rows = await tx.household.findMany({
       where: {
-        deletedAt: null,
-        status: query.status ?? "active",
+        deletedAt: query.lifecycle === "deleted" ? { not: null } : null,
+        ...(status ? { status } : {}),
         AND: filters,
       },
       orderBy: [{ createdAt: "desc" }, { id: "desc" }],
@@ -257,9 +260,16 @@ export class PrismaHouseholdStore {
     });
     return this.page(rows.map(toHousehold), limit);
   }
-  async get(context: TransactionContext, id: string) {
+  async get(
+    context: TransactionContext,
+    id: string,
+    lifecycle: RecordLifecycle,
+  ) {
     const row = await unwrapPrismaTransaction(context).household.findFirst({
-      where: { id, deletedAt: null, status: "active" },
+      where: {
+        id,
+        deletedAt: lifecycle === "deleted" ? { not: null } : null,
+      },
       select: householdSelect,
     });
     if (!row)
@@ -402,7 +412,7 @@ export class PrismaHouseholdStore {
     householdId: string,
     query: PageQuery,
   ) {
-    await this.get(context, householdId);
+    await this.get(context, householdId, "current");
     const tx = unwrapPrismaTransaction(context);
     const limit = this.cursors.parseLimit(query.limit);
     const cursor = query.cursor ? this.cursors.decode(query.cursor) : undefined;

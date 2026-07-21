@@ -5,6 +5,10 @@ import { TenantAuthorizationExecutor } from "../../authorization/application/ten
 import type { Actor } from "../../common/context/request-context.js";
 import { requestContextStore } from "../../common/context/request-context.js";
 import type { TransactionContext } from "../../common/application/transaction-context.js";
+import {
+  type RecordLifecycle,
+  recordLifecycleOf,
+} from "../../common/application/record-lifecycle.js";
 import { ApplicationError } from "../../common/errors/application.error.js";
 import {
   type CustomerMembershipSummary,
@@ -21,6 +25,7 @@ export type HouseholdDiscoveryQuery = PageQuery &
   Readonly<{
     search?: string;
     status?: "active" | "inactive";
+    lifecycle: RecordLifecycle;
   }>;
 export type HouseholdAddress = Readonly<{
   addressLine1: string;
@@ -58,7 +63,7 @@ export type VersionedReason = Readonly<{
 export type HouseholdResult = Omit<
   HouseholdRecord,
   "deletedAt" | "deletedBy" | "deletionReason"
->;
+> & Readonly<{ lifecycle: RecordLifecycle }>;
 export type RouteHouseholdSummary = Readonly<{
   id: string;
   accountNumber: string;
@@ -100,6 +105,7 @@ export abstract class HouseholdService {
     actor: Actor,
     vendorId: string,
     householdId: string,
+    lifecycle: RecordLifecycle,
   ): Promise<HouseholdResult>;
   abstract create(
     actor: Actor,
@@ -183,6 +189,12 @@ function coordinates(input: {
       400,
     );
 }
+function projectHousehold(record: HouseholdRecord): HouseholdResult {
+  const { deletedAt, deletedBy, deletionReason, ...value } = record;
+  void deletedBy;
+  void deletionReason;
+  return { ...value, lifecycle: recordLifecycleOf(deletedAt) };
+}
 @Injectable()
 export class PrismaHouseholdService extends HouseholdService {
   constructor(
@@ -237,26 +249,40 @@ export class PrismaHouseholdService extends HouseholdService {
   }
   list(actor: Actor, vendorId: string, query: HouseholdDiscoveryQuery) {
     const search = query.search?.trim();
+    const deleted = query.lifecycle === "deleted";
     const discoveryQuery: HouseholdDiscoveryQuery = {
       ...query,
-      status: query.status ?? "active",
+      ...(query.status || deleted ? {} : { status: "active" }),
       ...(search ? { search } : { search: undefined }),
     };
     return this.authorize(
       actor,
       vendorId,
-      "household:read",
-      "household.list",
-      async (tx) => this.households.list(tx, discoveryQuery),
+      deleted ? "household:manage" : "household:read",
+      deleted ? "household.deleted-list" : "household.list",
+      async (tx) => {
+        const page = await this.households.list(tx, discoveryQuery);
+        return {
+          items: page.items.map(projectHousehold),
+          ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}),
+        };
+      },
     );
   }
-  get(actor: Actor, vendorId: string, id: string) {
+  get(
+    actor: Actor,
+    vendorId: string,
+    id: string,
+    lifecycle: RecordLifecycle,
+  ) {
+    const deleted = lifecycle === "deleted";
     return this.authorize(
       actor,
       vendorId,
-      "household:read",
-      "household.get",
-      (tx) => this.households.get(tx, id),
+      deleted ? "household:manage" : "household:read",
+      deleted ? "household.deleted-get" : "household.get",
+      async (tx) =>
+        projectHousehold(await this.households.get(tx, id, lifecycle)),
     );
   }
   async create(actor: Actor, vendorId: string, command: CreateHousehold) {
@@ -281,7 +307,7 @@ export class PrismaHouseholdService extends HouseholdService {
           "household",
           { status: created.status, version: created.version },
         );
-        return created;
+        return projectHousehold(created);
       },
     );
   }
@@ -328,7 +354,7 @@ export class PrismaHouseholdService extends HouseholdService {
             changedFields,
           },
         );
-        return updated;
+        return projectHousehold(updated);
       },
     );
   }
@@ -393,7 +419,7 @@ export class PrismaHouseholdService extends HouseholdService {
           { status: restored.status, version: restored.version },
           value,
         );
-        return restored;
+        return projectHousehold(restored);
       },
     );
   }
@@ -428,7 +454,7 @@ export class PrismaHouseholdService extends HouseholdService {
       "household:manage",
       "household.member-attach",
       async (tx) => {
-        await this.households.get(tx, householdId);
+        await this.households.get(tx, householdId, "current");
         const customer = await this.memberships.requireActiveCustomerMembership(
           tx,
           vendorId,
@@ -500,7 +526,17 @@ export class PrismaHouseholdService extends HouseholdService {
       vendorId,
       "customer:self",
       "household.self-list",
-      (tx) => this.households.listForCustomer(tx, membershipIds, query),
+      async (tx) => {
+        const page = await this.households.listForCustomer(
+          tx,
+          membershipIds,
+          query,
+        );
+        return {
+          items: page.items.map(projectHousehold),
+          ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}),
+        };
+      },
     );
   }
   private authorize<T>(

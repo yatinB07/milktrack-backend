@@ -17,6 +17,8 @@ type HouseholdResponse = Readonly<{
   id: string;
   version: number;
   accountNumber: string;
+  status: "active" | "inactive";
+  lifecycle: "current" | "deleted";
 }>;
 const hash = (token: string) =>
   createHmac("sha256", authKey).update(token).digest("hex");
@@ -192,6 +194,7 @@ void test("administrator household lifecycle, customer visibility, authorization
     "createdAt",
     "id",
     "latitude",
+    "lifecycle",
     "longitude",
     "name",
     "postalCode",
@@ -667,7 +670,7 @@ void test("inactive lifecycle projections, conflicts, audit shapes, and customer
   }
 });
 
-void test("vendor list and get expose active non-deleted households only", async () => {
+void test("vendor list defaults active while current detail includes inactive households", async () => {
   const vendorId = await vendor();
   const owner = await user("List owner");
   await membership(vendorId, owner, "vendor_owner");
@@ -728,10 +731,10 @@ void test("vendor list and get expose active non-deleted households only", async
       .status,
     200,
   );
-  await expectError(
-    await api(`/v1/vendors/${vendorId}/households/${inactive.id}`, token),
-    404,
-    "HOUSEHOLD_NOT_FOUND",
+  assert.equal(
+    (await api(`/v1/vendors/${vendorId}/households/${inactive.id}`, token))
+      .status,
+    200,
   );
   await expectError(
     await api(`/v1/vendors/${vendorId}/households/${deleted.id}`, token),
@@ -1115,6 +1118,7 @@ void test("vendor, member, and customer responses use explicit key sets", async 
     "countryCode",
     "createdAt",
     "id",
+    "lifecycle",
     "name",
     "notes",
     "postalCode",
@@ -1633,4 +1637,260 @@ void test("duplicate attach and repeated or missing member end return stable con
       "HOUSEHOLD_MEMBER_STATE_CONFLICT",
     );
   }
+});
+
+void test("household lifecycle discovery separates current and deleted records", async () => {
+  const vendorId = await vendor();
+  const otherVendorId = await vendor();
+  const owner = await user("Lifecycle owner");
+  const otherOwner = await user("Other lifecycle owner");
+  await membership(vendorId, owner, "vendor_owner");
+  await membership(otherVendorId, otherOwner, "vendor_owner");
+  const token = await session(owner, "administrator_mfa");
+  const otherToken = await session(otherOwner, "administrator_mfa");
+  const body = {
+    name: "Lifecycle household",
+    addressLine1: "12 Market Road",
+    city: "Ahmedabad",
+    region: "Gujarat",
+    postalCode: "380001",
+    countryCode: "IN",
+  };
+  const create = async (
+    currentVendorId: string,
+    currentToken: string,
+    accountNumber: string,
+  ) => {
+    const response = await api(
+      `/v1/vendors/${currentVendorId}/households`,
+      currentToken,
+      { method: "POST", body: { ...body, accountNumber } },
+    );
+    assert.equal(response.status, 201);
+    const value = (await response.json()) as HouseholdResponse;
+    assert.equal(value.lifecycle, "current");
+    assert.equal("deletedAt" in value, false);
+    assert.equal("deletedBy" in value, false);
+    assert.equal("deletionReason" in value, false);
+    return value;
+  };
+  const active = await create(vendorId, token, "LC-ACTIVE");
+  const inactiveCreated = await create(vendorId, token, "LC-INACTIVE");
+  const secondDeleted = await create(vendorId, token, "LC-SECOND");
+  const foreign = await create(otherVendorId, otherToken, "LC-FOREIGN");
+
+  const inactiveResponse = await api(
+    `/v1/vendors/${vendorId}/households/${inactiveCreated.id}`,
+    token,
+    {
+      method: "PATCH",
+      body: { expectedVersion: inactiveCreated.version, status: "inactive" },
+    },
+  );
+  assert.equal(inactiveResponse.status, 200);
+  const inactive = (await inactiveResponse.json()) as HouseholdResponse;
+  assert.equal(inactive.lifecycle, "current");
+  assert.equal(inactive.status, "inactive");
+
+  const currentDefault = await api(
+    `/v1/vendors/${vendorId}/households`,
+    token,
+  );
+  assert.equal(currentDefault.status, 200);
+  const currentItems = (
+    (await currentDefault.json()) as { items: HouseholdResponse[] }
+  ).items;
+  assert.ok(currentItems.some(({ id }) => id === active.id));
+  assert.ok(currentItems.some(({ id }) => id === secondDeleted.id));
+  assert.equal(currentItems.some(({ id }) => id === inactive.id), false);
+  assert.ok(currentItems.every(({ lifecycle }) => lifecycle === "current"));
+
+  const inactiveList = await api(
+    `/v1/vendors/${vendorId}/households?status=inactive`,
+    token,
+  );
+  assert.deepEqual(
+    ((await inactiveList.json()) as { items: HouseholdResponse[] }).items.map(
+      ({ id }) => id,
+    ),
+    [inactive.id],
+  );
+  const inactiveDetail = await api(
+    `/v1/vendors/${vendorId}/households/${inactive.id}`,
+    token,
+  );
+  assert.equal(inactiveDetail.status, 200);
+  assert.equal(
+    ((await inactiveDetail.json()) as HouseholdResponse).lifecycle,
+    "current",
+  );
+  await expectError(
+    await api(`/v1/vendors/${vendorId}/households?lifecycle=all`, token),
+    400,
+  );
+
+  for (const value of [inactive, secondDeleted]) {
+    const response = await api(
+      `/v1/vendors/${vendorId}/households/${value.id}`,
+      token,
+      {
+        method: "DELETE",
+        body: { expectedVersion: value.version, reason: "Lifecycle removal" },
+      },
+    );
+    assert.equal(response.status, 204);
+  }
+
+  await expectError(
+    await api(`/v1/vendors/${vendorId}/households/${inactive.id}`, token),
+    404,
+    "HOUSEHOLD_NOT_FOUND",
+  );
+  await expectError(
+    await api(
+      `/v1/vendors/${vendorId}/households/${active.id}?lifecycle=deleted`,
+      token,
+    ),
+    404,
+    "HOUSEHOLD_NOT_FOUND",
+  );
+
+  const deletedDefault = await api(
+    `/v1/vendors/${vendorId}/households?lifecycle=deleted`,
+    token,
+  );
+  assert.equal(deletedDefault.status, 200);
+  const deletedItems = (
+    (await deletedDefault.json()) as { items: HouseholdResponse[] }
+  ).items;
+  assert.deepEqual(
+    new Set(deletedItems.map(({ id }) => id)),
+    new Set([inactive.id, secondDeleted.id]),
+  );
+  assert.ok(deletedItems.every(({ lifecycle }) => lifecycle === "deleted"));
+  assert.ok(
+    deletedItems.every(
+      (value) =>
+        !("deletedAt" in value) &&
+        !("deletedBy" in value) &&
+        !("deletionReason" in value),
+    ),
+  );
+
+  const deletedInactive = await api(
+    `/v1/vendors/${vendorId}/households?lifecycle=deleted&status=inactive`,
+    token,
+  );
+  assert.deepEqual(
+    ((await deletedInactive.json()) as { items: HouseholdResponse[] }).items.map(
+      ({ id }) => id,
+    ),
+    [inactive.id],
+  );
+  const deletedActive = await api(
+    `/v1/vendors/${vendorId}/households?lifecycle=deleted&status=active`,
+    token,
+  );
+  assert.deepEqual(
+    ((await deletedActive.json()) as { items: HouseholdResponse[] }).items.map(
+      ({ id }) => id,
+    ),
+    [secondDeleted.id],
+  );
+
+  const firstPage = await api(
+    `/v1/vendors/${vendorId}/households?lifecycle=deleted&limit=1`,
+    token,
+  );
+  const firstPageBody = (await firstPage.json()) as {
+    items: HouseholdResponse[];
+    nextCursor?: string;
+  };
+  assert.equal(firstPageBody.items.length, 1);
+  assert.ok(firstPageBody.nextCursor);
+  const nextPage = await api(
+    `/v1/vendors/${vendorId}/households?lifecycle=deleted&limit=1&cursor=${encodeURIComponent(firstPageBody.nextCursor)}`,
+    token,
+  );
+  const nextItems = (
+    (await nextPage.json()) as { items: HouseholdResponse[] }
+  ).items;
+  assert.equal(nextItems.length, 1);
+  assert.notEqual(nextItems[0]?.id, firstPageBody.items[0]?.id);
+
+  const deletedDetailResponse = await api(
+    `/v1/vendors/${vendorId}/households/${inactive.id}?lifecycle=deleted`,
+    token,
+  );
+  assert.equal(deletedDetailResponse.status, 200);
+  const deletedDetail =
+    (await deletedDetailResponse.json()) as HouseholdResponse;
+  assert.equal(deletedDetail.version, inactive.version + 1);
+  assert.equal(deletedDetail.lifecycle, "deleted");
+  assert.equal("deletedAt" in deletedDetail, false);
+
+  await expectError(
+    await api(
+      `/v1/vendors/${vendorId}/households/${inactive.id}/restore`,
+      token,
+      {
+        method: "POST",
+        body: {
+          expectedVersion: inactive.version,
+          reason: "Stale lifecycle restore",
+        },
+      },
+    ),
+    409,
+    "HOUSEHOLD_VERSION_CONFLICT",
+  );
+  const restoredResponse = await api(
+    `/v1/vendors/${vendorId}/households/${inactive.id}/restore`,
+    token,
+    {
+      method: "POST",
+      body: {
+        expectedVersion: deletedDetail.version,
+        reason: "Restore lifecycle household",
+      },
+    },
+  );
+  assert.equal(restoredResponse.status, 200);
+  const restored = (await restoredResponse.json()) as HouseholdResponse;
+  assert.equal(restored.lifecycle, "current");
+  assert.equal(restored.status, "inactive");
+  assert.equal(
+    (
+      await api(
+        `/v1/vendors/${vendorId}/households/${inactive.id}`,
+        token,
+      )
+    ).status,
+    200,
+  );
+  await expectError(
+    await api(
+      `/v1/vendors/${vendorId}/households/${inactive.id}?lifecycle=deleted`,
+      token,
+    ),
+    404,
+    "HOUSEHOLD_NOT_FOUND",
+  );
+
+  await expectError(
+    await api(
+      `/v1/vendors/${otherVendorId}/households?lifecycle=deleted`,
+      token,
+    ),
+    403,
+    "FORBIDDEN",
+  );
+  await expectError(
+    await api(
+      `/v1/vendors/${vendorId}/households/${foreign.id}`,
+      token,
+    ),
+    404,
+    "HOUSEHOLD_NOT_FOUND",
+  );
 });
