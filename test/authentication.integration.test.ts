@@ -150,7 +150,10 @@ function createService(): Readonly<{
   };
 }
 
-async function insertPhoneFixture(phone: string): Promise<Fixture> {
+async function insertPhoneFixture(
+  phone: string,
+  vendorStatus: 'onboarding' | 'trial' | 'active' | 'suspended' = 'active',
+): Promise<Fixture> {
   const fixture = {
     userId: randomUUID(),
     identityId: randomUUID(),
@@ -176,8 +179,8 @@ async function insertPhoneFixture(phone: string): Promise<Fixture> {
        (id, code, legal_name, display_name, timezone, currency,
         skip_cutoff_minutes, billing_day, status, updated_at)
        VALUES ($1, $2, 'Phone Vendor', 'Phone Vendor', 'Asia/Kolkata', 'INR',
-               0, 1, 'active', now())`,
-    [fixture.vendorId, `auth-${fixture.vendorId}`],
+               0, 1, $3::"VendorStatus", now())`,
+    [fixture.vendorId, `auth-${fixture.vendorId}`, vendorStatus],
   );
   await ownerPool.query(
     `INSERT INTO vendor_memberships
@@ -264,6 +267,13 @@ async function cleanupUsers(userIds: readonly string[]): Promise<void> {
 }
 
 async function cleanupFixture(fixture: Fixture): Promise<void> {
+  await ownerPool.query(
+    `DELETE FROM audit_events
+     WHERE entity_id IN (
+       SELECT id FROM otp_challenges WHERE destination_hash = $1
+     )`,
+    [tokenHash(fixture.phone)],
+  );
   await ownerPool.query('DELETE FROM otp_challenges WHERE destination_hash = $1', [
     tokenHash(fixture.phone),
   ]);
@@ -384,7 +394,7 @@ void test('known and unknown phone requests are indistinguishable while only kno
 });
 
 void test('invited phone verification atomically verifies identity, activates membership, and creates a session', async () => {
-  const fixture = await insertPhoneFixture('+919876500041');
+  const fixture = await insertPhoneFixture('+919876500041', 'active');
   await ownerPool.query('UPDATE user_identities SET verified_at = NULL WHERE id = $1', [fixture.identityId]);
   await ownerPool.query(
     "UPDATE vendor_memberships SET status = 'invited', joined_at = NULL WHERE id = $1",
@@ -457,6 +467,98 @@ void test('invited phone verification atomically verifies identity, activates me
   } finally {
     await prisma.$disconnect();
     await cleanupFixture(fixture);
+  }
+});
+
+void test('trial vendor invitation receives OTP and activates atomically', async () => {
+  const fixture = await insertPhoneFixture('+919876500044', 'trial');
+  await ownerPool.query('UPDATE user_identities SET verified_at = NULL WHERE id = $1', [fixture.identityId]);
+  await ownerPool.query(
+    "UPDATE vendor_memberships SET status = 'invited', joined_at = NULL WHERE id = $1",
+    [fixture.membershipId],
+  );
+  const { prisma, delivery, service } = createService();
+  try {
+    const challenge = await service.requestPhoneOtp({ phone: fixture.phone, purpose: 'sign_in' });
+    const code = delivery.takeLastCodeForTest(fixture.phone);
+    assert.ok(code);
+
+    const session = await service.verifyPhoneOtp({
+      challengeToken: challenge.challengeToken,
+      code,
+      deviceId: 'trial-invitation',
+    });
+    const state = await ownerPool.query<{
+      verified: boolean;
+      status: string;
+      joined: boolean;
+      sessions: string;
+      audits: string;
+    }>(
+      `SELECT ui.verified_at IS NOT NULL AS verified, vm.status::text,
+              vm.joined_at IS NOT NULL AS joined,
+              (SELECT count(*)::text FROM sessions WHERE user_id = $1) AS sessions,
+              (SELECT count(*)::text FROM audit_events
+               WHERE entity_id = vm.id AND action = 'membership.invitation_accepted') AS audits
+       FROM user_identities ui
+       JOIN vendor_memberships vm ON vm.user_id = ui.user_id
+       WHERE ui.id = $2 AND vm.id = $3`,
+      [fixture.userId, fixture.identityId, fixture.membershipId],
+    );
+    assert.deepEqual(state.rows[0], {
+      verified: true,
+      status: 'active',
+      joined: true,
+      sessions: '1',
+      audits: '1',
+    });
+    assert.equal((await service.authenticate(session.accessToken)).userId, fixture.userId);
+  } finally {
+    await prisma.$disconnect();
+    await cleanupFixture(fixture);
+  }
+});
+
+void test('onboarding and suspended vendor invitations do not receive or activate OTP', async () => {
+  for (const [index, vendorStatus] of (['onboarding', 'suspended'] as const).entries()) {
+    const fixture = await insertPhoneFixture(`+91987650005${index}`, vendorStatus);
+    await ownerPool.query('UPDATE user_identities SET verified_at = NULL WHERE id = $1', [fixture.identityId]);
+    await ownerPool.query(
+      "UPDATE vendor_memberships SET status = 'invited', joined_at = NULL WHERE id = $1",
+      [fixture.membershipId],
+    );
+    const { prisma, delivery, service } = createService();
+    try {
+      const challenge = await service.requestPhoneOtp({ phone: fixture.phone, purpose: 'sign_in' });
+      assert.equal(delivery.takeLastCodeForTest(fixture.phone), undefined);
+      assert.deepEqual(
+        (
+          await ownerPool.query<{ identity_id: string | null }>(
+            'SELECT identity_id FROM otp_challenges WHERE token_hash = $1',
+            [tokenHash(challenge.challengeToken)],
+          )
+        ).rows,
+        [{ identity_id: null }],
+      );
+      assert.deepEqual(
+        (
+          await ownerPool.query<{ status: string; verified_at: Date | null; sessions: string; audits: string }>(
+            `SELECT vm.status::text, ui.verified_at,
+                    (SELECT count(*)::text FROM sessions WHERE user_id = $1) AS sessions,
+                    (SELECT count(*)::text FROM audit_events
+                     WHERE entity_id = vm.id AND action = 'membership.invitation_accepted') AS audits
+             FROM vendor_memberships vm
+             JOIN user_identities ui ON ui.user_id = vm.user_id
+             WHERE vm.id = $2 AND ui.id = $3`,
+            [fixture.userId, fixture.membershipId, fixture.identityId],
+          )
+        ).rows,
+        [{ status: 'invited', verified_at: null, sessions: '0', audits: '0' }],
+      );
+    } finally {
+      await prisma.$disconnect();
+      await cleanupFixture(fixture);
+    }
   }
 });
 

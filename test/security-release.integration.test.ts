@@ -410,7 +410,7 @@ void describe('Task 13 cross-tenant security release gate', () => {
           currentActor,
           fixture.vendorA,
           fixture.membershipB,
-          'customer',
+          'vendor_administrator',
         ),
       () =>
         memberships.end(

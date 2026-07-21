@@ -299,7 +299,7 @@ void describe('membership and user lifecycle HTTP API', () => {
         `/v1/vendors/${vendorIds[0]}/memberships/${otherVendorMembershipId}`,
         {
           method: 'PATCH',
-          body: JSON.stringify({ role: 'delivery_agent' }),
+          body: JSON.stringify({ role: 'vendor_administrator' }),
         },
       );
       assert.equal(crossTenant.status, 404);
@@ -456,6 +456,55 @@ void describe('membership and user lifecycle HTTP API', () => {
             )
           ).rowCount,
           0,
+        );
+      }
+    } finally {
+      await cleanup(seed);
+    }
+  });
+
+  void it('requires customer and delivery-agent role changes to use onboarding', async () => {
+    const seed: Seed = { vendorIds: [], userIds: [] };
+    const ownerId = await insertUser(seed, 'Vendor Owner');
+    const vendorId = await insertVendor(seed);
+    await insertMembership({ vendorId, userId: ownerId, role: 'vendor_owner' });
+    const token = await issueSession(ownerId);
+
+    try {
+      for (const role of ['customer', 'delivery_agent'] as const) {
+        const targetId = await insertUser(seed, `Role change ${role}`);
+        const membershipId = await insertMembership({
+          vendorId,
+          userId: targetId,
+          role: 'vendor_administrator',
+        });
+        const response = await request(
+          baseUrl,
+          token,
+          `/v1/vendors/${vendorId}/memberships/${membershipId}`,
+          { method: 'PATCH', body: JSON.stringify({ role }) },
+        );
+        const body = (await response.json()) as {
+          code?: string;
+          message?: string;
+          retryable?: boolean;
+          correlationId?: string;
+        };
+        assert.equal(response.status, 409, JSON.stringify(body));
+        assert.deepEqual(body, {
+          code: 'MEMBERSHIP_ONBOARDING_REQUIRED',
+          message: 'Customer and delivery agent memberships must use the onboarding endpoint',
+          retryable: false,
+          correlationId: body.correlationId,
+        });
+        assert.deepEqual(
+          (
+            await ownerPool.query<{ role: string }>(
+              'SELECT role::text FROM vendor_memberships WHERE id = $1',
+              [membershipId],
+            )
+          ).rows,
+          [{ role: 'vendor_administrator' }],
         );
       }
     } finally {
@@ -1058,7 +1107,7 @@ void describe('membership and user lifecycle HTTP API', () => {
         baseUrl,
         token,
         `/v1/vendors/${vendorId}/memberships/${membershipId}`,
-        { method: 'PATCH', body: JSON.stringify({ role: 'delivery_agent' }) },
+        { method: 'PATCH', body: JSON.stringify({ role: 'vendor_administrator' }) },
       );
       assert.equal(response.status, 500);
       const membership = await ownerPool.query<{ role: string }>(

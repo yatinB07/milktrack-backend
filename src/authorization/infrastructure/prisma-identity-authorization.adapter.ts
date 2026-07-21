@@ -12,6 +12,8 @@ import {
   type UserLifecycleAuthorizationPort,
 } from '../application/identity-authorization.port.js';
 
+const phoneMembershipVendorStatuses = ['trial', 'active'] as const;
+
 @Injectable()
 export class PrismaIdentityAuthorizationAdapter
   extends AuthenticationAuthorityPort
@@ -24,7 +26,7 @@ export class PrismaIdentityAuthorizationAdapter
   ): Promise<boolean> {
     const tx = unwrapPrismaTransaction(context);
     const vendors = await tx.vendor.findMany({
-      where: { status: 'active', deletedAt: null },
+      where: { status: { in: [...phoneMembershipVendorStatuses] }, deletedAt: null },
       select: { id: true },
     });
     for (const { id } of vendors) {
@@ -59,7 +61,7 @@ export class PrismaIdentityAuthorizationAdapter
   ): Promise<number> {
     const tx = unwrapPrismaTransaction(context);
     const vendors = await tx.vendor.findMany({
-      where: { status: 'active', deletedAt: null },
+      where: { status: { in: [...phoneMembershipVendorStatuses] }, deletedAt: null },
       select: { id: true },
       orderBy: { id: 'asc' },
     });

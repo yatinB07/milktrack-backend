@@ -9069,7 +9069,7 @@
                 }
               }
             },
-            "description": ""
+            "description": "Customer and delivery agent roles require onboarding (MEMBERSHIP_ONBOARDING_REQUIRED)"
           }
         },
         "security": [

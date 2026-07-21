@@ -164,6 +164,12 @@ export class MembershipController {
 
   @Patch(':id')
   @ApiOkResponse({ type: MembershipResponseDto })
+  @ApiResponse({
+    status: 409,
+    type: ApiErrorResponseDto,
+    description:
+      'Customer and delivery agent roles require onboarding (MEMBERSHIP_ONBOARDING_REQUIRED)',
+  })
   async updateRole(
     @Param('vendorId', uuidPipe) vendorId: string,
     @Param('id', uuidPipe) membershipId: string,

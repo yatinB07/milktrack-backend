@@ -143,6 +143,16 @@ function membershipNotFound(): ApplicationError {
   );
 }
 
+function requireOnboardingRole(role: VendorRole): void {
+  if (role === 'customer' || role === 'delivery_agent') {
+    throw new ApplicationError(
+      'MEMBERSHIP_ONBOARDING_REQUIRED',
+      'Customer and delivery agent memberships must use the onboarding endpoint',
+      409,
+    );
+  }
+}
+
 @Injectable()
 export class PrismaMembershipService extends MembershipService {
   constructor(
@@ -251,13 +261,7 @@ export class PrismaMembershipService extends MembershipService {
     return this.authorization.execute(
       { actor, vendorId, permission: 'membership:manage', operation: 'membership.create' },
       async (tx) => {
-        if (command.role === 'customer' || command.role === 'delivery_agent') {
-          throw new ApplicationError(
-            'MEMBERSHIP_ONBOARDING_REQUIRED',
-            'Customer and delivery agent memberships must use the onboarding endpoint',
-            409,
-          );
-        }
+        requireOnboardingRole(command.role);
         if (command.role === 'vendor_owner') {
           await this.memberships.lockVendor(tx);
           await this.requireOwner(tx, actor);
@@ -340,6 +344,7 @@ export class PrismaMembershipService extends MembershipService {
     return this.authorization.execute(
       { actor, vendorId, permission: 'membership:manage', operation: 'membership.update-role' },
       async (tx) => {
+        requireOnboardingRole(role);
         await this.memberships.lockVendor(tx);
         const ownerCount = await this.memberships.lockActiveOwners(tx);
         await this.lockTarget(tx, membershipId);

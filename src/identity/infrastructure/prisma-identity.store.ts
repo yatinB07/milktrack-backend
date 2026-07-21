@@ -779,10 +779,10 @@ export class PrismaIdentityStore {
       ) {
         return undefined;
       }
-      const activeAuthority = await this.authority.snapshot(
+      const phoneAuthority = await this.authority.snapshot(
         wrapPrismaTransaction(tx),
         session.userId,
-        ['active'],
+        ['trial', 'active'],
       );
       const authenticationAuthority = await this.authority.snapshot(
         wrapPrismaTransaction(tx),
@@ -793,7 +793,7 @@ export class PrismaIdentityStore {
         role === 'vendor_owner' || role === 'vendor_administrator',
       );
       const methodIsEligible = session.authenticationMethod === 'phone_otp'
-        ? activeAuthority.memberships.length > 0 &&
+        ? phoneAuthority.memberships.length > 0 &&
           authenticationAuthority.platformRoles.length === 0 &&
           !hasPrivilegedMembership
         : session.user.mfaFactors.length > 0 &&
@@ -813,7 +813,7 @@ export class PrismaIdentityStore {
         authenticationMethod: session.authenticationMethod,
         platformRoles: authenticationAuthority.platformRoles,
         memberships: session.authenticationMethod === 'phone_otp'
-          ? activeAuthority.memberships
+          ? phoneAuthority.memberships
           : authenticationAuthority.memberships,
       };
     });
@@ -1013,10 +1013,10 @@ export class PrismaIdentityStore {
       },
     });
     if (!user) return false;
-    const activeAuthority = await this.authority.snapshot(
+    const phoneAuthority = await this.authority.snapshot(
       wrapPrismaTransaction(tx),
       userId,
-      ['active'],
+      ['trial', 'active'],
     );
     const authenticationAuthority = await this.authority.snapshot(
       wrapPrismaTransaction(tx),
@@ -1028,7 +1028,7 @@ export class PrismaIdentityStore {
     );
     return authenticationMethod === 'phone_otp'
       ? authenticationAuthority.platformRoles.length === 0 &&
-          activeAuthority.memberships.length > 0 &&
+          phoneAuthority.memberships.length > 0 &&
           !hasPrivilegedMembership
       : user.mfaFactors.length > 0 &&
         (authenticationAuthority.platformRoles.length > 0 || hasPrivilegedMembership);
