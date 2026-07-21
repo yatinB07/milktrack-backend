@@ -232,6 +232,33 @@ void test('route definition operations map only to explicit read and manage perm
   assert.throws(() => requireVendorPermission('customer', 'route:read'), forbidden);
 });
 
+void test('lifecycle discovery operations map only to reviewed permissions', () => {
+  const deletedOperations = [
+    ['household.deleted-list', 'household:manage'],
+    ['household.deleted-get', 'household:manage'],
+    ['catalog.product-deleted-list', 'catalog:manage'],
+    ['catalog.product-deleted-get', 'catalog:manage'],
+    ['membership.deleted-list', 'membership:manage'],
+    ['membership.deleted-get', 'membership:manage'],
+    ['route.deleted-list', 'route:manage'],
+    ['route.deleted-get', 'route:manage'],
+    ['subscription.deleted-list', 'subscription:manage'],
+    ['subscription.deleted-get', 'subscription:manage'],
+  ] as const;
+
+  for (const [operation, permission] of deletedOperations) {
+    assert.doesNotThrow(() => requireVendorOperation(operation, permission));
+  }
+
+  assert.doesNotThrow(() =>
+    requireVendorOperation('membership.get', 'membership:read'),
+  );
+  assert.throws(
+    () => requireVendorOperation('membership.get', 'membership:manage'),
+    forbidden,
+  );
+});
+
 void test('schedule run operations map only to explicit read and manage permissions', () => {
   assert.doesNotThrow(() => requireVendorOperation('schedule.run-list', 'schedule:read'));
   assert.throws(() => requireVendorOperation('schedule.run-list', 'schedule:manage'), forbidden);
