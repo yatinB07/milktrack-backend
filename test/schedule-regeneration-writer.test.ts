@@ -64,6 +64,7 @@ void test('configuration mutations enqueue only after their audit within the hel
     { append: () => { calls.push('audit'); return Promise.resolve(); } },
     { lock: (_tx: TransactionContext, _vendorId: string, dates: string[]) => { calls.push(`lock:${dates.join(',')}`); return Promise.resolve(); } },
     writer,
+    {} as never,
   );
 
   const { requestContextStore } = await import('../src/common/context/request-context.js');
@@ -100,6 +101,7 @@ void test('a failed configuration enqueue rejects the mutation transaction after
     { append: () => { audited = true; return Promise.resolve(); } },
     { lock: () => Promise.resolve() },
     { write: () => Promise.reject(new Error('enqueue failed')) },
+    {} as never,
   );
 
   const { requestContextStore } = await import('../src/common/context/request-context.js');

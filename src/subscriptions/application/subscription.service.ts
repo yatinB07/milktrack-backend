@@ -13,6 +13,7 @@ import { HouseholdService } from '../../customers/application/household.service.
 import { VendorService } from '../../vendors/application/vendor.service.js';
 import { ScheduleDateLock } from '../../schedule-coordination/application/schedule-date-lock.js';
 import { ScheduleRegenerationWriter } from '../../schedule-coordination/application/schedule-regeneration-writer.js';
+import { RoutingScheduleService } from '../../routing/application/routing-schedule.service.js';
 import { affectedScheduleDates, scheduleHorizon } from '../../schedule-coordination/application/schedule-horizon.js';
 import {
   deriveSubscriptionStatus,
@@ -29,6 +30,7 @@ import {
   type CustomerSubscriptionRevision,
   type SubscriptionHistoryPage,
   type SubscriptionPageQuery,
+  type SubscriptionStorePageQuery,
 } from './subscription.store.js';
 
 export type CreateSubscriptionCommand = Readonly<{
@@ -74,6 +76,7 @@ export class DefaultSubscriptionService extends SubscriptionService {
     @Inject(AuditWriter) private readonly audits: AuditWriter,
     @Inject(ScheduleDateLock) private readonly scheduleDates: ScheduleDateLock,
     @Inject(ScheduleRegenerationWriter) private readonly regeneration: ScheduleRegenerationWriter,
+    @Inject(RoutingScheduleService) private readonly routing: RoutingScheduleService,
   ) { super(); }
 
   create(actor: Actor, vendorId: string, command: CreateSubscriptionCommand): Promise<SubscriptionResult> {
@@ -98,8 +101,22 @@ export class DefaultSubscriptionService extends SubscriptionService {
   }
 
   list(actor: Actor, vendorId: string, query: SubscriptionPageQuery) {
+    if (Boolean(query.routeId) !== Boolean(query.routeServiceDate))
+      throw new ApplicationError('INVALID_ROUTE_FILTER', 'Route and service date must be provided together', 400);
     return this.execute(actor, vendorId, 'subscription:read', 'subscription.list', async (tx) => {
-      const today = await this.today(tx, vendorId); const page = await this.subscriptions.list(tx, query, today);
+      const today = await this.today(tx, vendorId);
+      const { routeId, routeServiceDate, ...baseQuery } = query;
+      let storeQuery: SubscriptionStorePageQuery = baseQuery;
+      if (routeId && routeServiceDate) {
+        const route = (await this.routing.project(tx, vendorId, routeServiceDate)).find((candidate) => candidate.routeId === routeId);
+        if (!route) throw new ApplicationError('ROUTE_NOT_FOUND', 'Route was not found', 404);
+        storeQuery = { ...baseQuery, route: {
+          serviceDate: routeServiceDate,
+          deliverySlotId: route.deliverySlotId,
+          householdIds: route.stops.map(({ householdId }) => householdId),
+        } };
+      }
+      const page = await this.subscriptions.list(tx, storeQuery, today);
       const items = page.items.map((item) => this.project(item, today));
       return { items, ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}) };
     });

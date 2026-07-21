@@ -67,7 +67,7 @@ for (const operation of ['create', 'modify', 'pause', 'resume', 'cancel', 'softD
       authorization as never, store as never,
       { requireSubscriptionSelection: () => Promise.resolve({ unitDecimalScale: 0 }) } as never,
       { requireSubscriptionHousehold: () => Promise.resolve({}) } as never,
-      vendors as never, audits, scheduleDates, writer,
+      vendors as never, audits, scheduleDates, writer, {} as never,
     );
 
     await requestContextStore.run({ correlationId: 'correlation' }, async () => {

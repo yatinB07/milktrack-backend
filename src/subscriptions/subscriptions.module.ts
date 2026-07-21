@@ -12,9 +12,10 @@ import { SubscriptionStore } from './application/subscription.store.js';
 import { CustomerSubscriptionController, VendorSubscriptionController } from './http/subscription.controller.js';
 import { PrismaSubscriptionStore } from './infrastructure/prisma-subscription.store.js';
 import { ScheduleCoordinationModule } from '../schedule-coordination/schedule-coordination.module.js';
+import { RoutingModule } from '../routing/routing.module.js';
 
 @Module({
-  imports: [AuditModule, AuthorizationModule, CatalogModule, CustomersModule, DatabaseModule, IdentityModule, VendorsModule, ScheduleCoordinationModule],
+  imports: [AuditModule, AuthorizationModule, CatalogModule, CustomersModule, DatabaseModule, IdentityModule, VendorsModule, ScheduleCoordinationModule, RoutingModule],
   controllers: [VendorSubscriptionController, CustomerSubscriptionController],
   providers: [PrismaSubscriptionStore, { provide: SubscriptionStore, useExisting: PrismaSubscriptionStore }, DefaultSubscriptionService, { provide: SubscriptionService, useExisting: DefaultSubscriptionService }, DefaultSubscriptionScheduleService, { provide: SubscriptionScheduleService, useExisting: DefaultSubscriptionScheduleService }],
   exports: [SubscriptionScheduleService],

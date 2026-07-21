@@ -13,6 +13,7 @@ import type {
   SubscriptionAggregateRecord,
   SubscriptionPageQuery,
   SubscriptionRevisionRecord,
+  SubscriptionStorePageQuery,
 } from '../application/subscription.store.js';
 import { SubscriptionStore } from '../application/subscription.store.js';
 
@@ -60,7 +61,7 @@ export class PrismaSubscriptionStore extends SubscriptionStore {
     return rows.map((row) => ({ ...row, plannedQuantity: canonicalDecimal(row.plannedQuantity) }));
   }
 
-  async list(context: TransactionContext, query: SubscriptionPageQuery, today: string, routeHouseholdId?: string) {
+  async list(context: TransactionContext, query: SubscriptionStorePageQuery, today: string, routeHouseholdId?: string) {
     const tx = unwrapPrismaTransaction(context); const limit = this.cursors.parseLimit(query.limit);
     const cursor = query.cursor ? this.cursors.decode(query.cursor) : undefined;
     const householdId = routeHouseholdId ?? query.householdId;
@@ -69,6 +70,20 @@ export class PrismaSubscriptionStore extends SubscriptionStore {
     if (cursor) filters.push(Prisma.sql`(s.created_at < ${cursor.createdAt} OR (s.created_at=${cursor.createdAt} AND s.id < ${cursor.id}::uuid))`);
     if (query.productId) filters.push(Prisma.sql`EXISTS (SELECT 1 FROM subscription_revisions f WHERE f.subscription_id=s.id AND f.superseded_at IS NULL AND f.product_id=${query.productId}::uuid)`);
     if (query.deliverySlotId) filters.push(Prisma.sql`EXISTS (SELECT 1 FROM subscription_revisions f WHERE f.subscription_id=s.id AND f.superseded_at IS NULL AND f.delivery_slot_id=${query.deliverySlotId}::uuid)`);
+    if (query.route) {
+      filters.push(query.route.householdIds.length === 0
+        ? Prisma.sql`FALSE`
+        : Prisma.sql`s.household_id IN (${Prisma.join(query.route.householdIds.map((id) => Prisma.sql`${id}::uuid`))})`);
+      filters.push(Prisma.sql`EXISTS (
+        SELECT 1 FROM subscription_revisions f
+        JOIN subscription_revision_weekdays w ON w.vendor_id=f.vendor_id AND w.subscription_revision_id=f.id
+        WHERE f.subscription_id=s.id AND f.superseded_at IS NULL AND f.status='active'
+          AND f.delivery_slot_id=${query.route.deliverySlotId}::uuid
+          AND f.effective_from<=${query.route.serviceDate}::date
+          AND (f.effective_to IS NULL OR f.effective_to>${query.route.serviceDate}::date)
+          AND w.weekday=EXTRACT(ISODOW FROM ${query.route.serviceDate}::date)
+      )`);
+    }
     if (query.status) filters.push(Prisma.sql`COALESCE(current_revision.status, CASE WHEN EXISTS (
       SELECT 1 FROM subscription_revisions future WHERE future.subscription_id=s.id AND future.superseded_at IS NULL AND future.effective_from>${today}::date
     ) THEN 'future' ELSE 'completed' END)=${query.status}`);

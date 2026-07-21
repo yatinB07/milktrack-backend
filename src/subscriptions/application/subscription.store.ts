@@ -41,6 +41,11 @@ export type SubscriptionPageQuery = Readonly<{
   productId?: string;
   deliverySlotId?: string;
   status?: 'future' | SubscriptionOperationalStatus | 'completed';
+  routeId?: string;
+  routeServiceDate?: string;
+}>;
+export type SubscriptionStorePageQuery = Omit<SubscriptionPageQuery, 'routeId' | 'routeServiceDate'> & Readonly<{
+  route?: Readonly<{ serviceDate: string; deliverySlotId: string; householdIds: readonly string[] }>;
 }>;
 
 export type SubscriptionPage = Readonly<{ items: readonly SubscriptionAggregateRecord[]; nextCursor?: string }>;
@@ -73,7 +78,7 @@ export abstract class SubscriptionStore {
     subscriptionId: string; revisionId: string; householdId: string; productId: string;
     unitId: string; deliverySlotId: string; plannedQuantity: string;
   }>[]>;
-  abstract list(tx: TransactionContext, query: SubscriptionPageQuery, today: string, householdId?: string): Promise<SubscriptionPage>;
+  abstract list(tx: TransactionContext, query: SubscriptionStorePageQuery, today: string, householdId?: string): Promise<SubscriptionPage>;
   abstract get(tx: TransactionContext, subscriptionId: string, householdId?: string): Promise<SubscriptionAggregateRecord>;
   abstract history(tx: TransactionContext, subscriptionId: string, query: Pick<SubscriptionPageQuery, 'cursor' | 'limit'>, householdId?: string): Promise<SubscriptionHistoryPage>;
   abstract create(tx: TransactionContext, input: CreateSubscriptionAggregate): Promise<SubscriptionAggregateRecord>;

@@ -527,6 +527,13 @@ void test('publishes the effective-dated subscription contract with customer-saf
   const customerList = object(object(paths['/v1/customer/vendors/{vendorId}/households/{householdId}/subscriptions'], 'customer subscriptions').get, 'customer subscriptions get');
   const customerParameters = customerList.parameters as JsonObject[];
   assert.equal(customerParameters.some(({ name, in: location }) => name === 'householdId' && location === 'query'), false);
+  const vendorList = object(object(paths['/v1/vendors/{vendorId}/subscriptions'], 'vendor subscriptions').get, 'vendor subscriptions get');
+  const vendorParameters = vendorList.parameters as JsonObject[];
+  assert.deepEqual(vendorParameters.map(({ name }) => name).sort(), [
+    'cursor', 'deliverySlotId', 'householdId', 'limit', 'productId', 'routeId', 'routeServiceDate', 'status', 'vendorId',
+  ]);
+  assert.equal(object(object(vendorParameters.find(({ name }) => name === 'routeId'), 'routeId parameter').schema, 'routeId schema').format, 'uuid');
+  assert.equal(object(object(vendorParameters.find(({ name }) => name === 'routeServiceDate'), 'routeServiceDate parameter').schema, 'routeServiceDate schema').format, 'date');
 });
 
 void test('publishes secured explicit route-definition contracts', async () => {

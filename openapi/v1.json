@@ -11969,6 +11969,24 @@
           },
           {
             "in": "query",
+            "name": "routeId",
+            "required": false,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "routeServiceDate",
+            "required": false,
+            "schema": {
+              "format": "date",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
             "name": "cursor",
             "required": false,
             "schema": {

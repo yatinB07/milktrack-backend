@@ -51,7 +51,7 @@ async function fixture(label: string) {
   await owner.query('INSERT INTO units (id,vendor_id,code,name,decimal_scale,updated_at) VALUES ($1,$2,$3,$4,2,now())', [unitId, vendorId, `LITRE_${label}`, `Litre ${label}`]);
   await owner.query('INSERT INTO products (id,vendor_id,code,name,default_unit_id,updated_at) VALUES ($1,$2,$3,$4,$5,now())', [productId, vendorId, `MILK_${label}`, `Milk ${label}`, unitId]);
   await owner.query("INSERT INTO delivery_slots (id,vendor_id,code,name,start_local_time,end_local_time,updated_at) VALUES ($1,$2,$3,$4,'06:00','09:00',now())", [slotId, vendorId, `MORNING_${label}`, `Morning ${label}`]);
-  return { vendorId, ownerToken, customerToken, householdId, otherHouseholdId, raceHouseholdId, auditHouseholdId, unitId, productId, slotId };
+  return { vendorId, ownerId, ownerToken, customerToken, householdId, otherHouseholdId, raceHouseholdId, auditHouseholdId, unitId, productId, slotId };
 }
 
 function api(path: string, token: string, options: { method?: string; body?: unknown } = {}) {
@@ -80,6 +80,9 @@ after(async () => {
     await client.query('DELETE FROM subscription_revision_weekdays WHERE vendor_id=ANY($1::uuid[])', [vendors]);
     await client.query('DELETE FROM subscription_revisions WHERE vendor_id=ANY($1::uuid[])', [vendors]);
     await client.query('DELETE FROM subscriptions WHERE vendor_id=ANY($1::uuid[])', [vendors]);
+    await client.query('DELETE FROM route_stops WHERE vendor_id=ANY($1::uuid[])', [vendors]);
+    await client.query('DELETE FROM route_stop_plans WHERE vendor_id=ANY($1::uuid[])', [vendors]);
+    await client.query('DELETE FROM routes WHERE vendor_id=ANY($1::uuid[])', [vendors]);
     await client.query('DELETE FROM household_members WHERE vendor_id=ANY($1::uuid[])', [vendors]);
     await client.query('DELETE FROM delivery_slots WHERE vendor_id=ANY($1::uuid[])', [vendors]);
     await client.query('DELETE FROM products WHERE vendor_id=ANY($1::uuid[])', [vendors]);
@@ -171,4 +174,41 @@ void test('subscription HTTP lifecycle enforces duplicate safety, dependency-spe
   const audits = await owner.query<{ action: string }>('SELECT action FROM audit_events WHERE vendor_id=$1 AND entity_type=$2', [current.vendorId, 'subscription']);
   for (const action of ['subscription.created', 'subscription.modified', 'subscription.paused', 'subscription.cancelled', 'subscription.deleted', 'subscription.restored'])
     assert.ok(audits.rows.some((row) => row.action === action), `missing ${action}`);
+});
+
+void test('vendor subscription route filter uses effective stops, applicable revisions, and stable pagination', async () => {
+  const current = await fixture('ROUTE'); const other = await fixture('FOREIGN');
+  const base = `/v1/vendors/${current.vendorId}/subscriptions`;
+  const shift = (days: number) => { const value = new Date(`${today}T00:00:00.000Z`); value.setUTCDate(value.getUTCDate() + days); return value.toISOString().slice(0, 10); };
+  const serviceDate = shift(2); const weekday = new Date(`${serviceDate}T00:00:00.000Z`).getUTCDay() || 7; const otherWeekday = weekday === 7 ? 1 : weekday + 1;
+  const routeId=randomUUID(),emptyRouteId=randomUUID(),foreignRouteId=randomUUID(),secondSlotId=randomUUID();
+  const currentPlanId=randomUUID(),futurePlanId=randomUUID(),emptyPlanId=randomUUID();
+  const extraHouseholdIds=Array.from({length:3},()=>randomUUID());
+  await owner.query(`INSERT INTO households(id,vendor_id,account_number,name,address_line_1,city,region,postal_code,country_code,updated_at)
+    SELECT id::uuid,$2,'ROUTE-'||ordinality,'Route household '||ordinality,'Road','Pune','MH','411001','IN',now()
+    FROM unnest($1::text[]) WITH ORDINALITY AS seeded(id,ordinality)`,[extraHouseholdIds,current.vendorId]);
+  await owner.query(`INSERT INTO delivery_slots(id,vendor_id,code,name,start_local_time,end_local_time,updated_at) VALUES($1,$2,$3,'Route evening','18:00','20:00',now())`,[secondSlotId,current.vendorId,`ROUTE_EVENING_${secondSlotId.slice(0,8).toUpperCase()}`]);
+  await owner.query(`INSERT INTO routes(id,vendor_id,code,name,delivery_slot_id,updated_at) VALUES($1,$3,$4,'Filtered route',$6,now()),($2,$3,$5,'Empty route',$6,now())`,[routeId,emptyRouteId,current.vendorId,`FILTER_${routeId.slice(0,8).toUpperCase()}`,`EMPTY_${emptyRouteId.slice(0,8).toUpperCase()}`,current.slotId]);
+  await owner.query(`INSERT INTO routes(id,vendor_id,code,name,delivery_slot_id,updated_at) VALUES($1,$2,$3,'Foreign route',$4,now())`,[foreignRouteId,other.vendorId,`FOREIGN_${foreignRouteId.slice(0,8).toUpperCase()}`,other.slotId]);
+  await owner.query(`INSERT INTO route_stop_plans(id,vendor_id,route_id,delivery_slot_id,effective_from,effective_to,created_by,updated_at)
+    VALUES($1,$4,$5,$7,$8::date,$9::date,$10,now()),($2,$4,$5,$7,$9::date,NULL,$10,now()),($3,$4,$6,$7,$8::date,NULL,$10,now())`,[currentPlanId,futurePlanId,emptyPlanId,current.vendorId,routeId,emptyRouteId,current.slotId,shift(-5),shift(3),current.ownerId]);
+  const currentStopHouseholds=[current.householdId,current.otherHouseholdId,current.raceHouseholdId,current.auditHouseholdId,extraHouseholdIds[0],extraHouseholdIds[2]];
+  for(const[index,householdId]of currentStopHouseholds.entries()) await owner.query(`INSERT INTO route_stops(id,vendor_id,route_id,plan_id,household_id,delivery_slot_id,sequence,effective_from,created_by,updated_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8::date,$9,now())`,[randomUUID(),current.vendorId,routeId,currentPlanId,householdId,current.slotId,index+1,shift(-5),current.ownerId]);
+  await owner.query(`INSERT INTO route_stops(id,vendor_id,route_id,plan_id,household_id,delivery_slot_id,sequence,effective_from,created_by,updated_at) VALUES($1,$2,$3,$4,$5,$6,1,$7::date,$8,now())`,[randomUUID(),current.vendorId,routeId,futurePlanId,extraHouseholdIds[1],current.slotId,shift(3),current.ownerId]);
+  const matchingIds=Array.from({length:3},()=>randomUUID()).sort().reverse();
+  const cases=[
+    ...matchingIds.map((id,index)=>({id,householdId:currentStopHouseholds[index],slotId:current.slotId,from:serviceDate,to:shift(3),weekday})),
+    {id:randomUUID(),householdId:current.auditHouseholdId,slotId:current.slotId,from:shift(-1),to:shift(3),weekday:otherWeekday},
+    {id:randomUUID(),householdId:extraHouseholdIds[0],slotId:secondSlotId,from:shift(-1),to:shift(3),weekday},
+    {id:randomUUID(),householdId:extraHouseholdIds[1],slotId:current.slotId,from:shift(-1),to:shift(3),weekday},
+    {id:randomUUID(),householdId:extraHouseholdIds[2],slotId:current.slotId,from:shift(-2),to:serviceDate,weekday},
+  ];
+  const tiedAt=new Date('2026-07-20T10:00:00.000Z');
+  const client=await owner.connect();try{await client.query('BEGIN');for(const value of cases){const revisionId=randomUUID();await client.query(`INSERT INTO subscriptions(id,vendor_id,household_id,created_at,updated_at)VALUES($1,$2,$3,$4,$4)`,[value.id,current.vendorId,value.householdId,tiedAt]);await client.query(`INSERT INTO subscription_revisions(id,vendor_id,subscription_id,product_id,unit_id,delivery_slot_id,quantity,status,effective_from,effective_to,created_by,created_at,updated_at)VALUES($1,$2,$3,$4,$5,$6,1,'active',$7::date,$8::date,$9,$10,$10)`,[revisionId,current.vendorId,value.id,current.productId,current.unitId,value.slotId,value.from,value.to,current.ownerId,tiedAt]);await client.query(`INSERT INTO subscription_revision_weekdays(vendor_id,subscription_revision_id,weekday)VALUES($1,$2,$3)`,[current.vendorId,revisionId,value.weekday]);}await client.query('COMMIT');}catch(cause){await client.query('ROLLBACK');throw cause;}finally{client.release();}
+  for(const query of [`routeId=${routeId}`,`routeServiceDate=${serviceDate}`]) await error(await api(`${base}?${query}`,current.ownerToken),400);
+  const first=await json<{items:Subscription[];nextCursor?:string}>(await api(`${base}?routeId=${routeId}&routeServiceDate=${serviceDate}&productId=${current.productId}&limit=2`,current.ownerToken),200);assert.deepEqual(first.items.map(({id})=>id),matchingIds.slice(0,2));assert.ok(first.nextCursor);
+  const second=await json<{items:Subscription[];nextCursor?:string}>(await api(`${base}?routeId=${routeId}&routeServiceDate=${serviceDate}&productId=${current.productId}&limit=2&cursor=${encodeURIComponent(first.nextCursor)}`,current.ownerToken),200);assert.deepEqual(second.items.map(({id})=>id),matchingIds.slice(2));assert.equal(second.nextCursor,undefined);
+  assert.deepEqual((await json<{items:Subscription[]}>(await api(`${base}?routeId=${emptyRouteId}&routeServiceDate=${serviceDate}`,current.ownerToken),200)).items,[]);
+  await error(await api(`${base}?routeId=${foreignRouteId}&routeServiceDate=${serviceDate}`,current.ownerToken),404,'ROUTE_NOT_FOUND');
+  await error(await api(`/v1/vendors/${other.vendorId}/subscriptions?routeId=${routeId}&routeServiceDate=${serviceDate}`,current.ownerToken),403,'FORBIDDEN');
 });

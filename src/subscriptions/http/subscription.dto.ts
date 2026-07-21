@@ -17,6 +17,8 @@ export class SubscriptionPageQueryDto {
   @IsOptional() @IsUUID() productId?: string;
   @IsOptional() @IsUUID() deliverySlotId?: string;
   @ApiPropertyOptional({ type: String, enum: statuses }) @IsOptional() @IsIn(statuses) status?: typeof statuses[number];
+  @ApiPropertyOptional({ type: String, format: 'uuid' }) @IsOptional() @IsUUID() routeId?: string;
+  @ApiPropertyOptional({ type: String, format: 'date' }) @IsOptional() @Matches(date) routeServiceDate?: string;
 }
 export class SubscriptionHistoryQueryDto {
   @IsOptional() @IsString() cursor?: string;
