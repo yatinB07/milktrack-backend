@@ -49,7 +49,13 @@ export class ListMembershipsQueryDto {
   @IsIn(['invited', 'active', 'ended'])
   status?: 'invited' | 'active' | 'ended';
 
-  @ApiPropertyOptional({ type: String, minLength: 1, maxLength: 120 })
+  @ApiPropertyOptional({
+    type: String,
+    minLength: 1,
+    maxLength: 120,
+    description:
+      'Searches at most 100 membership candidates per request; a sparse or empty result page can include nextCursor.',
+  })
   @IsOptional()
   @IsString()
   @MinLength(1)
@@ -142,7 +148,10 @@ export class MembershipPageResponseDto {
   @ApiProperty({ type: () => [MembershipDirectoryResponseDto] })
   items!: MembershipDirectoryResponseDto[];
 
-  @ApiPropertyOptional({ type: String })
+  @ApiPropertyOptional({
+    type: String,
+    description: 'Continue when present, including after a sparse or empty search result page.',
+  })
   nextCursor?: string;
 }
 

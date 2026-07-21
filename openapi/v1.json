@@ -1394,6 +1394,7 @@
             "type": "array"
           },
           "nextCursor": {
+            "description": "Continue when present, including after a sparse or empty search result page.",
             "type": "string"
           }
         },
@@ -8605,6 +8606,7 @@
             }
           },
           {
+            "description": "Searches at most 100 membership candidates per request; a sparse or empty result page can include nextCursor.",
             "in": "query",
             "name": "search",
             "required": false,

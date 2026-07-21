@@ -208,45 +208,40 @@ export class PrismaMembershipService extends MembershipService {
       async (tx) => {
         const wanted = query.limit ?? 25;
         const search = query.search?.trim().toLocaleLowerCase('en-IN');
-        const matches: MembershipDirectoryResult[] = [];
-        let cursor = query.cursor;
-        let exhausted = false;
-        while (matches.length <= wanted && !exhausted) {
-          const page = await this.memberships.listActive(tx, {
-            cursor,
-            limit: 100,
-            role: query.role,
-            status: query.status,
-          });
-          const profiles = await this.identities.profiles(tx, page.items.map((item) => item.userId));
-          for (const membership of page.items) {
-            const profile = profiles.get(membership.userId);
-            if (!profile) continue;
-            const searchable = [profile.displayName, profile.phone, profile.email]
-              .filter((value): value is string => Boolean(value))
-              .some((value) => value.toLocaleLowerCase('en-IN').includes(search ?? ''));
-            if (!search || searchable) matches.push({ ...result(membership), ...profile });
-            if (matches.length > wanted) break;
-          }
-          exhausted = !page.nextCursor;
-          cursor = page.nextCursor;
+        const page = await this.memberships.listActive(tx, {
+          cursor: query.cursor,
+          limit: search ? 100 : wanted,
+          role: query.role,
+          status: query.status,
+        });
+        const profiles = await this.identities.profiles(tx, page.items.map((item) => item.userId));
+        if (!search) {
+          return {
+            items: page.items.flatMap((membership) => {
+              const profile = profiles.get(membership.userId);
+              return profile ? [{ ...result(membership), ...profile }] : [];
+            }),
+            ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}),
+          };
         }
-        const items = matches.slice(0, wanted);
-        const hasMore = matches.length > wanted;
-        const lastRecord = hasMore ? items.at(-1) : undefined;
+        const matches: MembershipDirectoryResult[] = [];
+        let lastExamined: MembershipRecord | undefined;
+        for (const membership of page.items) {
+          lastExamined = membership;
+          const profile = profiles.get(membership.userId);
+          const searchable = profile && [profile.displayName, profile.phone, profile.email]
+            .filter((value): value is string => Boolean(value))
+            .some((value) => value.toLocaleLowerCase('en-IN').includes(search));
+          if (profile && searchable) matches.push({ ...result(membership), ...profile });
+          if (matches.length === wanted) break;
+        }
+        const hasMoreCandidates = Boolean(
+          lastExamined && (lastExamined !== page.items.at(-1) || page.nextCursor),
+        );
         return {
-          items,
-          ...(lastRecord
-            ? {
-                nextCursor: this.memberships.cursorFor({
-                  ...lastRecord,
-                  joinedAt: lastRecord.joinedAt ?? null,
-                  endedAt: lastRecord.endedAt ?? null,
-                  deletedAt: null,
-                  deletedBy: null,
-                  deletionReason: null,
-                }),
-              }
+          items: matches,
+          ...(hasMoreCandidates && lastExamined
+            ? { nextCursor: this.memberships.cursorFor(lastExamined) }
             : {}),
         };
       },

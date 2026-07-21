@@ -302,6 +302,18 @@ void test('publishes the complete Phase 1 HTTP contract without persistence secr
   assert.equal(vendorSearchSchema.maxLength, 120);
   assert.equal(vendorSearchSchema.pattern, '\\S');
 
+  const membershipList = object(
+    object(paths['/v1/vendors/{vendorId}/memberships'], 'membership list path must exist').get,
+    'membership list operation must exist',
+  );
+  const membershipSearch = (membershipList.parameters as JsonObject[]).find(
+    (parameter) => parameter.name === 'search',
+  );
+  assert.equal(
+    membershipSearch?.description,
+    'Searches at most 100 membership candidates per request; a sparse or empty result page can include nextCursor.',
+  );
+
   const components = object(document.components, 'OpenAPI components must be documented');
   const securitySchemes = object(components.securitySchemes, 'security schemes must be documented');
   assert(securitySchemes.opaqueBearer);
@@ -309,6 +321,13 @@ void test('publishes the complete Phase 1 HTTP contract without persistence secr
   assert.deepEqual(
     object(object(paths['/v1/auth/refresh'], 'refresh path must exist').post, 'refresh operation must exist').security,
     [{ refreshCookie: [] }, {}],
+  );
+  const membershipSchemas = object(components.schemas, 'OpenAPI schemas must be documented');
+  const membershipPage = object(membershipSchemas.MembershipPageResponseDto, 'membership page schema');
+  const membershipPageProperties = object(membershipPage.properties, 'membership page properties');
+  assert.equal(
+    object(membershipPageProperties.nextCursor, 'membership next cursor').description,
+    'Continue when present, including after a sparse or empty search result page.',
   );
   assertPhaseOneSecurity(document);
 
