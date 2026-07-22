@@ -44,6 +44,31 @@ void test('weekday counts and cursor pages retain compact inclusive ranges', () 
   assert.deepEqual(result.nextCursor, { serviceDate: '2030-01-02', subscriptionId: 'b', deliverySlotId: 'slot-b' });
 });
 
+void test('cursor paging retains a later plan sharing a subscription and slot and includes same-date ties', () => {
+  const first = deriveLeaveOccurrences({
+    startDate: '1900-01-01', endDate: '2100-01-31', limit: 1,
+    subscriptions: [
+      { subscriptionId: 'a', deliverySlotId: 'slot', weekdays: [2], effectiveFrom: '2030-01-01', effectiveTo: '2030-01-08' },
+      { subscriptionId: 'a', deliverySlotId: 'slot', weekdays: [2], effectiveFrom: '2030-01-08', effectiveTo: '2030-01-22' },
+      { subscriptionId: 'b', deliverySlotId: 'slot', weekdays: [2], effectiveFrom: '2030-01-08', effectiveTo: '2030-01-09' },
+    ],
+  });
+  assert.deepEqual(first.items, [{ serviceDate: '2030-01-01', subscriptionId: 'a', deliverySlotId: 'slot' }]);
+  const second = deriveLeaveOccurrences({
+    startDate: '1900-01-01', endDate: '2100-01-31', limit: 3, cursor: first.nextCursor,
+    subscriptions: [
+      { subscriptionId: 'a', deliverySlotId: 'slot', weekdays: [2], effectiveFrom: '2030-01-01', effectiveTo: '2030-01-08' },
+      { subscriptionId: 'a', deliverySlotId: 'slot', weekdays: [2], effectiveFrom: '2030-01-08', effectiveTo: '2030-01-22' },
+      { subscriptionId: 'b', deliverySlotId: 'slot', weekdays: [2], effectiveFrom: '2030-01-08', effectiveTo: '2030-01-09' },
+    ],
+  });
+  assert.deepEqual(second.items, [
+    { serviceDate: '2030-01-08', subscriptionId: 'a', deliverySlotId: 'slot' },
+    { serviceDate: '2030-01-08', subscriptionId: 'b', deliverySlotId: 'slot' },
+    { serviceDate: '2030-01-15', subscriptionId: 'a', deliverySlotId: 'slot' },
+  ]);
+});
+
 void test('exact cutoff is on time and one millisecond later is late', () => {
   const input = {
     timezone: 'Asia/Kolkata', serviceDate: '2030-01-01', slotStartLocalTime: '06:00',

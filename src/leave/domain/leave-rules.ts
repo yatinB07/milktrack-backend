@@ -64,17 +64,20 @@ export function deriveLeaveOccurrences(input: Readonly<{
   const limit = input.limit ?? 25;
   if (!Number.isInteger(limit) || limit < 1 || limit > 100) throw error('INVALID_PAGINATION', 'Limit must be between 1 and 100');
   const after = input.cursor && toOccurrence(input.cursor);
-  const candidates = input.subscriptions.map((plan) => nextOccurrence(plan, start, end, after)).filter(isPresent);
+  const floor = after ? DateTime.max(start, toDate(after.serviceDate)) : start;
+  const candidates = input.subscriptions.map((plan) => {
+    const occurrence = nextOccurrence(plan, floor, end, after);
+    return occurrence ? { plan, occurrence } : undefined;
+  }).filter(isPresent);
   const rows: LeaveOccurrenceCursor[] = [];
   while (candidates.length > 0 && rows.length <= limit) {
-    candidates.sort(compareOccurrence);
-    const occurrence = candidates.shift();
-    if (!occurrence) break;
+    candidates.sort((left, right) => compareOccurrence(left.occurrence, right.occurrence));
+    const candidate = candidates.shift();
+    if (!candidate) break;
+    const { occurrence, plan } = candidate;
     rows.push(occurrence);
-    const plan = input.subscriptions.find((candidate) => candidate.subscriptionId === occurrence.subscriptionId && candidate.deliverySlotId === occurrence.deliverySlotId);
-    if (!plan) continue;
     const next = nextOccurrence(plan, toDate(occurrence.serviceDate).plus({ days: 1 }), end, after);
-    if (next) candidates.push(next);
+    if (next) candidates.push({ plan, occurrence: next });
   }
   const items = rows.slice(0, limit);
   const last = items.at(-1);

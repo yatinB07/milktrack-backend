@@ -27,8 +27,7 @@ async function deleteSubscriptionRevisions(vendorId: string) {
 
 void test('concurrent overlap attempts serialize behind sorted subscription locks', { timeout: 5_000 }, async () => {
   const vendorId = randomUUID(); const householdId = randomUUID(); const userId = randomUUID(); const unitId = randomUUID(); const productId = randomUUID(); const slotId = randomUUID(); const subscriptionId = randomUUID(); const subscriptionRevisionId = randomUUID();
-  let release!: () => void; const blocked = new Promise<void>((resolve) => { release = resolve; });
-  let acquired!: () => void; const acquiredFirst = new Promise<void>((resolve) => { acquired = resolve; });
+  let blocker: pg.PoolClient | undefined;
   try {
     await owner.query('INSERT INTO users(id,display_name,updated_at) VALUES($1,$2,now())', [userId, 'Leave concurrency']);
     await owner.query(`INSERT INTO vendors(id,code,legal_name,display_name,status,timezone,currency,skip_cutoff_minutes,billing_day,updated_at) VALUES($1,$2,$2,$2,'active','Asia/Kolkata','INR',60,1,now())`, [vendorId, `leave-concurrency-${vendorId.slice(0, 8)}`]);
@@ -39,18 +38,22 @@ void test('concurrent overlap attempts serialize behind sorted subscription lock
     await owner.query('INSERT INTO subscriptions(id,vendor_id,household_id,updated_at) VALUES($1,$2,$3,now())', [subscriptionId, vendorId, householdId]);
     const client = await owner.connect(); try { await client.query('BEGIN'); await client.query(`INSERT INTO subscription_revisions(id,vendor_id,subscription_id,product_id,unit_id,delivery_slot_id,quantity,status,effective_from,created_by,updated_at) VALUES($1,$2,$3,$4,$5,$6,1,'active','2029-01-01',$7,now())`, [subscriptionRevisionId, vendorId, subscriptionId, productId, unitId, slotId, userId]); await client.query('INSERT INTO subscription_revision_weekdays(vendor_id,subscription_revision_id,weekday) VALUES($1,$2,2)', [vendorId, subscriptionRevisionId]); await client.query('COMMIT'); } catch (cause) { await client.query('ROLLBACK'); throw cause; } finally { client.release(); }
     const input = (requestId: string, revisionId: string) => ({ vendorId, householdId, requestId, revisionId, action: 'create' as const, source: 'customer' as const, createdBy: userId, startDate: '2030-01-01', endDate: '2030-01-31', subscriptionIds: [subscriptionId], status: 'accepted' as const, decisions: [] });
-    const first = transactions.run(vendorId, async (tx) => { await store.lockSubscriptions(tx, vendorId, [subscriptionId]); acquired(); await blocked; return store.createRevision(tx, input(randomUUID(), randomUUID())); });
-    await acquiredFirst;
-    const second = transactions.run(vendorId, async (tx) => { await store.lockSubscriptions(tx, vendorId, [subscriptionId]); return store.createRevision(tx, input(randomUUID(), randomUUID())); });
-    release();
+    blocker = await owner.connect(); await blocker.query('BEGIN'); await blocker.query('SELECT id FROM subscriptions WHERE id=$1 FOR UPDATE', [subscriptionId]);
+    let completed = 0;
+    const first = transactions.run(vendorId, (tx) => store.createRevision(tx, input(randomUUID(), randomUUID()))).finally(() => { completed += 1; });
+    const second = transactions.run(vendorId, (tx) => store.createRevision(tx, input(randomUUID(), randomUUID()))).finally(() => { completed += 1; });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    const completedBeforeRelease = completed;
+    await blocker.query('COMMIT'); blocker.release(); blocker = undefined;
     const [one, two] = await Promise.allSettled([first, second]);
+    assert.equal(completedBeforeRelease, 0, 'direct create must wait for the selected subscription lock');
     assert.equal([one, two].filter(({ status }) => status === 'fulfilled').length, 1);
     const rejected = [one, two].find(({ status }) => status === 'rejected');
-    const cause = rejected?.status === 'rejected' ? rejected.reason : undefined;
+    const cause: unknown = rejected?.status === 'rejected' ? rejected.reason as unknown : undefined;
     assert(hasCode(cause));
     assert.equal(cause.code, 'LEAVE_OVERLAP');
   } finally {
-    release?.();
+    if (blocker) { await blocker.query('ROLLBACK'); blocker.release(); }
     await owner.query('UPDATE leave_requests SET current_revision_id=NULL WHERE vendor_id=$1', [vendorId]);
     for (const table of ['leave_occurrence_decisions', 'leave_revision_subscriptions', 'leave_request_revisions', 'leave_requests']) await owner.query(`DELETE FROM ${table} WHERE vendor_id=$1`, [vendorId]);
     await deleteSubscriptionRevisions(vendorId);

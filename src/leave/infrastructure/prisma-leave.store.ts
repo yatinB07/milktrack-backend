@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { DateTime } from 'luxon';
 
 import type { TransactionContext } from '../../common/application/transaction-context.js';
 import { CursorCodec } from '../../common/cursor/cursor.js';
@@ -54,7 +55,7 @@ export class PrismaLeaveStore extends LeaveStore {
   }
 
   async preview(context: TransactionContext, input: LeavePreviewInput): Promise<LeavePreviewPage> {
-    await this.requireHouseholdSelection(context, input.vendorId, input.householdId, input.subscriptionIds);
+    await this.requireApplicableSelection(context, input, false);
     const tx = unwrapPrismaTransaction(context);
     const rows = await tx.$queryRaw<Array<{
       subscriptionId: string; deliverySlotId: string; weekdays: number[]; effectiveFrom: string; effectiveTo: string | null; slotStartLocalTime: string;
@@ -88,13 +89,13 @@ export class PrismaLeaveStore extends LeaveStore {
       const endExclusive = plan.effectiveTo && plan.effectiveTo < dateAfter(input.endDate) ? plan.effectiveTo : dateAfter(input.endDate);
       return count + (start < endExclusive ? countWeekdayOccurrences(start, dateBefore(endExclusive), weekday) : 0);
     }, 0), 0);
-    const lateCount = items.filter(({ timing }) => timing === 'late').length;
+    const lateCount = this.countLateOccurrences(rows, input);
     return { items, ...(page.nextCursor ? { nextCursor: encodeOccurrenceCursor(page.nextCursor) } : {}), onTimeCount: total - lateCount, lateCount };
   }
 
   async createRevision(context: TransactionContext, input: PersistLeaveRevision): Promise<LeaveRequestRecord> {
     const tx = unwrapPrismaTransaction(context);
-    await this.requireHouseholdSelection(context, input.vendorId, input.householdId, input.subscriptionIds);
+    await this.requireApplicableSelection(context, input, true);
     if (input.action !== 'cancel') await this.requireNoOverlap(tx, input);
     if (input.previousRevisionId) {
       const current = await tx.$queryRaw<Array<{ id: string; version: number; currentRevisionId: string | null }>>(Prisma.sql`
@@ -193,12 +194,46 @@ export class PrismaLeaveStore extends LeaveStore {
     return row.action === 'create';
   }
 
-  private async requireHouseholdSelection(context: TransactionContext, vendorId: string, householdId: string, ids: readonly string[]) {
-    this.requireSelection(ids);
+  private async requireApplicableSelection(context: TransactionContext, input: Readonly<{
+    vendorId: string; householdId: string; subscriptionIds: readonly string[]; startDate: string; endDate: string;
+  }>, lock: boolean) {
+    this.requireSelection(input.subscriptionIds);
     const rows = await unwrapPrismaTransaction(context).$queryRaw<Array<{ id: string }>>(Prisma.sql`
-      SELECT id FROM subscriptions WHERE vendor_id=${vendorId}::uuid AND household_id=${householdId}::uuid
-        AND id=ANY(${[...ids]}::uuid[]) AND deleted_at IS NULL ORDER BY id`);
-    if (rows.length !== ids.length) throw error('LEAVE_SUBSCRIPTION_NOT_FOUND', 'An active household subscription was not found', 404);
+      SELECT s.id FROM subscriptions s
+      WHERE s.vendor_id=${input.vendorId}::uuid AND s.household_id=${input.householdId}::uuid
+        AND s.id=ANY(${[...input.subscriptionIds]}::uuid[]) AND s.deleted_at IS NULL
+        AND EXISTS(SELECT 1 FROM subscription_revisions r
+          WHERE r.vendor_id=s.vendor_id AND r.subscription_id=s.id AND r.superseded_at IS NULL AND r.status='active'
+            AND r.effective_from<=${input.endDate}::date AND (r.effective_to IS NULL OR r.effective_to>${input.startDate}::date))
+      ORDER BY s.id ${lock ? Prisma.sql`FOR UPDATE OF s` : Prisma.empty}`);
+    if (rows.length !== input.subscriptionIds.length)
+      throw error('LEAVE_SUBSCRIPTION_NOT_ACTIVE', 'A selected subscription has no active schedule for the leave range', 409);
+  }
+
+  private countLateOccurrences(rows: readonly Readonly<{
+    subscriptionId: string; deliverySlotId: string; weekdays: number[]; effectiveFrom: string; effectiveTo: string | null; slotStartLocalTime: string;
+  }>[], input: LeavePreviewInput) {
+    const boundary = DateTime.fromJSDate(input.now, { zone: input.timezone }).plus({ minutes: input.skipCutoffMinutes }).toISODate();
+    if (!boundary) throw error('INVALID_CURRENT_TIME', 'Current time or timezone is invalid', 400);
+    return rows.reduce((total, row) => {
+      const start = row.effectiveFrom > input.startDate ? row.effectiveFrom : input.startDate;
+      const endExclusive = row.effectiveTo && row.effectiveTo < dateAfter(input.endDate) ? row.effectiveTo : dateAfter(input.endDate);
+      if (start >= endExclusive) return total;
+      const end = dateBefore(endExclusive);
+      const beforeBoundary = dateBefore(boundary);
+      const definitelyLateEnd = end < beforeBoundary ? end : beforeBoundary;
+      const weekdays = [...new Set(row.weekdays)];
+      const earlier = start <= definitelyLateEnd
+        ? weekdays.reduce((count, weekday) => count + countWeekdayOccurrences(start, definitelyLateEnd, weekday), 0)
+        : 0;
+      const boundaryIsScheduled = boundary >= start && boundary <= end
+        && weekdays.includes(DateTime.fromISO(boundary, { zone: 'UTC' }).weekday);
+      const boundaryLate = boundaryIsScheduled && classifyLeaveOccurrence({
+        timezone: input.timezone, serviceDate: boundary, slotStartLocalTime: row.slotStartLocalTime,
+        skipCutoffMinutes: input.skipCutoffMinutes, lateLeavePolicy: input.lateLeavePolicy, now: input.now,
+      }).timing === 'late' ? 1 : 0;
+      return total + earlier + boundaryLate;
+    }, 0);
   }
 
   private requireSelection(ids: readonly string[]) {

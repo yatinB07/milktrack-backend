@@ -13,7 +13,7 @@ const transactions = new PrismaTenantTransactionRunner(prisma);
 const store = new PrismaLeaveStore();
 test.after(() => Promise.all([owner.end(), prisma.$disconnect()]));
 
-type Fixture = Readonly<{ vendorId: string; householdId: string; userId: string; subscriptionId: string; slotId: string }>;
+type Fixture = Readonly<{ vendorId: string; householdId: string; userId: string; unitId: string; productId: string; subscriptionId: string; subscriptionRevisionId: string; slotId: string }>;
 
 async function fixture(label: string): Promise<Fixture> {
   const vendorId = randomUUID(); const householdId = randomUUID(); const userId = randomUUID();
@@ -36,7 +36,7 @@ async function fixture(label: string): Promise<Fixture> {
     await client.query('INSERT INTO subscription_revision_weekdays(vendor_id,subscription_revision_id,weekday) VALUES($1,$2,2)', [vendorId, revisionId]);
     await client.query('COMMIT');
   } catch (cause) { await client.query('ROLLBACK'); throw cause; } finally { client.release(); }
-  return { vendorId, householdId, userId, subscriptionId, slotId };
+  return { vendorId, householdId, userId, unitId, productId, subscriptionId, subscriptionRevisionId: revisionId, slotId };
 }
 
 async function cleanup(value: Fixture) {
@@ -56,7 +56,7 @@ async function cleanup(value: Fixture) {
   await owner.query('DELETE FROM users WHERE id=$1', [value.userId]);
 }
 
-function revision(current: Fixture, values: Readonly<{ requestId: string; revisionId: string; action?: 'create' | 'amend' | 'cancel'; previousRevisionId?: string; status?: 'accepted' | 'pending_approval'; decisions?: readonly Readonly<{ id: string; serviceDate: string; deliverySlotId: string; status: 'pending' | 'rejected' }>[] }>) {
+function revision(current: Fixture, values: Readonly<{ requestId: string; revisionId: string; action?: 'create' | 'amend' | 'cancel'; previousRevisionId?: string; status?: 'accepted' | 'pending_approval'; decisions?: readonly Readonly<{ id: string; serviceDate: string; deliverySlotId: string; status: 'pending' | 'rejected'; subscriptionId?: string }>[] }>) {
   return {
     vendorId: current.vendorId, householdId: current.householdId, requestId: values.requestId, revisionId: values.revisionId,
     action: values.action ?? 'create', previousRevisionId: values.previousRevisionId, source: 'customer' as const,
@@ -84,9 +84,17 @@ void test('leave store scopes active household subscriptions, persists append-on
       const preview = await store.preview(tx, {
         vendorId: current.vendorId, householdId: current.householdId, subscriptionIds: [current.subscriptionId],
         startDate: '2030-01-01', endDate: '2030-01-31', timezone: 'Asia/Kolkata', skipCutoffMinutes: 60,
-        lateLeavePolicy: 'approval', now: new Date('2029-12-31T00:00:00.000Z'), limit: 1,
+        lateLeavePolicy: 'approval', now: new Date('2029-12-31T23:30:00.001Z'), limit: 1,
       });
       assert.deepEqual(preview.items.map((item) => item.serviceDate), ['2030-01-01']);
+      assert.deepEqual({ onTimeCount: preview.onTimeCount, lateCount: preview.lateCount }, { onTimeCount: 4, lateCount: 1 });
+      const next = await store.preview(tx, {
+        vendorId: current.vendorId, householdId: current.householdId, subscriptionIds: [current.subscriptionId],
+        startDate: '2030-01-01', endDate: '2030-01-31', timezone: 'Asia/Kolkata', skipCutoffMinutes: 60,
+        lateLeavePolicy: 'approval', now: new Date('2029-12-31T23:30:00.001Z'), limit: 1, cursor: preview.nextCursor,
+      });
+      assert.deepEqual(next.items.map((item) => item.serviceDate), ['2030-01-08']);
+      assert.deepEqual({ onTimeCount: next.onTimeCount, lateCount: next.lateCount }, { onTimeCount: 4, lateCount: 1 });
       const created = await store.createRevision(tx, revision(current, { requestId, revisionId: firstRevisionId }));
       assert.equal(created.status, 'accepted');
       assert.equal(created.revisions.length, 1);
@@ -109,23 +117,53 @@ void test('leave store scopes active household subscriptions, persists append-on
   } finally { await cleanup(current); }
 });
 
+void test('leave selection requires an active unsuperseded revision applicable to the range', async () => {
+  const current = await fixture('inactive-plan');
+  try {
+    await owner.query("UPDATE subscription_revisions SET status='paused' WHERE id=$1", [current.subscriptionRevisionId]);
+    await transactions.run(current.vendorId, async (tx) => {
+      const input = {
+        vendorId: current.vendorId, householdId: current.householdId, subscriptionIds: [current.subscriptionId],
+        startDate: '2030-01-01', endDate: '2030-01-31', timezone: 'Asia/Kolkata', skipCutoffMinutes: 60,
+        lateLeavePolicy: 'approval' as const, now: new Date('2029-12-31T00:00:00.000Z'),
+      };
+      await rejectsWithCode(() => store.preview(tx, input), 'LEAVE_SUBSCRIPTION_NOT_ACTIVE');
+      await rejectsWithCode(() => store.createRevision(tx, revision(current, { requestId: randomUUID(), revisionId: randomUUID() })), 'LEAVE_SUBSCRIPTION_NOT_ACTIVE');
+    });
+  } finally { await cleanup(current); }
+});
+
 void test('late decisions are explicit, versioned, cursor-stable, and tenant-neutral', async () => {
-  const current = await fixture('decisions'); const requestId = randomUUID(); const decisionId = randomUUID();
+  const current = await fixture('decisions'); const requestId = randomUUID();
+  const secondSubscriptionId = randomUUID(); const secondSubscriptionRevisionId = randomUUID();
+  const firstDecisionId = '00000000-0000-4000-8000-000000000001';
+  const secondDecisionId = '00000000-0000-4000-8000-000000000002';
   const other = await fixture('other');
   try {
+    await owner.query('INSERT INTO subscriptions(id,vendor_id,household_id,updated_at) VALUES($1,$2,$3,now())', [secondSubscriptionId, current.vendorId, current.householdId]);
+    const client = await owner.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query(`INSERT INTO subscription_revisions(id,vendor_id,subscription_id,product_id,unit_id,delivery_slot_id,quantity,status,effective_from,created_by,updated_at)
+        VALUES($1,$2,$3,$4,$5,$6,1,'active','2029-01-01',$7,now())`, [secondSubscriptionRevisionId, current.vendorId, secondSubscriptionId, current.productId, current.unitId, current.slotId, current.userId]);
+      await client.query('INSERT INTO subscription_revision_weekdays(vendor_id,subscription_revision_id,weekday) VALUES($1,$2,2)', [current.vendorId, secondSubscriptionRevisionId]);
+      await client.query('COMMIT');
+    } catch (cause) { await client.query('ROLLBACK'); throw cause; } finally { client.release(); }
     await transactions.run(current.vendorId, async (tx) => {
-      await store.lockSubscriptions(tx, current.vendorId, [current.subscriptionId]);
-      await store.createRevision(tx, revision(current, {
-        requestId, revisionId: randomUUID(), status: 'pending_approval', decisions: [{
-          id: decisionId, serviceDate: '2030-01-01', deliverySlotId: current.slotId, status: 'pending',
-        }],
-      }));
+      await store.createRevision(tx, { ...revision(current, {
+        requestId, revisionId: randomUUID(), status: 'pending_approval', decisions: [
+          { id: firstDecisionId, serviceDate: '2030-01-01', deliverySlotId: current.slotId, status: 'pending', subscriptionId: current.subscriptionId },
+          { id: secondDecisionId, serviceDate: '2030-01-01', deliverySlotId: current.slotId, status: 'pending', subscriptionId: secondSubscriptionId },
+        ],
+      }), subscriptionIds: [current.subscriptionId, secondSubscriptionId] });
       const pending = await store.listPendingDecisions(tx, { vendorId: current.vendorId, limit: 1 });
-      assert.equal(pending.items[0]?.id, decisionId);
-      const decided = await store.decide(tx, { vendorId: current.vendorId, id: decisionId, expectedVersion: 1,
+      assert.equal(pending.items[0]?.id, firstDecisionId);
+      const next = await store.listPendingDecisions(tx, { vendorId: current.vendorId, limit: 1, cursor: pending.nextCursor });
+      assert.equal(next.items[0]?.id, secondDecisionId);
+      const decided = await store.decide(tx, { vendorId: current.vendorId, id: firstDecisionId, expectedVersion: 1,
         decision: 'approved', decidedBy: current.userId, reason: 'Customer emergency approved', now: new Date('2030-01-01T00:00:00.000Z') });
       assert.equal(decided.status, 'approved');
-      assert.equal(decided.request.status, 'accepted');
+      assert.equal(decided.request.status, 'partially_pending');
     });
     await transactions.run(other.vendorId, async (tx) => {
       await rejectsWithCode(() => store.getRequest(tx, other.vendorId, other.householdId, requestId), 'LEAVE_REQUEST_NOT_FOUND');
