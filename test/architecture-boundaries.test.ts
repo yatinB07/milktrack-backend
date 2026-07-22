@@ -3,6 +3,8 @@ import { readdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import test from 'node:test';
 
+const deliveryForbiddenTables = /\b(?:leave_requests|leave_request_revisions|leave_revision_subscriptions|leave_occurrence_decisions|global_prices|customer_price_overrides)\b/iu;
+
 async function typescriptFiles(directory: string): Promise<string[]> {
   const entries = await readdir(directory, { withFileTypes: true });
   const nested = await Promise.all(
@@ -82,12 +84,17 @@ void test('authorization source does not import Identity', async () => {
 
 void test('delivery persistence does not query leave or pricing owned tables', async () => {
   const files = await typescriptFiles('src/delivery/infrastructure');
-  const forbidden = /\b(?:customer_leave_requests|customer_leave_revisions|global_prices|customer_price_overrides)\b/iu;
   const violations: string[] = [];
 
   for (const file of files) {
-    if (forbidden.test(await readFile(file, 'utf8'))) violations.push(file.split(path.sep).join('/'));
+    if (deliveryForbiddenTables.test(await readFile(file, 'utf8'))) violations.push(file.split(path.sep).join('/'));
   }
 
   assert.deepEqual(violations, []);
+});
+
+void test('delivery boundary guard recognizes every leave-owned table', () => {
+  for (const table of ['leave_requests', 'leave_request_revisions', 'leave_revision_subscriptions', 'leave_occurrence_decisions']) {
+    assert.match(`SELECT * FROM ${table}`, deliveryForbiddenTables);
+  }
 });

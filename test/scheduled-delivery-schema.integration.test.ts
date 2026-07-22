@@ -73,10 +73,10 @@ async function fixture(label: string) {
 }
 type Fixture = Awaited<ReturnType<typeof fixture>>;
 
-const insert = (value: Fixture, overrides: Partial<{ id: string; revisionId: string; householdId: string; productId: string; slotId: string; assignmentId: string | null; serviceDate: string; finalized: boolean }> = {}) => owner.query<{ id: string }>(
+const insert = (value: Fixture, overrides: Partial<{ id: string; subscriptionId: string; revisionId: string; householdId: string; productId: string; slotId: string; assignmentId: string | null; serviceDate: string; finalized: boolean }> = {}) => owner.query<{ id: string }>(
   `INSERT INTO scheduled_deliveries(id,vendor_id,subscription_id,subscription_revision_id,household_id,product_id,unit_id,delivery_slot_id,route_assignment_id,service_date,planned_quantity,status,finalized_at,updated_at)
    VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,1.25,'scheduled',CASE WHEN $11 THEN now() END,now()) RETURNING id`,
-  [overrides.id ?? randomUUID(), value.vendorId, value.subscriptionId, overrides.revisionId ?? value.revisionId, overrides.householdId ?? value.householdId, overrides.productId ?? value.productId, value.unitId, overrides.slotId ?? value.slotId, overrides.assignmentId === undefined ? value.assignmentId : overrides.assignmentId, overrides.serviceDate ?? '2030-01-01', overrides.finalized ?? false],
+  [overrides.id ?? randomUUID(), value.vendorId, overrides.subscriptionId ?? value.subscriptionId, overrides.revisionId ?? value.revisionId, overrides.householdId ?? value.householdId, overrides.productId ?? value.productId, value.unitId, overrides.slotId ?? value.slotId, overrides.assignmentId === undefined ? value.assignmentId : overrides.assignmentId, overrides.serviceDate ?? '2030-01-01', overrides.finalized ?? false],
 );
 
 async function cleanup(values: Fixture[]) {
@@ -258,6 +258,52 @@ void test('agent self read paginates tied cross-route sequences and cancelled as
     await owner.query("UPDATE scheduled_deliveries SET status='cancelled',cancelled_at=now(),cancellation_reason='Subscription removed',updated_at=now() WHERE id=$1", [afterCancellation.items[0]?.id]);
     const empty = await transactions.run(value.vendorId, (tx) => scheduledDeliveries.listSelf(tx, value.vendorId, value.membershipId, '2030-01-01', {}));
     assert.equal(empty.items.length, 0);
+  } finally { await cleanup([value]); }
+});
+
+void test('agent pagination carries the complete ID-sorted pending set for every row at one stop', async () => {
+  const value = await fixture('whole-stop');
+  const extras = [0, 1].map(() => ({ subscriptionId: randomUUID(), revisionId: randomUUID() }));
+  try {
+    const client = await owner.connect();
+    try {
+      await client.query('BEGIN');
+      for (const extra of extras) {
+        await client.query('INSERT INTO subscriptions(id,vendor_id,household_id,updated_at) VALUES($1,$2,$3,now())', [extra.subscriptionId, value.vendorId, value.householdId]);
+        await client.query("INSERT INTO subscription_revisions(id,vendor_id,subscription_id,product_id,unit_id,delivery_slot_id,quantity,status,effective_from,effective_to,created_by,updated_at) VALUES($1,$2,$3,$4,$5,$6,1.25,'active','2030-01-01','2030-01-02',$7,now())", [extra.revisionId, value.vendorId, extra.subscriptionId, value.productId, value.unitId, value.slotId, value.userId]);
+        await client.query('INSERT INTO subscription_revision_weekdays VALUES($1,$2,2)', [value.vendorId, extra.revisionId]);
+      }
+      await client.query('COMMIT');
+    } catch (cause) {
+      await client.query('ROLLBACK');
+      throw cause;
+    } finally { client.release(); }
+    const ids = [randomUUID(), randomUUID(), randomUUID()].sort();
+    await insert(value, { id: ids[0] });
+    for (const [index, extra] of extras.entries()) {
+      await insert(value, { id: ids[index + 1], subscriptionId: extra.subscriptionId, revisionId: extra.revisionId });
+    }
+
+    const first = await transactions.run(value.vendorId, (tx) => scheduledDeliveries.listSelf(tx, value.vendorId, value.membershipId, '2030-01-01', { limit: 1 }));
+    const second = await transactions.run(value.vendorId, (tx) => scheduledDeliveries.listSelf(tx, value.vendorId, value.membershipId, '2030-01-01', { limit: 1, cursor: first.nextCursor }));
+    const third = await transactions.run(value.vendorId, (tx) => scheduledDeliveries.listSelf(tx, value.vendorId, value.membershipId, '2030-01-01', { limit: 1, cursor: second.nextCursor }));
+    const expected = ids.map((scheduledDeliveryId) => ({
+      scheduledDeliveryId,
+      expectedVersion: 1,
+      plannedQuantity: '1.25',
+      productName: 'Product whole-stop',
+      unitName: 'Unit whole-stop',
+    }));
+
+    assert.deepEqual([...first.items, ...second.items, ...third.items].map(({ id }) => id), ids);
+    assert.ok(first.nextCursor);
+    assert.ok(second.nextCursor);
+    assert.equal(third.nextCursor, undefined);
+    assert.equal(first.items[0]?.routeStopId, second.items[0]?.routeStopId);
+    assert.equal(second.items[0]?.routeStopId, third.items[0]?.routeStopId);
+    assert.deepEqual(first.items[0]?.pendingStopItems, expected);
+    assert.deepEqual(second.items[0]?.pendingStopItems, expected);
+    assert.deepEqual(third.items[0]?.pendingStopItems, expected);
   } finally { await cleanup([value]); }
 });
 
