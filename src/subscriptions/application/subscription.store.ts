@@ -53,6 +53,15 @@ export type SubscriptionStorePageQuery = Omit<SubscriptionPageQuery, 'routeId' |
 export type SubscriptionPage = Readonly<{ items: readonly SubscriptionAggregateRecord[]; nextCursor?: string }>;
 export type SubscriptionHistoryPage = Readonly<{ items: readonly SubscriptionRevisionRecord[]; nextCursor?: string }>;
 export type CustomerSubscriptionRevision = Omit<SubscriptionRevisionRecord, 'createdBy' | 'supersessionReason'>;
+export type EnrichedCustomerSubscriptionRevision = CustomerSubscriptionRevision & Readonly<{
+  productCode: string;
+  productName: string;
+  unitCode: string;
+  unitName: string;
+  deliverySlotName: string;
+  deliverySlotStartLocalTime: string;
+  deliverySlotEndLocalTime: string;
+}>;
 export type CustomerSubscriptionHistoryPage = Readonly<{ items: readonly CustomerSubscriptionRevision[]; nextCursor?: string }>;
 export type CreateSubscriptionAggregate = Readonly<{
   id: string; vendorId: string; householdId: string; productId: string; unitId: string; deliverySlotId: string;

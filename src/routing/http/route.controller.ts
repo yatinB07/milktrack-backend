@@ -6,6 +6,7 @@ import { ActorGuard } from '../../identity/http/actor.guard.js';
 import { RouteService } from '../application/route.service.js';
 import {
   AgentRouteAssignmentQueryDto,
+  AgentRouteAssignmentListResponseDto,
   AssignRouteRequestDto,
   CreateRouteRequestDto,
   RenameRouteRequestDto,
@@ -20,6 +21,7 @@ import {
   RouteStopsQueryDto,
   RouteVersionReasonRequestDto,
   toRouteAssignmentMutationResponse,
+  toAgentRouteAssignmentResponse,
   toRouteAssignmentResponse,
   toRouteResponse,
 } from './route.dto.js';
@@ -93,14 +95,18 @@ for (const [key, types] of [['list', [String, RoutePageQueryDto]], ['create', [S
 export class AgentRouteAssignmentController {
   constructor(@Inject(RouteService) private readonly routes: RouteService) {}
   @Get()
-  @ApiResponse({ status: 200, type: RouteAssignmentListResponseDto })
+  @ApiResponse({ status: 200, type: AgentRouteAssignmentListResponseDto })
   async list(
     @Param('vendorId', ParseUUIDPipe) vendorId: string,
     @Query() query: AgentRouteAssignmentQueryDto,
   ) {
-    const page = await this.routes.listSelfAssignments(requestContextStore.requireActor(), vendorId, query);
+    const page = await this.routes.listSelfAssignments(requestContextStore.requireActor(), vendorId, {
+      ...query,
+      serviceDate: query.serviceDate,
+    });
     return {
-      items: page.items.map(toRouteAssignmentResponse),
+      serviceDate: query.serviceDate,
+      items: page.items.map(toAgentRouteAssignmentResponse),
       ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}),
     };
   }

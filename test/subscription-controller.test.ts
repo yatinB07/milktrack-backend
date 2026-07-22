@@ -13,6 +13,8 @@ const revision = {
   id: '00000000-0000-4000-8000-000000000010', vendorId: '00000000-0000-4000-8000-000000000020',
   subscriptionId: '00000000-0000-4000-8000-000000000030', productId: '00000000-0000-4000-8000-000000000040',
   unitId: '00000000-0000-4000-8000-000000000050', deliverySlotId: '00000000-0000-4000-8000-000000000060',
+  productCode: 'MILK', productName: 'Full cream milk', unitCode: 'L', unitName: 'Litre',
+  deliverySlotName: 'Morning', deliverySlotStartLocalTime: '06:00', deliverySlotEndLocalTime: '09:00',
   quantity: '1.25', weekdays: [1, 5], status: 'active' as const, effectiveFrom: '2030-01-01', effectiveTo: '2030-02-01', createdBy: actor.userId,
   supersessionReason: 'Corrected plan', createdAt: new Date('2030-01-01T00:00:00Z'), updatedAt: new Date('2030-01-01T00:00:00Z'),
 };
@@ -62,7 +64,7 @@ void test('customer controller returns household-bound safe revision history', a
   let args: unknown[] = [];
   const { createdBy: _createdBy, supersessionReason: _supersessionReason, ...safeRevision } = revision;
   void _createdBy; void _supersessionReason;
-  const service = { historyCustomer: (...current: unknown[]) => { args = current; return Promise.resolve({ items: [safeRevision] }); } };
+  const service = { historyCustomer: (...current: unknown[]) => { args = current; return Promise.resolve({ items: [{ ...safeRevision, customerPhone: '+919999999999', householdNotes: 'private', sourcePriceId: 'private' }] }); } };
   const controller = new CustomerSubscriptionController(service as never);
   const response = await requestContextStore.run({ correlationId: '00000000-0000-4000-8000-000000000003', actor }, () => controller.history(revision.vendorId, result.householdId, revision.subscriptionId, {}));
   assert.equal('createdBy' in response.items[0], false);
@@ -71,5 +73,11 @@ void test('customer controller returns household-bound safe revision history', a
   assert.equal(response.items[0]?.endDate, '2030-01-31');
   assert.equal('effectiveFrom' in response.items[0], false);
   assert.equal('effectiveTo' in response.items[0], false);
+  assert.equal(response.items[0]?.productName, 'Full cream milk');
+  assert.equal(response.items[0]?.unitName, 'Litre');
+  assert.equal(response.items[0]?.deliverySlotName, 'Morning');
+  assert.equal('customerPhone' in response.items[0], false);
+  assert.equal('householdNotes' in response.items[0], false);
+  assert.equal('sourcePriceId' in response.items[0], false);
   assert.deepEqual(args.slice(1, 4), [revision.vendorId, result.householdId, revision.subscriptionId]);
 });

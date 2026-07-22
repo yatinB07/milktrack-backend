@@ -21,7 +21,7 @@ export type ResolvePriceCommand = Readonly<{ householdId: string; productId: str
 type MissingPrice = Readonly<{ status: 'missing' }>;
 type ResolvedValue = Readonly<{ status: 'resolved'; amountMinor: string; currency: string; source: 'customer_specific' | 'global' }>;
 export type VendorResolvedPrice = MissingPrice | (ResolvedValue & Readonly<{ sourcePriceId: string }>);
-export type CustomerResolvedPrice = MissingPrice | ResolvedValue;
+export type CustomerResolvedPrice = (MissingPrice | ResolvedValue) & Readonly<{ serviceDate: string }>;
 
 export abstract class PricingService {
   abstract listGlobals(actor: Actor, vendorId: string, query: PricePageQuery): Promise<PricePage<PriceRecord>>;
@@ -94,8 +94,8 @@ export class DefaultPricingService extends PricingService {
   resolveVendor(actor: Actor, vendorId: string, command: ResolvePriceCommand) { return this.resolve(actor, vendorId, command, false); }
   async resolveCustomer(actor: Actor, vendorId: string, householdId: string, command: Omit<ResolvePriceCommand, 'householdId'>): Promise<CustomerResolvedPrice> {
     const result = await this.resolve(actor, vendorId, { ...command, householdId }, true);
-    if (result.status === 'missing') return result;
-    return { status: result.status, amountMinor: result.amountMinor, currency: result.currency, source: result.source };
+    if (result.status === 'missing') return { serviceDate: command.serviceDate, ...result };
+    return { serviceDate: command.serviceDate, status: result.status, amountMinor: result.amountMinor, currency: result.currency, source: result.source };
   }
 
   private resolve(actor: Actor, vendorId: string, command: ResolvePriceCommand, customer: boolean): Promise<VendorResolvedPrice> {

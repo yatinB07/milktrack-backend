@@ -23,8 +23,27 @@ const delivery = {
   productId: '00000000-0000-4000-8000-000000000013',
   unitId: '00000000-0000-4000-8000-000000000014',
   deliverySlotId: '00000000-0000-4000-8000-000000000015',
+  deliverySlotName: 'Morning',
+  deliverySlotStartLocalTime: '06:00',
+  deliverySlotEndLocalTime: '09:00',
   routeAssignmentId: '00000000-0000-4000-8000-000000000016',
   routeStopId: '00000000-0000-4000-8000-000000000017',
+  routeId: '00000000-0000-4000-8000-000000000018',
+  routeCode: 'R-01',
+  routeName: 'North route',
+  householdAccountNumber: 'H-001',
+  householdName: 'Patel Home',
+  addressLine1: '12 Lake Road',
+  addressLine2: 'Floor 2',
+  locality: 'Camp',
+  city: 'Pune',
+  region: 'MH',
+  postalCode: '411001',
+  countryCode: 'IN',
+  productCode: 'MILK',
+  productName: 'Full cream milk',
+  unitCode: 'L',
+  unitName: 'Litre',
   serviceDate: '2026-07-20',
   plannedQuantity: '1.25',
   sequence: 1,
@@ -33,7 +52,14 @@ const delivery = {
 void test('agent scheduled-delivery controller whitelists response fields and page metadata', async () => {
   const controller = new AgentScheduledDeliveryController({
     listSelf: () => Promise.resolve({
-      items: [{ ...delivery, internalNote: 'must not cross HTTP boundary' }],
+      serviceDate: delivery.serviceDate,
+      items: [{
+        ...delivery,
+        customerPhone: '+919999999999',
+        householdNotes: 'must not cross HTTP boundary',
+        priceSourceId: 'must not cross HTTP boundary',
+        internalNote: 'must not cross HTTP boundary',
+      }],
       nextCursor: 'next',
       internalPageState: 'must not cross HTTP boundary',
     }),
@@ -44,7 +70,7 @@ void test('agent scheduled-delivery controller whitelists response fields and pa
     () => controller.list('00000000-0000-4000-8000-000000000004', { serviceDate: delivery.serviceDate }),
   );
 
-  assert.deepEqual(response, { items: [delivery], nextCursor: 'next' });
+  assert.deepEqual(response, { serviceDate: delivery.serviceDate, items: [delivery], nextCursor: 'next' });
 });
 
 for (const sequence of [0, -1]) {

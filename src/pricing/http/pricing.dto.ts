@@ -28,7 +28,7 @@ export class ResolveVendorPriceQueryDto {
 }
 export class ResolveCustomerPriceQueryDto {
   @IsUUID() productId!: string; @IsUUID() unitId!: string; @IsUUID() deliverySlotId!: string;
-  @Matches(/^\d{4}-\d{2}-\d{2}$/) serviceDate!: string;
+  @ApiProperty({ type: String, format: 'date' }) @Matches(/^\d{4}-\d{2}-\d{2}$/) serviceDate!: string;
 }
 export class PriceResponseDto {
   @ApiProperty({ type: String, format: 'uuid' }) id!: string; @ApiProperty({ type: String, format: 'uuid' }) vendorId!: string;
@@ -42,7 +42,7 @@ export class OverrideResponseDto extends PriceResponseDto { @ApiProperty({ type:
 export class PriceListResponseDto { @ApiProperty({ type: () => PriceResponseDto, isArray: true }) items!: PriceResponseDto[]; @ApiPropertyOptional({ type: String }) nextCursor?: string; }
 export class OverrideListResponseDto { @ApiProperty({ type: () => OverrideResponseDto, isArray: true }) items!: OverrideResponseDto[]; @ApiPropertyOptional({ type: String }) nextCursor?: string; }
 export class ResolvedPriceResponseDto { @ApiProperty({ type: String, enum: ['resolved', 'missing'] }) status!: string; @ApiPropertyOptional({ type: String }) amountMinor?: string; @ApiPropertyOptional({ type: String }) currency?: string; @ApiPropertyOptional({ type: String, enum: ['customer_specific', 'global'] }) source?: string; @ApiPropertyOptional({ type: String, format: 'uuid' }) sourcePriceId?: string; }
-export class CustomerResolvedPriceResponseDto { @ApiProperty({ type: String, enum: ['resolved', 'missing'] }) status!: string; @ApiPropertyOptional({ type: String }) amountMinor?: string; @ApiPropertyOptional({ type: String }) currency?: string; @ApiPropertyOptional({ type: String, enum: ['customer_specific', 'global'] }) source?: string; }
+export class CustomerResolvedPriceResponseDto { @ApiProperty({ type: String, format: 'date' }) serviceDate!: string; @ApiProperty({ type: String, enum: ['resolved', 'missing'] }) status!: string; @ApiPropertyOptional({ type: String }) amountMinor?: string; @ApiPropertyOptional({ type: String }) currency?: string; @ApiPropertyOptional({ type: String, enum: ['customer_specific', 'global'] }) source?: string; }
 
 export const toPriceResponse = (value: PriceRecord): PriceResponseDto => ({ ...value, effectiveFrom: value.effectiveFrom.toISOString(), effectiveTo: value.effectiveTo?.toISOString() ?? null, createdAt: value.createdAt.toISOString(), updatedAt: value.updatedAt.toISOString() });
 export const toOverrideResponse = (value: OverrideRecord): OverrideResponseDto => ({ ...toPriceResponse(value), householdId: value.householdId, reason: value.reason });

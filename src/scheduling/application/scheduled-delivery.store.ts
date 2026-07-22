@@ -5,7 +5,7 @@ export type ScheduleGenerationCounts = Readonly<{
   created: number; existing: number; updated: number; cancelled: number;
 }>;
 
-export type AgentScheduledDelivery = Readonly<{
+export type ScheduledDeliveryRecord = Readonly<{
   id: string;
   subscriptionId: string;
   householdId: string;
@@ -19,7 +19,30 @@ export type AgentScheduledDelivery = Readonly<{
   sequence: number;
 }>;
 
+export type AgentScheduledDelivery = ScheduledDeliveryRecord & Readonly<{
+  routeId: string;
+  routeCode: string;
+  routeName: string;
+  householdAccountNumber: string;
+  householdName: string;
+  addressLine1: string;
+  addressLine2?: string;
+  locality?: string;
+  city: string;
+  region: string;
+  postalCode: string;
+  countryCode: string;
+  productCode: string;
+  productName: string;
+  unitCode: string;
+  unitName: string;
+  deliverySlotName: string;
+  deliverySlotStartLocalTime: string;
+  deliverySlotEndLocalTime: string;
+}>;
+
 export type AgentScheduledDeliveryPage = Readonly<{
+  serviceDate: string;
   items: readonly AgentScheduledDelivery[];
   nextCursor?: string;
 }>;
@@ -38,5 +61,5 @@ export abstract class ScheduledDeliveryStore {
     agentMembershipId: string,
     serviceDate: string,
     query: Readonly<{ cursor?: string; limit?: number }>,
-  ): Promise<AgentScheduledDeliveryPage>;
+  ): Promise<Readonly<{ items: readonly ScheduledDeliveryRecord[]; nextCursor?: string }>>;
 }

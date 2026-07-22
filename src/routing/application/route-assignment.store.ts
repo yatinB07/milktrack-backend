@@ -12,6 +12,13 @@ export type RouteAssignmentRecord = Readonly<{
   createdAt: Date;
   updatedAt: Date;
 }>;
+export type AgentRouteAssignmentRecord = RouteAssignmentRecord & Readonly<{
+  routeCode: string;
+  routeName: string;
+  deliverySlotName: string;
+  deliverySlotStartLocalTime: string;
+  deliverySlotEndLocalTime: string;
+}>;
 export type RouteAssignmentPageQuery = Readonly<{
   cursor?: string;
   limit?: number;
@@ -19,7 +26,15 @@ export type RouteAssignmentPageQuery = Readonly<{
   toDate?: string;
   status?: RouteAssignmentStatus;
 }>;
-export type RouteAssignmentPage = Readonly<{ items: readonly RouteAssignmentRecord[]; nextCursor?: string }>;
+export type RouteAssignmentPage = Readonly<{
+  items: readonly RouteAssignmentRecord[];
+  nextCursor?: string;
+}>;
+export type AgentRouteAssignmentPage = Readonly<{
+  serviceDate: string;
+  items: readonly AgentRouteAssignmentRecord[];
+  nextCursor?: string;
+}>;
 export type RouteAssignmentMutation = Readonly<{
   assignment: RouteAssignmentRecord;
   routeVersion: number;

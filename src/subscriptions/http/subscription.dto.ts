@@ -4,7 +4,7 @@ import { ArrayMinSize, ArrayUnique, IsArray, IsIn, IsInt, IsOptional, IsString, 
 import { DateTime } from 'luxon';
 
 import type { CustomerSubscriptionResult, SubscriptionResult } from '../application/subscription.service.js';
-import type { CustomerSubscriptionRevision, SubscriptionRevisionRecord } from '../application/subscription.store.js';
+import type { CustomerSubscriptionRevision, EnrichedCustomerSubscriptionRevision, SubscriptionRevisionRecord } from '../application/subscription.store.js';
 import { LifecycleQueryDto } from '../../common/http/record-lifecycle.dto.js';
 import { recordLifecycles } from '../../common/application/record-lifecycle.js';
 
@@ -71,7 +71,9 @@ export class SubscriptionRevisionResponseDto {
 }
 export class CustomerSubscriptionRevisionResponseDto {
   @ApiProperty({ type: String, format: 'uuid' }) id!: string; @ApiProperty({ type: String, format: 'uuid' }) productId!: string; @ApiProperty({ type: String, format: 'uuid' }) unitId!: string;
+  productCode!: string; productName!: string; unitCode!: string; unitName!: string;
   @ApiProperty({ type: String, format: 'uuid' }) deliverySlotId!: string; @ApiProperty({ type: String }) quantity!: string; @ApiProperty({ type: [Number] }) weekdays!: number[];
+  deliverySlotName!: string; deliverySlotStartLocalTime!: string; deliverySlotEndLocalTime!: string;
   @ApiProperty({ type: String, enum: ['active', 'paused', 'cancelled'] }) status!: string; @ApiProperty({ type: String, format: 'date' }) startDate!: string;
   @ApiPropertyOptional({ type: String, format: 'date' }) endDate?: string; @ApiPropertyOptional({ type: String, format: 'date-time' }) supersededAt?: string;
   @ApiPropertyOptional({ type: String, format: 'uuid' }) supersededByRevisionId?: string; @ApiProperty({ type: String, format: 'date-time' }) createdAt!: string;
@@ -100,8 +102,36 @@ export function toSubscriptionRevisionResponse(value: SubscriptionRevisionRecord
   return { ...revision, weekdays: [...value.weekdays], startDate: effectiveFrom, ...(effectiveTo ? { endDate: inclusiveEndDate(effectiveTo) } : {}), ...(supersededAt ? { supersededAt: supersededAt.toISOString() } : {}), createdAt: value.createdAt.toISOString(), updatedAt: value.updatedAt.toISOString() };
 }
 export function toCustomerSubscriptionRevisionResponse(value: CustomerSubscriptionRevision): CustomerSubscriptionRevisionResponseDto {
-  const { effectiveFrom, effectiveTo, supersededAt, ...revision } = value;
-  return { ...revision, weekdays: [...value.weekdays], startDate: effectiveFrom, ...(effectiveTo ? { endDate: inclusiveEndDate(effectiveTo) } : {}), ...(supersededAt ? { supersededAt: supersededAt.toISOString() } : {}), createdAt: value.createdAt.toISOString(), updatedAt: value.updatedAt.toISOString() };
+  assertEnrichedCustomerRevision(value);
+  return {
+    id: value.id,
+    productId: value.productId,
+    productCode: value.productCode,
+    productName: value.productName,
+    unitId: value.unitId,
+    unitCode: value.unitCode,
+    unitName: value.unitName,
+    deliverySlotId: value.deliverySlotId,
+    deliverySlotName: value.deliverySlotName,
+    deliverySlotStartLocalTime: value.deliverySlotStartLocalTime,
+    deliverySlotEndLocalTime: value.deliverySlotEndLocalTime,
+    quantity: value.quantity,
+    weekdays: [...value.weekdays],
+    status: value.status,
+    startDate: value.effectiveFrom,
+    ...(value.effectiveTo ? { endDate: inclusiveEndDate(value.effectiveTo) } : {}),
+    ...(value.supersededAt ? { supersededAt: value.supersededAt.toISOString() } : {}),
+    ...(value.supersededByRevisionId ? { supersededByRevisionId: value.supersededByRevisionId } : {}),
+    createdAt: value.createdAt.toISOString(),
+    updatedAt: value.updatedAt.toISOString(),
+  };
+}
+
+function assertEnrichedCustomerRevision(value: CustomerSubscriptionRevision): asserts value is EnrichedCustomerSubscriptionRevision {
+  const required = ['productCode', 'productName', 'unitCode', 'unitName', 'deliverySlotName', 'deliverySlotStartLocalTime', 'deliverySlotEndLocalTime'] as const;
+  for (const key of required) {
+    if (typeof (value as Record<string, unknown>)[key] !== 'string') throw new TypeError(`Customer subscription revision is missing ${key}`);
+  }
 }
 export function toSubscriptionResponse(value: SubscriptionResult): SubscriptionResponseDto {
   return { id: value.id, vendorId: value.vendorId, householdId: value.householdId, version: value.version, status: value.status, lifecycle: value.lifecycle,

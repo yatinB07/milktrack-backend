@@ -1,8 +1,8 @@
 import { Type } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsArray, IsIn, IsInt, IsOptional, IsString, IsUUID, Length, Max, Min } from 'class-validator';
+import { IsArray, IsIn, IsInt, IsOptional, IsString, IsUUID, Length, Matches, Max, Min } from 'class-validator';
 import type { RouteResult } from '../application/route.store.js';
-import type { RouteAssignmentMutation, RouteAssignmentRecord } from '../application/route-assignment.store.js';
+import type { AgentRouteAssignmentRecord, RouteAssignmentMutation, RouteAssignmentRecord } from '../application/route-assignment.store.js';
 import { LifecycleQueryDto } from '../../common/http/record-lifecycle.dto.js';
 import { recordLifecycles } from '../../common/application/record-lifecycle.js';
 
@@ -83,7 +83,7 @@ export class RouteAssignmentPageQueryDto {
   @ApiPropertyOptional({ enum: ['assigned','cancelled'] }) @IsOptional() @IsIn(['assigned','cancelled']) status?: 'assigned'|'cancelled';
 }
 export class AgentRouteAssignmentQueryDto {
-  @ApiProperty({ type: String, format: 'date' }) @IsString() serviceDate!: string;
+  @ApiProperty({ type: String, format: 'date' }) @Matches(/^\d{4}-\d{2}-\d{2}$/) serviceDate!: string;
   @IsOptional() @IsString() cursor?: string;
   @ApiPropertyOptional({ default: 25, minimum: 1, maximum: 100 }) @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(100) limit?: number;
 }
@@ -104,6 +104,36 @@ export class RouteAssignmentResponseDto {
 }
 export class RouteAssignmentMutationResponseDto extends RouteAssignmentResponseDto { @ApiProperty({ type: Number, minimum: 1 }) routeVersion!: number; }
 export class RouteAssignmentListResponseDto { @ApiProperty({ type:()=>RouteAssignmentResponseDto,isArray:true }) items!:RouteAssignmentResponseDto[]; @ApiPropertyOptional({type:String}) nextCursor?:string; }
-export const toRouteAssignmentResponse=(value:RouteAssignmentRecord):RouteAssignmentResponseDto=>({...value,createdAt:value.createdAt.toISOString(),updatedAt:value.updatedAt.toISOString()});
+export class AgentRouteAssignmentResponseDto {
+  @ApiProperty({ type: String, format: 'uuid' }) id!: string;
+  @ApiProperty({ type: String, format: 'uuid' }) routeId!: string;
+  routeCode!: string;
+  routeName!: string;
+  @ApiProperty({ type: String, format: 'uuid' }) deliverySlotId!: string;
+  deliverySlotName!: string;
+  deliverySlotStartLocalTime!: string;
+  deliverySlotEndLocalTime!: string;
+  @ApiProperty({ type: String, format: 'uuid' }) agentMembershipId!: string;
+  @ApiProperty({ type: String, format: 'date' }) serviceDate!: string;
+  @ApiProperty({ enum: ['assigned', 'cancelled'] }) status!: string;
+  @ApiProperty({ type: String, format: 'date-time' }) createdAt!: string;
+  @ApiProperty({ type: String, format: 'date-time' }) updatedAt!: string;
+}
+export class AgentRouteAssignmentListResponseDto {
+  @ApiProperty({ type: String, format: 'date' }) serviceDate!: string;
+  @ApiProperty({ type: () => AgentRouteAssignmentResponseDto, isArray: true }) items!: AgentRouteAssignmentResponseDto[];
+  @ApiPropertyOptional({ type: String }) nextCursor?: string;
+}
+export const toRouteAssignmentResponse=(value:RouteAssignmentRecord):RouteAssignmentResponseDto=>({id:value.id,routeId:value.routeId,deliverySlotId:value.deliverySlotId,agentMembershipId:value.agentMembershipId,serviceDate:value.serviceDate,status:value.status,createdAt:value.createdAt.toISOString(),updatedAt:value.updatedAt.toISOString()});
+export const toAgentRouteAssignmentResponse=(value:RouteAssignmentRecord):AgentRouteAssignmentResponseDto=>{
+  assertAgentRouteAssignment(value);
+  return {id:value.id,routeId:value.routeId,routeCode:value.routeCode,routeName:value.routeName,deliverySlotId:value.deliverySlotId,deliverySlotName:value.deliverySlotName,deliverySlotStartLocalTime:value.deliverySlotStartLocalTime,deliverySlotEndLocalTime:value.deliverySlotEndLocalTime,agentMembershipId:value.agentMembershipId,serviceDate:value.serviceDate,status:value.status,createdAt:value.createdAt.toISOString(),updatedAt:value.updatedAt.toISOString()};
+};
 export const toRouteAssignmentMutationResponse=(value:RouteAssignmentMutation):RouteAssignmentMutationResponseDto=>({...toRouteAssignmentResponse(value.assignment),routeVersion:value.routeVersion});
 export const toRouteResponse = ({ lifecycle, ...route }: RouteResult): RouteResponseDto => ({ ...route, lifecycle, createdAt: route.createdAt.toISOString(), updatedAt: route.updatedAt.toISOString() });
+
+function assertAgentRouteAssignment(value: RouteAssignmentRecord): asserts value is AgentRouteAssignmentRecord {
+  for (const key of ['routeCode', 'routeName', 'deliverySlotName', 'deliverySlotStartLocalTime', 'deliverySlotEndLocalTime'] as const) {
+    if (typeof (value as Record<string, unknown>)[key] !== 'string') throw new TypeError(`Agent route assignment is missing ${key}`);
+  }
+}
