@@ -23,6 +23,7 @@ void test('preview is household-scoped and advisory while create revalidates and
   const notifications: unknown[] = [];
   const store = {
     preview: () => { calls.push('preview'); return Promise.resolve({ items: [{ subscriptionId, deliverySlotId: slotId, serviceDate: '2030-01-02', cutoffAt: new Date('2030-01-01T00:00:00.000Z'), timing: 'on_time', proposedBehavior: 'accept' }], onTimeCount: 1, lateCount: 0 }); },
+    assertNoOverlap: () => { calls.push('overlap'); return Promise.resolve(); },
     lockSubscriptions: () => { calls.push('lock'); return Promise.resolve(); },
     createRevision: () => { calls.push('create'); return Promise.resolve(request()); },
     isEffectivelyOnLeave: () => { calls.push('effective'); return Promise.resolve(true); },
@@ -47,11 +48,11 @@ void test('preview is household-scoped and advisory while create revalidates and
   await requestContextStore.run({ correlationId: '00000000-0000-4000-8000-000000000099' }, async () => {
     const preview = await service.preview(actor, vendorId, householdId, selection);
     assert.equal(preview.onTimeCount, 1);
-    assert.deepEqual(calls, ['household', 'preview']);
+    assert.deepEqual(calls, ['household', 'preview', 'overlap']);
     const created = await service.create(actor, vendorId, householdId, selection);
     assert.equal(created.currentStatus, 'accepted');
   });
-  assert.deepEqual(calls, ['household', 'preview', 'household', 'lock', 'preview', 'create', 'preview', 'effective', 'project', 'routing', 'membership', 'audit', 'notification', 'notification']);
+  assert.deepEqual(calls, ['household', 'preview', 'overlap', 'household', 'lock', 'preview', 'create', 'preview', 'effective', 'project', 'routing', 'membership', 'audit', 'notification', 'notification']);
   assert.equal(notifications.every((value) => (value as { householdId?: string }).householdId === householdId), true);
 });
 

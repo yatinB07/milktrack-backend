@@ -63,7 +63,10 @@ export class DefaultLeaveService extends LeaveService {
     return this.customer(actor, vendorId, householdId, 'leave.preview', async (tx) => {
       const context = await this.context(tx, vendorId);
       this.validate(command, context.timezone);
-      return { ...await this.leaves.preview(tx, { vendorId, householdId, ...command, ...context, now: this.now() }), ...context };
+      const input = { vendorId, householdId, ...command, ...context, now: this.now() };
+      const preview = await this.leaves.preview(tx, input);
+      await this.leaves.assertNoOverlap(tx, input);
+      return { ...preview, ...context };
     });
   }
 

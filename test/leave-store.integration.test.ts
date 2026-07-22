@@ -87,8 +87,19 @@ function rejectsWithCodeAndStatus(work: () => Promise<unknown>, code: string, st
 
 void test('leave store scopes active household subscriptions, persists append-only revisions, and rejects overlap', async () => {
   const current = await fixture('store'); const requestId = randomUUID(); const firstRevisionId = randomUUID(); const retainedSubscriptionId = randomUUID();
+  const retainedRevisionId = randomUUID();
   try {
     await owner.query('INSERT INTO subscriptions(id,vendor_id,household_id,updated_at) VALUES($1,$2,$3,now())', [retainedSubscriptionId, current.vendorId, current.householdId]);
+    const retained = await owner.connect();
+    try {
+      await retained.query('BEGIN');
+      await retained.query(`INSERT INTO subscription_revisions(id,vendor_id,subscription_id,product_id,unit_id,delivery_slot_id,quantity,status,effective_from,created_by,updated_at)
+        VALUES($1,$2,$3,$4,$5,$6,1,'active','2029-01-01',$7,now())`,
+      [retainedRevisionId, current.vendorId, retainedSubscriptionId, current.productId, current.unitId, current.slotId, current.userId]);
+      await retained.query('INSERT INTO subscription_revision_weekdays(vendor_id,subscription_revision_id,weekday) VALUES($1,$2,2)',
+        [current.vendorId, retainedRevisionId]);
+      await retained.query('COMMIT');
+    } catch (cause) { await retained.query('ROLLBACK'); throw cause; } finally { retained.release(); }
     await transactions.run(current.vendorId, async (tx) => {
       await rejectsWithCode(() => store.lockSubscriptions(tx, current.vendorId, []), 'LEAVE_SUBSCRIPTION_SELECTION');
       await rejectsWithCode(() => store.lockSubscriptions(tx, current.vendorId, [current.subscriptionId, current.subscriptionId]), 'LEAVE_SUBSCRIPTION_SELECTION');
@@ -124,6 +135,39 @@ void test('leave store scopes active household subscriptions, persists append-on
       assert.equal(await store.isEffectivelyOnLeave(tx, {
         vendorId: current.vendorId, subscriptionId: retainedSubscriptionId, deliverySlotId: current.slotId, serviceDate: '2030-01-01',
       }), false);
+      const before = await owner.query<Readonly<{ revisions: number; decisions: number; audits: number; notifications: number; deliveryEvents: number }>>(`SELECT
+        (SELECT count(*)::int FROM leave_request_revisions WHERE vendor_id=$1) AS revisions,
+        (SELECT count(*)::int FROM leave_occurrence_decisions WHERE vendor_id=$1) AS decisions,
+        (SELECT count(*)::int FROM audit_events WHERE vendor_id=$1) AS audits,
+        (SELECT count(*)::int FROM notifications WHERE vendor_id=$1) AS notifications,
+        (SELECT count(*)::int FROM delivery_events WHERE vendor_id=$1) AS "deliveryEvents"`, [current.vendorId]);
+      const overlap = {
+        vendorId: current.vendorId, householdId: current.householdId, subscriptionIds: [current.subscriptionId],
+        startDate: '2030-01-08', endDate: '2030-01-08', timezone: 'Asia/Kolkata', skipCutoffMinutes: 60,
+        lateLeavePolicy: 'approval', now: new Date('2029-12-31T00:00:00.000Z'),
+      } as const;
+      await store.preview(tx, overlap);
+      await rejectsWithCode(() => store.assertNoOverlap(tx, overlap), 'LEAVE_OVERLAP');
+      assert.deepEqual((await owner.query<Readonly<{ revisions: number; decisions: number; audits: number; notifications: number; deliveryEvents: number }>>(`SELECT
+        (SELECT count(*)::int FROM leave_request_revisions WHERE vendor_id=$1) AS revisions,
+        (SELECT count(*)::int FROM leave_occurrence_decisions WHERE vendor_id=$1) AS decisions,
+        (SELECT count(*)::int FROM audit_events WHERE vendor_id=$1) AS audits,
+        (SELECT count(*)::int FROM notifications WHERE vendor_id=$1) AS notifications,
+        (SELECT count(*)::int FROM delivery_events WHERE vendor_id=$1) AS "deliveryEvents"`, [current.vendorId])).rows, before.rows);
+      const disjoint = {
+        vendorId: current.vendorId, householdId: current.householdId, subscriptionIds: [current.subscriptionId],
+        startDate: '2030-02-01', endDate: '2030-02-28', timezone: 'Asia/Kolkata', skipCutoffMinutes: 60,
+        lateLeavePolicy: 'approval', now: new Date('2029-12-31T00:00:00.000Z'),
+      } as const;
+      await store.assertNoOverlap(tx, disjoint);
+      assert.equal((await store.preview(tx, disjoint)).items.length > 0, true);
+      const differentSubscription = {
+        vendorId: current.vendorId, householdId: current.householdId, subscriptionIds: [retainedSubscriptionId],
+        startDate: '2030-01-08', endDate: '2030-01-08', timezone: 'Asia/Kolkata', skipCutoffMinutes: 60,
+        lateLeavePolicy: 'approval', now: new Date('2029-12-31T00:00:00.000Z'),
+      } as const;
+      await store.assertNoOverlap(tx, differentSubscription);
+      assert.equal((await store.preview(tx, differentSubscription)).items.length, 1);
     });
     await transactions.run(current.vendorId, async (tx) => {
       await store.lockSubscriptions(tx, current.vendorId, [current.subscriptionId]);

@@ -57,6 +57,7 @@ export type LeaveDecisionResult = LeaveDecisionRecord & Readonly<{ request: Leav
 export abstract class LeaveStore {
   abstract lockSubscriptions(tx: TransactionContext, vendorId: string, ids: readonly string[]): Promise<void>;
   abstract preview(tx: TransactionContext, input: LeavePreviewInput): Promise<LeavePreviewPage>;
+  abstract assertNoOverlap(tx: TransactionContext, input: LeavePreviewInput): Promise<void>;
   abstract createRevision(tx: TransactionContext, input: PersistLeaveRevision): Promise<LeaveRequestRecord>;
   abstract getRequest(tx: TransactionContext, vendorId: string, householdId: string, id: string): Promise<LeaveRequestRecord>;
   abstract getVendorRequest(tx: TransactionContext, vendorId: string, id: string): Promise<LeaveRequestRecord>;

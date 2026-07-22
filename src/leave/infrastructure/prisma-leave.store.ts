@@ -96,6 +96,10 @@ export class PrismaLeaveStore extends LeaveStore {
     return { items, ...(page.nextCursor ? { nextCursor: encodeOccurrenceCursor(page.nextCursor) } : {}), onTimeCount: total - lateCount, lateCount };
   }
 
+  async assertNoOverlap(context: TransactionContext, input: LeavePreviewInput): Promise<void> {
+    await this.requireNoOverlap(unwrapPrismaTransaction(context), input, input.subscriptionIds);
+  }
+
   async createRevision(context: TransactionContext, input: PersistLeaveRevision): Promise<LeaveRequestRecord> {
     const tx = unwrapPrismaTransaction(context);
     const subscriptionIds = input.subscriptions.map(({ subscriptionId }) => subscriptionId);
@@ -317,7 +321,9 @@ export class PrismaLeaveStore extends LeaveStore {
     if (ids.length === 0 || new Set(ids).size !== ids.length) throw error('LEAVE_SUBSCRIPTION_SELECTION', 'Leave selection requires unique subscriptions', 400);
   }
 
-  private async requireNoOverlap(tx: Prisma.TransactionClient, input: PersistLeaveRevision, subscriptionIds: readonly string[]) {
+  private async requireNoOverlap(tx: Prisma.TransactionClient, input: Readonly<{
+    vendorId: string; householdId: string; startDate: string; endDate: string; requestId?: string; previousRevisionId?: string;
+  }>, subscriptionIds: readonly string[]) {
     const rows = await tx.$queryRaw<Array<{ overlap: boolean }>>(Prisma.sql`
       SELECT EXISTS(SELECT 1 FROM leave_requests q JOIN leave_request_revisions r ON r.vendor_id=q.vendor_id AND r.id=q.current_revision_id
         JOIN leave_revision_subscriptions s ON s.vendor_id=r.vendor_id AND s.leave_request_revision_id=r.id
