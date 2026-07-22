@@ -28,6 +28,7 @@ void test('correction creates a price snapshot at original service time, preserv
   let detail = initial; const snapshots: unknown[] = []; const corrections: unknown[] = []; const audits: unknown[] = []; const notifications: unknown[] = [];
   const authorization: Pick<TenantAuthorizationExecutor, 'execute'> = { execute: <T>(input: unknown, work: (current: TransactionContext) => Promise<T>): Promise<T> => { assert.deepEqual(input, { actor: admin, vendorId, permission: 'schedule:manage', operation: 'schedule.manual-generate' }); return work(tx); } };
   const deliveries = {
+    lockCorrection: () => Promise.resolve(detail),
     getVendorDetail: () => Promise.resolve(detail),
     createPriceSnapshot: (_tx: TransactionContext, input: unknown) => { snapshots.push(input); return Promise.resolve(); },
     appendCorrection: (_tx: TransactionContext, input: { replacementOutcome: 'delivered'; actualQuantity: string }) => {
@@ -49,4 +50,24 @@ void test('correction creates a price snapshot at original service time, preserv
   assert.deepEqual((audits[0] as { newValue: unknown }).newValue, { status: 'delivered', actualQuantity: '1.5', version: 3 });
   const notification = notifications[0] as { id: string; recipientUserId: string; type: string; payload: unknown };
   assert.deepEqual(notification, { id: notification.id, vendorId, recipientUserId: customerId, type: 'delivery_corrected', payload: { scheduledDeliveryId: deliveryId } });
+});
+
+void test('correction locks before resolving a missing delivered snapshot, including a legacy delivered record', async () => {
+  const tx = {} as TransactionContext;
+  const legacy = { ...initial, currentStatus: 'delivered' as const, actualQuantity: '1', snapshot: undefined };
+  const calls: string[] = [];
+  const authorization: Pick<TenantAuthorizationExecutor, 'execute'> = { execute: <T>(_input: unknown, work: (current: TransactionContext) => Promise<T>) => work(tx) };
+  const service = new DefaultDeliveryCorrectionService(
+    authorization,
+    {
+      lockCorrection: () => { calls.push('lock'); return Promise.resolve(legacy); },
+      getVendorDetail: () => { calls.push('detail'); return Promise.resolve({ ...legacy, snapshot: { amountMinor: '95', currency: 'INR', pricingLevel: 'global' as const, sourcePriceId: randomUUID(), sourcePriceType: 'global_price' as const, resolvedAt: new Date() } }); },
+      createPriceSnapshot: () => { calls.push('snapshot'); return Promise.resolve(); },
+      appendCorrection: () => { calls.push('append'); return Promise.resolve(legacy); },
+    } as unknown as DeliveryStore,
+    { resolve: () => { calls.push('price'); return Promise.resolve({ amountMinor: '95', currency: 'INR', pricingLevel: 'global' as const, sourcePriceId: randomUUID(), sourcePriceType: 'global_price' as const, resolvedAt: new Date() }); } },
+    { append: () => Promise.resolve() }, { append: () => Promise.resolve() },
+  );
+  await requestContextStore.run({ correlationId: randomUUID() }, () => service.correct(admin, vendorId, deliveryId, { expectedVersion: 2, replacementOutcome: 'delivered', actualQuantity: '1.5', reason: 'Correct legacy delivery' }));
+  assert.deepEqual(calls, ['lock', 'price', 'snapshot', 'append', 'detail']);
 });

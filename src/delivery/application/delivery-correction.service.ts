@@ -34,8 +34,8 @@ export class DefaultDeliveryCorrectionService extends DeliveryCorrectionService 
 
   correct(actor: Actor, vendorId: string, scheduledDeliveryId: string, command: CorrectDeliveryCommand): Promise<DeliveryDetail> {
     return this.authorization.execute({ actor, vendorId, permission: 'schedule:manage', operation: 'schedule.manual-generate' }, async (tx) => {
-      const before = await this.deliveries.getVendorDetail(tx, vendorId, scheduledDeliveryId);
-      if (before.currentStatus !== 'delivered' && command.replacementOutcome === 'delivered' && !before.snapshot) {
+      const before = await this.deliveries.lockCorrection(tx, vendorId, scheduledDeliveryId, command.expectedVersion);
+      if (command.replacementOutcome === 'delivered' && !before.snapshot) {
         const price = await this.prices.resolve(tx, vendorId, before);
         if (!price) throw new ApplicationError('DELIVERY_PRICE_NOT_FOUND', 'Delivery price was not found', 409);
         await this.deliveries.createPriceSnapshot(tx, { vendorId, scheduledDeliveryId, ...price });

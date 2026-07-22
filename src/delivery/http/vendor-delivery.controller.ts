@@ -6,7 +6,7 @@ import { ApiErrorResponseDto } from '../../common/errors/application-error.filte
 import { ActorGuard } from '../../identity/http/actor.guard.js';
 import { DeliveryQueryService } from '../application/delivery-query.service.js';
 import { DeliveryCorrectionService } from '../application/delivery-correction.service.js';
-import { CorrectDeliveryRequestDto, DeliveryListResponseDto, VendorDeliveryDetailResponseDto, VendorDeliveryPageQueryDto, toDeliverySummaryResponse, toVendorDeliveryDetailResponse } from './delivery.dto.js';
+import { CorrectScheduledDeliveryRequestDto, DeliveryListResponseDto, VendorDeliveryDetailResponseDto, VendorDeliveryPageQueryDto, toDeliverySummaryResponse, toVendorDeliveryDetailResponse } from './delivery.dto.js';
 
 @ApiTags('Vendor deliveries') @ApiBearerAuth('opaqueBearer') @UseGuards(ActorGuard)
 @Controller('vendors/:vendorId/deliveries')
@@ -22,13 +22,13 @@ export class VendorDeliveryController {
     return this.deliveries.getVendorDetail(requestContextStore.requireActor(), vendorId, deliveryId).then(toVendorDeliveryDetailResponse);
   }
 
-  @Post(':deliveryId/correct') @HttpCode(200) @ApiResponse({ status: 200, type: VendorDeliveryDetailResponseDto }) correct(@Param('vendorId', new ParseUUIDPipe({ version: '4' })) vendorId: string, @Param('deliveryId', new ParseUUIDPipe({ version: '4' })) deliveryId: string, @Body() body: CorrectDeliveryRequestDto) {
+  @Post(':scheduledDeliveryId/corrections') @HttpCode(200) @ApiResponse({ status: 200, type: VendorDeliveryDetailResponseDto }) correct(@Param('vendorId', new ParseUUIDPipe({ version: '4' })) vendorId: string, @Param('scheduledDeliveryId', new ParseUUIDPipe({ version: '4' })) scheduledDeliveryId: string, @Body() body: CorrectScheduledDeliveryRequestDto) {
     const { expectedVersion, replacementOutcome, actualQuantity, reason } = body;
-    return this.corrections!.correct(requestContextStore.requireActor(), vendorId, deliveryId, { expectedVersion, replacementOutcome, ...(actualQuantity ? { actualQuantity } : {}), reason }).then(toVendorDeliveryDetailResponse);
+    return this.corrections!.correct(requestContextStore.requireActor(), vendorId, scheduledDeliveryId, { expectedVersion, replacementOutcome, ...(actualQuantity ? { actualQuantity } : {}), reason }).then(toVendorDeliveryDetailResponse);
   }
 }
 
 for (const status of [400, 401, 403, 404, 409, 503]) ApiResponse({ status, type: ApiErrorResponseDto })(VendorDeliveryController);
 Reflect.defineMetadata('design:paramtypes', [String, VendorDeliveryPageQueryDto], VendorDeliveryController.prototype, 'list');
 Reflect.defineMetadata('design:paramtypes', [String, String], VendorDeliveryController.prototype, 'get');
-Reflect.defineMetadata('design:paramtypes', [String, String, CorrectDeliveryRequestDto], VendorDeliveryController.prototype, 'correct');
+Reflect.defineMetadata('design:paramtypes', [String, String, CorrectScheduledDeliveryRequestDto], VendorDeliveryController.prototype, 'correct');

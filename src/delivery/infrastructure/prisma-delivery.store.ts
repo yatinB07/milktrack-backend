@@ -186,6 +186,13 @@ export class PrismaDeliveryStore extends DeliveryStore {
     return this.updateProjection(tx, input.vendorId, input.scheduledDeliveryId, input.expectedVersion, input.replacementOutcome, input.receivedAt);
   }
 
+  async lockCorrection(context: TransactionContext, vendorId: string, scheduledDeliveryId: string, expectedVersion: number): Promise<DeliveryDetail> {
+    const tx = unwrapPrismaTransaction(context);
+    const current = await this.lockDelivery(tx, vendorId, scheduledDeliveryId);
+    this.requireVersion(current, expectedVersion);
+    return this.detail(tx, vendorId, scheduledDeliveryId);
+  }
+
   async applyCustomerLeave(context: TransactionContext, key: DeliveryOccurrenceKey, actorUserId: string): Promise<void> {
     const tx = unwrapPrismaTransaction(context);
     const rows = await tx.$queryRaw<DeliveryRow[]>(Prisma.sql`

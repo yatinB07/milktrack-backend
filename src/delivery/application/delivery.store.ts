@@ -167,6 +167,14 @@ export abstract class DeliveryStore {
     input: AppendCorrection,
   ): Promise<DeliveryRecord>;
 
+  /** Locks one delivery for a correction and fences the caller at its expected version. */
+  abstract lockCorrection(
+    tx: TransactionContext,
+    vendorId: string,
+    scheduledDeliveryId: string,
+    expectedVersion: number,
+  ): Promise<DeliveryDetail>;
+
   abstract applyCustomerLeave(
     tx: TransactionContext,
     key: DeliveryOccurrenceKey,

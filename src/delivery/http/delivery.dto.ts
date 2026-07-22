@@ -13,7 +13,7 @@ export class DeliveryPageQueryDto {
   @ApiPropertyOptional({ default: 25, minimum: 1, maximum: 100 }) @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(100) limit?: number;
 }
 
-export class CorrectDeliveryRequestDto {
+export class CorrectScheduledDeliveryRequestDto {
   @Type(() => Number) @IsInt() @Min(1) expectedVersion!: number;
   @IsIn(correctionStatuses) replacementOutcome!: typeof correctionStatuses[number];
   @IsOptional() @IsString() @Matches(/^(?!0(?:\.0+)?$)(?:0|[1-9]\d*)(?:\.\d{1,3})?$/u) actualQuantity?: string;
