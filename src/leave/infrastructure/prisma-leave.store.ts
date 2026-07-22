@@ -212,18 +212,17 @@ export class PrismaLeaveStore extends LeaveStore {
       status: input.decision, decidedBy: input.decidedBy, decidedAt: input.now, decisionReason: input.reason, version: { increment: 1 },
     } });
     if (changed.count !== 1) throw error('LEAVE_DECISION_STATE_CONFLICT', 'Leave decision is no longer pending', 409);
-    const [decisions, selectedOccurrences, selectedDecisionIds] = await Promise.all([
+    const [decisions, selectedSnapshot] = await Promise.all([
       tx.leaveOccurrenceDecision.findMany({ where: { vendorId: input.vendorId, leaveRequestRevisionId: locked.leaveRequestRevisionId },
         select: { id: true, status: true, previousEffectiveStatus: true, requestedEffectiveStatus: true } }),
-      this.countSelectedOccurrences(tx, input.vendorId, locked.leaveRequestRevisionId),
-      this.selectedDecisionIds(tx, input.vendorId, locked.leaveRequestRevisionId),
+      this.selectedOccurrenceSnapshot(tx, input.vendorId, locked.leaveRequestRevisionId),
     ]);
     const pending = decisions.filter(({ status }) => status === 'pending').length;
     const effective = Math.max(0, decisions.reduce((count, decision) => {
-      const baseline = selectedDecisionIds.has(decision.id) ? 'skipped_by_customer' : 'scheduled';
+      const baseline = selectedSnapshot.decisionIds.has(decision.id) ? 'skipped_by_customer' : 'scheduled';
       const resolved = decision.status === 'approved' ? decision.requestedEffectiveStatus : decision.previousEffectiveStatus;
       return count + Number(resolved === 'skipped_by_customer') - Number(baseline === 'skipped_by_customer');
-    }, selectedOccurrences));
+    }, selectedSnapshot.total));
     const status = pending > 0
       ? deriveLeaveStatus({ effective, pending })
       : effective > 0 ? 'accepted' : locked.action === 'cancel' ? 'cancelled' : 'rejected';
@@ -330,43 +329,41 @@ export class PrismaLeaveStore extends LeaveStore {
     if (rows[0]?.overlap) throw error('LEAVE_OVERLAP', 'Leave overlaps an active request', 409);
   }
 
-  private async countSelectedOccurrences(tx: Prisma.TransactionClient, vendorId: string, revisionId: string) {
-    const rows = await tx.$queryRaw<Array<{
-      weekdays: number[]; effectiveFrom: string; effectiveTo: string | null; startDate: string; endDate: string;
-    }>>(Prisma.sql`
-      SELECT array_agg(w.weekday ORDER BY w.weekday) AS weekdays,r.effective_from::text AS "effectiveFrom",
-        r.effective_to::text AS "effectiveTo",lr.start_date::text AS "startDate",lr.end_date::text AS "endDate"
-      FROM leave_request_revisions lr
-      JOIN leave_revision_subscriptions s ON s.vendor_id=lr.vendor_id AND s.leave_request_revision_id=lr.id AND s.selected
-      JOIN subscription_revisions r ON r.vendor_id=s.vendor_id AND r.subscription_id=s.subscription_id
-        AND r.superseded_at IS NULL AND r.status='active'
-        AND r.effective_from<=lr.end_date AND (r.effective_to IS NULL OR r.effective_to>lr.start_date)
-      JOIN subscription_revision_weekdays w ON w.vendor_id=r.vendor_id AND w.subscription_revision_id=r.id
-      WHERE lr.vendor_id=${vendorId}::uuid AND lr.id=${revisionId}::uuid
-      GROUP BY r.id,lr.start_date,lr.end_date`);
-    return rows.reduce((total, row) => {
-      const start = row.effectiveFrom > row.startDate ? row.effectiveFrom : row.startDate;
-      const endExclusive = row.effectiveTo && row.effectiveTo < dateAfter(row.endDate) ? row.effectiveTo : dateAfter(row.endDate);
-      return total + (start < endExclusive
-        ? [...new Set(row.weekdays)].reduce((count, weekday) => count + countWeekdayOccurrences(start, dateBefore(endExclusive), weekday), 0)
-        : 0);
-    }, 0);
-  }
-
-  private async selectedDecisionIds(tx: Prisma.TransactionClient, vendorId: string, revisionId: string) {
-    const rows = await tx.$queryRaw<Array<{ id: string }>>(Prisma.sql`
-      SELECT d.id FROM leave_occurrence_decisions d
-      JOIN leave_request_revisions lr ON lr.vendor_id=d.vendor_id AND lr.id=d.leave_request_revision_id
-      JOIN leave_revision_subscriptions s ON s.vendor_id=d.vendor_id AND s.leave_request_revision_id=d.leave_request_revision_id
-        AND s.subscription_id=d.subscription_id AND s.selected
-      JOIN subscription_revisions r ON r.vendor_id=d.vendor_id AND r.subscription_id=d.subscription_id
-        AND r.delivery_slot_id=d.delivery_slot_id AND r.superseded_at IS NULL AND r.status='active'
-        AND r.effective_from<=d.service_date AND (r.effective_to IS NULL OR r.effective_to>d.service_date)
-      JOIN subscription_revision_weekdays w ON w.vendor_id=r.vendor_id AND w.subscription_revision_id=r.id
-        AND w.weekday=extract(isodow FROM d.service_date)
-      WHERE d.vendor_id=${vendorId}::uuid AND d.leave_request_revision_id=${revisionId}::uuid
-        AND d.service_date BETWEEN lr.start_date AND lr.end_date`);
-    return new Set(rows.map(({ id }) => id));
+  private async selectedOccurrenceSnapshot(tx: Prisma.TransactionClient, vendorId: string, revisionId: string) {
+    const rows = await tx.$queryRaw<Array<{ selectedOccurrences: number; selectedDecisionIds: string[] }>>(Prisma.sql`
+      WITH selected_plans AS (
+        SELECT greatest(r.effective_from,lr.start_date) AS start_date,
+          least(coalesce(r.effective_to - 1,lr.end_date),lr.end_date) AS end_date,w.weekday
+        FROM leave_request_revisions lr
+        JOIN leave_revision_subscriptions s ON s.vendor_id=lr.vendor_id AND s.leave_request_revision_id=lr.id AND s.selected
+        JOIN subscription_revisions r ON r.vendor_id=s.vendor_id AND r.subscription_id=s.subscription_id
+          AND r.superseded_at IS NULL AND r.status='active'
+          AND r.effective_from<=lr.end_date AND (r.effective_to IS NULL OR r.effective_to>lr.start_date)
+        JOIN subscription_revision_weekdays w ON w.vendor_id=r.vendor_id AND w.subscription_revision_id=r.id
+        WHERE lr.vendor_id=${vendorId}::uuid AND lr.id=${revisionId}::uuid
+      ), selected_occurrences AS (
+        SELECT coalesce(sum(CASE WHEN start_date + weekday_delta.weekday_offset<=end_date
+          THEN ((end_date-(start_date+weekday_delta.weekday_offset))/7)+1 ELSE 0 END),0)::integer AS total
+        FROM selected_plans
+        CROSS JOIN LATERAL (SELECT (weekday-extract(isodow FROM start_date)::integer+7)%7 AS weekday_offset) weekday_delta
+      ), selected_decisions AS (
+        SELECT d.id FROM leave_occurrence_decisions d
+        JOIN leave_request_revisions lr ON lr.vendor_id=d.vendor_id AND lr.id=d.leave_request_revision_id
+        JOIN leave_revision_subscriptions s ON s.vendor_id=d.vendor_id AND s.leave_request_revision_id=d.leave_request_revision_id
+          AND s.subscription_id=d.subscription_id AND s.selected
+        JOIN subscription_revisions r ON r.vendor_id=d.vendor_id AND r.subscription_id=d.subscription_id
+          AND r.delivery_slot_id=d.delivery_slot_id AND r.superseded_at IS NULL AND r.status='active'
+          AND r.effective_from<=d.service_date AND (r.effective_to IS NULL OR r.effective_to>d.service_date)
+        JOIN subscription_revision_weekdays w ON w.vendor_id=r.vendor_id AND w.subscription_revision_id=r.id
+          AND w.weekday=extract(isodow FROM d.service_date)
+        WHERE d.vendor_id=${vendorId}::uuid AND d.leave_request_revision_id=${revisionId}::uuid
+          AND d.service_date BETWEEN lr.start_date AND lr.end_date
+      )
+      SELECT o.total AS "selectedOccurrences",
+        coalesce(array_agg(DISTINCT d.id) FILTER (WHERE d.id IS NOT NULL),'{}'::uuid[]) AS "selectedDecisionIds"
+      FROM selected_occurrences o LEFT JOIN selected_decisions d ON true GROUP BY o.total`);
+    const snapshot = rows[0];
+    return { total: snapshot?.selectedOccurrences ?? 0, decisionIds: new Set(snapshot?.selectedDecisionIds ?? []) };
   }
 
   private request(row: RequestRow): LeaveRequestRecord {

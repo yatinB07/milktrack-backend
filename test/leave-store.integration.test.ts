@@ -5,6 +5,7 @@ import pg from 'pg';
 
 import { PrismaTenantTransactionRunner } from '../src/database/infrastructure/prisma-tenant-transaction.runner.js';
 import { PrismaService } from '../src/database/infrastructure/prisma.service.js';
+import { unwrapPrismaTransaction } from '../src/database/infrastructure/prisma-transaction-context.js';
 import { PrismaLeaveStore } from '../src/leave/infrastructure/prisma-leave.store.js';
 
 const owner = new pg.Pool({ connectionString: process.env.TEST_OWNER_DATABASE_URL });
@@ -352,6 +353,63 @@ void test('shifted same-subscription range resolves each decision against its ex
         decision: 'rejected', decidedBy: current.userId, reason: 'Keep new date scheduled', now: new Date() });
       assert.equal(afterAddition.request.status, 'accepted');
     });
+  } finally { await cleanup(current); }
+});
+
+void test('decision status uses one subscription-revision snapshot for its total and exact baseline', async () => {
+  const current = await fixture('decision-snapshot'); const requestId = randomUUID(); const revisionId = randomUUID();
+  const decisionId = randomUUID(); const replacementRevisionId = randomUUID();
+  try {
+    await transactions.run(current.vendorId, (tx) => store.createRevision(tx, revision(current, {
+      requestId, revisionId, startDate: '2030-01-01', endDate: '2030-01-01', status: 'pending_approval',
+      decisions: [{ id: decisionId, serviceDate: '2030-01-01', deliverySlotId: current.slotId, status: 'pending' }],
+    })));
+    let replacementCommitted = false;
+    const replaceSchedule = async () => {
+      if (replacementCommitted) return;
+      const client = await owner.connect();
+      try {
+        await client.query('BEGIN');
+        await client.query(`UPDATE subscription_revisions SET effective_to='2030-01-02',superseded_at=now(),
+          superseded_by_revision_id=$1,supersession_reason='Correct schedule',updated_at=now() WHERE id=$2`,
+        [replacementRevisionId, current.subscriptionRevisionId]);
+        await client.query(`INSERT INTO subscription_revisions
+          (id,vendor_id,subscription_id,product_id,unit_id,delivery_slot_id,quantity,status,effective_from,created_by,updated_at)
+          VALUES($1,$2,$3,$4,$5,$6,1,'active','2030-01-02',$7,now())`,
+        [replacementRevisionId, current.vendorId, current.subscriptionId, current.productId, current.unitId, current.slotId, current.userId]);
+        await client.query('INSERT INTO subscription_revision_weekdays(vendor_id,subscription_revision_id,weekday) VALUES($1,$2,3)',
+          [current.vendorId, replacementRevisionId]);
+        await client.query('COMMIT'); replacementCommitted = true;
+      } catch (cause) { await client.query('ROLLBACK'); throw cause; } finally { client.release(); }
+    };
+    await transactions.run(current.vendorId, async (context) => {
+      const tx = unwrapPrismaTransaction(context);
+      const mutable = tx as unknown as { $queryRaw: (query: unknown) => Promise<unknown> };
+      const original = mutable.$queryRaw;
+      let totalRead!: () => void;
+      const totalCompleted = new Promise<void>((resolve) => { totalRead = resolve; });
+      mutable.$queryRaw = async (query) => {
+        const sql = String((query as { sql?: unknown }).sql ?? query);
+        const combinedSnapshot = sql.includes('selected_occurrences AS') && sql.includes('selected_decisions AS');
+        if (!combinedSnapshot && sql.includes('SELECT d.id FROM leave_occurrence_decisions d')) {
+          await totalCompleted;
+          return original.call(tx, query);
+        }
+        const result = await original.call(tx, query);
+        if (sql.includes('SELECT array_agg(w.weekday ORDER BY w.weekday) AS weekdays')) {
+          await replaceSchedule(); totalRead();
+        } else if (combinedSnapshot) {
+          await replaceSchedule(); totalRead();
+        }
+        return result;
+      };
+      try {
+        const decided = await store.decide(context, { vendorId: current.vendorId, id: decisionId, expectedVersion: 1,
+          decision: 'rejected', decidedBy: current.userId, reason: 'Reject corrected occurrence', now: new Date() });
+        assert.equal(decided.request.status, 'rejected');
+      } finally { mutable.$queryRaw = original; }
+    });
+    assert.equal(replacementCommitted, true, 'the schedule replacement must commit at the read boundary');
   } finally { await cleanup(current); }
 });
 
