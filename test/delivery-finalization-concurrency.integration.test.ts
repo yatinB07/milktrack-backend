@@ -34,6 +34,10 @@ void test('concurrent final outcomes commit one event and one typed conflict', a
       throw error;
     } finally { client.release(); }
     await owner.query(`INSERT INTO scheduled_deliveries(id,vendor_id,subscription_id,subscription_revision_id,household_id,product_id,unit_id,delivery_slot_id,service_date,planned_quantity,updated_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,'2030-01-01',1,now())`, [deliveryId, vendorId, subscriptionId, revisionId, householdId, productId, unitId, slotId]);
+    await transactions.run(vendorId, (tx) => store.createPriceSnapshot(tx, {
+      vendorId, scheduledDeliveryId: deliveryId, amountMinor: '100', currency: 'INR', pricingLevel: 'global',
+      sourcePriceId: randomUUID(), sourcePriceType: 'global_price', resolvedAt: new Date('2030-01-01T00:30:00.000Z'),
+    }));
     const attempt = (outcome: 'delivered' | 'missed') => transactions.run(vendorId, (tx) => store.appendFinalOutcome(tx, {
       id: randomUUID(), vendorId, scheduledDeliveryId: deliveryId, expectedVersion: 1, outcome, source: 'delivery_agent', actorUserId: userId,
       occurredAt: new Date('2030-01-01T06:30:00.000Z'), receivedAt: new Date('2030-01-01T06:30:00.000Z'),
@@ -46,7 +50,7 @@ void test('concurrent final outcomes commit one event and one typed conflict', a
     assert(['STALE_VERSION', 'DELIVERY_ALREADY_FINALIZED'].includes(rejected.reason.code));
     assert.equal((await owner.query<{ count: number }>('SELECT count(*)::int AS count FROM delivery_events WHERE vendor_id=$1', [vendorId])).rows[0]?.count, 1);
   } finally {
-    await owner.query('DELETE FROM delivery_events WHERE vendor_id=$1', [vendorId]); await owner.query('DELETE FROM scheduled_deliveries WHERE vendor_id=$1', [vendorId]);
+    await owner.query('DELETE FROM delivery_events WHERE vendor_id=$1', [vendorId]); await owner.query('DELETE FROM delivery_price_snapshots WHERE vendor_id=$1', [vendorId]); await owner.query('DELETE FROM scheduled_deliveries WHERE vendor_id=$1', [vendorId]);
     const client = await owner.connect();
     try {
       await client.query('BEGIN');
