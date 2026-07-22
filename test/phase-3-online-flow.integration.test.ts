@@ -240,17 +240,21 @@ void test('public HTTP completes mixed leave, atomic delivery, correction, priva
     assert.equal(rejectedCancellation.request.currentStatus, 'accepted');
     assert.deepEqual((await owner.query('SELECT status FROM scheduled_deliveries WHERE id=$1', [value.remainingLeaveDeliveryId])).rows, [{ status: 'skipped_by_customer' }]);
 
-    const writeCounts = async () => (await owner.query<{ revisions: number; decisions: number; events: number; notifications: number }>(`SELECT
-      (SELECT count(*)::int FROM leave_request_revisions WHERE vendor_id=$1) AS revisions,
-      (SELECT count(*)::int FROM leave_occurrence_decisions WHERE vendor_id=$1) AS decisions,
-      (SELECT count(*)::int FROM delivery_events WHERE vendor_id=$1) AS events,
-      (SELECT count(*)::int FROM notifications WHERE vendor_id=$1) AS notifications`, [value.vendorId])).rows[0];
-    const beforeOverlap = await writeCounts();
+    const writeState = async () => (await owner.query<{ state: unknown }>(`SELECT jsonb_build_object(
+      'leaveRequests',COALESCE((SELECT jsonb_agg(jsonb_build_object('id',id,'status',status,'version',version,'currentRevisionId',current_revision_id) ORDER BY id) FROM leave_requests WHERE vendor_id=$1),'[]'::jsonb),
+      'revisions',(SELECT count(*)::int FROM leave_request_revisions WHERE vendor_id=$1),
+      'decisions',(SELECT count(*)::int FROM leave_occurrence_decisions WHERE vendor_id=$1),
+      'events',(SELECT count(*)::int FROM delivery_events WHERE vendor_id=$1),
+      'notifications',(SELECT count(*)::int FROM notifications WHERE vendor_id=$1),
+      'audits',(SELECT count(*)::int FROM audit_events WHERE vendor_id=$1),
+      'scheduledDeliveries',COALESCE((SELECT jsonb_agg(jsonb_build_object('id',id,'status',status,'version',version) ORDER BY id) FROM scheduled_deliveries WHERE vendor_id=$1),'[]'::jsonb),
+      'priceSnapshots',(SELECT count(*)::int FROM delivery_price_snapshots WHERE vendor_id=$1)) AS state`, [value.vendorId])).rows[0]?.state;
+    const beforeOverlap = await writeState();
     const overlap = await json<{ code: string }>(await api(`${customerBase}/leave-requests/preview`, value.customerToken, {
       method: 'POST', body: { startDate: value.skipDate, endDate: value.skipDate, subscriptionIds: [value.leaveSubscriptionId] },
     }), 409);
     assert.equal(overlap.code, 'LEAVE_OVERLAP');
-    assert.deepEqual(await writeCounts(), beforeOverlap);
+    assert.deepEqual(await writeState(), beforeOverlap);
 
     const scheduledCount = (await owner.query<{ count: number }>('SELECT count(*)::int count FROM scheduled_deliveries WHERE vendor_id=$1', [value.vendorId])).rows[0]?.count;
     const longLeave = await json<{ currentStatus: string }>(await api(`${customerBase}/leave-requests`, value.customerToken, {
@@ -338,6 +342,52 @@ void test('public HTTP completes mixed leave, atomic delivery, correction, priva
     assert.equal((await owner.query<{ count: number }>('SELECT count(*)::int count FROM delivery_events WHERE vendor_id=$1 AND scheduled_delivery_id=$2', [value.vendorId, value.deliveredId])).rows[0]?.count, 2);
     assert.equal((await owner.query<{ count: number }>('SELECT count(*)::int count FROM delivery_price_snapshots WHERE vendor_id=$1', [value.vendorId])).rows[0]?.count, 2);
     assert.equal((await owner.query<{ count: number }>("SELECT count(*)::int count FROM notifications WHERE vendor_id=$1 AND type='delivery_corrected'", [value.vendorId])).rows[0]?.count, 1);
+  } finally {
+    await cleanup(value);
+  }
+});
+
+void test('mixed-cutoff leave approval blocks the accepted occurrence from route action', async () => {
+  const value = await fixture();
+  const customerBase = `/customer/vendors/${value.vendorId}/households/${value.householdId}`;
+  try {
+    const selection = { startDate: value.lateDate, endDate: value.onTimeDate, subscriptionIds: [value.leaveSubscriptionId], limit: 1 };
+    const preview = await json<{ onTimeCount: number; lateCount: number; items: unknown[]; nextCursor?: string }>(
+      await api(`${customerBase}/leave-requests/preview`, value.customerToken, { method: 'POST', body: selection }), 200);
+    assert(preview.onTimeCount > 0); assert(preview.lateCount > 0); assert.equal(preview.items.length, 1); assert.ok(preview.nextCursor);
+
+    const leave = await json<{ currentStatus: string; currentRevisionId: string }>(await api(`${customerBase}/leave-requests`, value.customerToken, {
+      method: 'POST', body: { startDate: value.lateDate, endDate: value.onTimeDate, subscriptionIds: [value.leaveSubscriptionId] },
+    }), 201);
+    assert.equal(leave.currentStatus, 'partially_pending');
+    const lateDecision = (await owner.query<{ id: string; version: number }>(`SELECT id,version FROM leave_occurrence_decisions
+      WHERE vendor_id=$1 AND leave_request_revision_id=$2 AND service_date=$3 AND status='pending'`,
+    [value.vendorId, leave.currentRevisionId, value.lateDate])).rows[0];
+    assert.ok(lateDecision);
+    const approved = await json<{ currentStatus: string }>(await api(`/vendors/${value.vendorId}/leave-occurrence-decisions/${lateDecision.id}/decision`, value.ownerToken, {
+      method: 'POST', body: { expectedVersion: lateDecision.version, decision: 'approved', reason: 'Route can absorb leave' },
+    }), 200);
+    assert.equal(approved.currentStatus, 'approved');
+    assert.deepEqual((await owner.query('SELECT status FROM scheduled_deliveries WHERE id=$1', [value.lateDeliveryId])).rows, [{ status: 'skipped_by_customer' }]);
+
+    const schedule = await json<{ items: Array<{ id: string; blockedByCustomerLeave: boolean; pendingStopItems: Array<{ scheduledDeliveryId: string }> }> }>(
+      await api(`/agent/vendors/${value.vendorId}/scheduled-deliveries?serviceDate=${value.lateDate}`, value.agentToken), 200);
+    const blocked = schedule.items.find(({ id }) => id === value.lateDeliveryId);
+    assert.equal(blocked?.blockedByCustomerLeave, true);
+    assert(!blocked?.pendingStopItems.some(({ scheduledDeliveryId }) => scheduledDeliveryId === value.lateDeliveryId));
+    const before = await owner.query<{ events: number; snapshots: number }>(`SELECT
+      (SELECT count(*)::int FROM delivery_events WHERE vendor_id=$1 AND scheduled_delivery_id=$2) AS events,
+      (SELECT count(*)::int FROM delivery_price_snapshots WHERE vendor_id=$1 AND scheduled_delivery_id=$2) AS snapshots`,
+    [value.vendorId, value.lateDeliveryId]);
+    const blockedAttempt = await api(`/agent/vendors/${value.vendorId}/route-stops/${value.stopId}/outcomes`, value.agentToken, {
+      method: 'POST', body: { serviceDate: value.lateDate, outcome: 'delivered', occurredAt: new Date().toISOString(),
+        items: [{ scheduledDeliveryId: value.lateDeliveryId, expectedVersion: 2, actualQuantity: '1' }] },
+    });
+    assert.equal(blockedAttempt.status, 409);
+    assert.deepEqual((await owner.query<{ events: number; snapshots: number }>(`SELECT
+      (SELECT count(*)::int FROM delivery_events WHERE vendor_id=$1 AND scheduled_delivery_id=$2) AS events,
+      (SELECT count(*)::int FROM delivery_price_snapshots WHERE vendor_id=$1 AND scheduled_delivery_id=$2) AS snapshots`,
+    [value.vendorId, value.lateDeliveryId])).rows, before.rows);
   } finally {
     await cleanup(value);
   }
