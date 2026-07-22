@@ -10,15 +10,15 @@ export class CustomerNotificationPageQueryDto {
   @ApiPropertyOptional({ default: 25, minimum: 1, maximum: 100 }) @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(100) limit?: number;
 }
 export class CustomerNotificationResponseDto {
-  @ApiProperty({ format: 'uuid' }) id!: string;
-  @ApiProperty({ enum: notificationTypes }) type!: typeof notificationTypes[number];
+  @ApiProperty({ type: String, format: 'uuid' }) id!: string;
+  @ApiProperty({ type: String, enum: notificationTypes }) type!: typeof notificationTypes[number];
   @ApiProperty({ type: 'object', additionalProperties: { type: 'string' } }) payload!: Record<string, string>;
-  @ApiPropertyOptional({ format: 'date-time' }) readAt?: string;
-  @ApiProperty({ format: 'date-time' }) createdAt!: string;
+  @ApiPropertyOptional({ type: String, format: 'date-time' }) readAt?: string;
+  @ApiProperty({ type: String, format: 'date-time' }) createdAt!: string;
 }
 export class CustomerNotificationListResponseDto {
   @ApiProperty({ type: () => CustomerNotificationResponseDto, isArray: true }) items!: CustomerNotificationResponseDto[];
-  @ApiPropertyOptional() nextCursor?: string;
+  @ApiPropertyOptional({ type: String }) nextCursor?: string;
 }
 export function toCustomerNotificationResponse(value: NotificationRecord): CustomerNotificationResponseDto {
   return { id: value.id, type: value.type, payload: { ...value.payload }, ...(value.readAt ? { readAt: value.readAt.toISOString() } : {}), createdAt: value.createdAt.toISOString() };

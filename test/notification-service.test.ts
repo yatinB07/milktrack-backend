@@ -49,3 +49,16 @@ void test('notification store uses descending created-at and id cursor paginatio
   assert.deepEqual((query as { orderBy: unknown }).orderBy, [{ createdAt: 'desc' }, { id: 'desc' }]);
   assert.equal(page.items.length, 1); assert.ok(page.nextCursor);
 });
+
+void test('agent-reported skip uses the schema spelling only at the persistence boundary', async () => {
+  const id = randomUUID(); const scheduledDeliveryId = randomUUID(); const createdAt = new Date('2026-07-22T00:00:00.000Z'); let persistedType: unknown;
+  const tx = wrapPrismaTransaction({ notification: {
+    create: ({ data }: { data: { type: unknown } }) => { persistedType = data.type; return Promise.resolve({}); },
+    findMany: () => Promise.resolve([{ id, type: 'agent_skip', payload: { scheduledDeliveryId }, readAt: null, createdAt }]),
+  } } as never);
+  const store = new PrismaNotificationStore();
+  await store.append(tx, { id, vendorId, recipientUserId, type: 'agent_reported_skip', payload: { scheduledDeliveryId } });
+  const page = await store.list(tx, vendorId, recipientUserId, {});
+  assert.equal(persistedType, 'agent_skip');
+  assert.equal(page.items[0]?.type, 'agent_reported_skip');
+});

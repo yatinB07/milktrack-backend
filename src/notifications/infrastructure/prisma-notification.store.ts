@@ -32,7 +32,7 @@ export class PrismaNotificationStore extends NotificationWriter {
   async append(tx: TransactionContext, notification: AppendNotification): Promise<void> {
     this.validatePayload(notification);
     await unwrapPrismaTransaction(tx).notification.create({
-      data: { ...notification, type: this.databaseType(notification.type), payload: notification.payload as Prisma.InputJsonValue },
+      data: { ...notification, type: this.databaseType(notification.type), payload: notification.payload },
     });
   }
 

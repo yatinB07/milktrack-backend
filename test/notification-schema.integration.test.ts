@@ -19,7 +19,7 @@ void test('notification records are tenant-isolated and roll back with the autho
       await client.query("UPDATE vendors SET display_name='Rolled back notification' WHERE id=$1", [vendorId]);
     } finally { await client.query('ROLLBACK'); client.release(); }
     assert.equal((await owner.query('SELECT id FROM notifications WHERE id=$1', [notificationId])).rowCount, 0);
-    assert.equal((await owner.query('SELECT display_name FROM vendors WHERE id=$1', [vendorId])).rows[0]?.display_name, 'Notification Vendor');
+    assert.equal((await owner.query<{ display_name: string }>('SELECT display_name FROM vendors WHERE id=$1', [vendorId])).rows[0]?.display_name, 'Notification Vendor');
   } finally {
     await owner.query('DELETE FROM notifications WHERE vendor_id=$1', [vendorId]);
     await owner.query('DELETE FROM vendors WHERE id=$1', [vendorId]); await owner.query('DELETE FROM users WHERE id=$1', [userId]);
