@@ -494,6 +494,7 @@ void test('publishes the additive effective-pricing contract without leaking cus
   assert.equal(object(properties('PriceResponseDto').effectiveTo, 'price end').nullable, true);
   assert.ok('sourcePriceId' in properties('ResolvedPriceResponseDto'));
   assert.equal('sourcePriceId' in properties('CustomerResolvedPriceResponseDto'), false);
+  assert.equal(object(properties('CustomerResolvedPriceResponseDto').serviceDate, 'customer price service date').format, 'date');
   assert.equal('currency' in properties('CreatePriceRequestDto'), false);
   for (const path of ['/v1/vendors/{vendorId}/global-prices', '/v1/vendors/{vendorId}/households/{householdId}/price-overrides']) {
     const parameters = object(paths[path], path).get as JsonObject;
@@ -547,6 +548,10 @@ void test('publishes the effective-dated subscription contract with customer-saf
   assert.ok('supersessionReason' in properties('SubscriptionRevisionResponseDto'));
   assert.equal('createdBy' in properties('CustomerSubscriptionRevisionResponseDto'), false);
   assert.equal('supersessionReason' in properties('CustomerSubscriptionRevisionResponseDto'), false);
+  for (const field of [
+    'productCode', 'productName', 'unitCode', 'unitName', 'deliverySlotName',
+    'deliverySlotStartLocalTime', 'deliverySlotEndLocalTime',
+  ]) assert.ok(field in properties('CustomerSubscriptionRevisionResponseDto'));
   const customerList = object(object(paths['/v1/customer/vendors/{vendorId}/households/{householdId}/subscriptions'], 'customer subscriptions').get, 'customer subscriptions get');
   const customerParameters = customerList.parameters as JsonObject[];
   assert.equal(customerParameters.some(({ name, in: location }) => name === 'householdId' && location === 'query'), false);
@@ -608,6 +613,13 @@ void test('publishes exact-date vendor and agent-self assignment contracts', asy
   const put=object(object(paths[item],item).put,'put');const responses=object(put.responses,'responses');
   assert.equal(responseSchema(responses['200'],'200').$ref,'#/components/schemas/RouteAssignmentMutationResponseDto');assert.equal(responseSchema(responses['201'],'201').$ref,'#/components/schemas/RouteAssignmentMutationResponseDto');
   for(const path of[list,self]){const get=object(object(paths[path],path).get,'get');const limit=(get.parameters as JsonObject[]).find(({name})=>name==='limit');assert(limit);assert.deepEqual(object(limit.schema,'limit schema'),{minimum:1,maximum:100,default:25,type:'number'});}
+  const schemas=object(object(document.components,'components').schemas,'schemas');
+  const properties=(name:string)=>object(object(schemas[name],name).properties,`${name} properties`);
+  assert.deepEqual(Object.keys(properties('AgentRouteAssignmentListResponseDto')).sort(),['items','nextCursor','serviceDate']);
+  assert.deepEqual(Object.keys(properties('AgentRouteAssignmentResponseDto')).sort(),[
+    'agentMembershipId','createdAt','deliverySlotEndLocalTime','deliverySlotId','deliverySlotName',
+    'deliverySlotStartLocalTime','id','routeCode','routeId','routeName','serviceDate','status','updatedAt',
+  ]);
 });
 
 void test('publishes the additive vendor catalog contract', async () => {
@@ -742,10 +754,14 @@ void test('publishes the safe agent scheduled-delivery projection', async () => 
   const schemas = object(object(document.components, 'components').schemas, 'schemas');
   const properties = (name: string) => object(object(schemas[name], name).properties, `${name} properties`);
   assert.deepEqual((operation.parameters as JsonObject[]).map(({ name }) => name).sort(), ['cursor', 'limit', 'serviceDate', 'vendorId']);
-  assert.deepEqual(Object.keys(properties('ScheduledDeliveryListResponseDto')).sort(), ['items', 'nextCursor']);
+  assert.deepEqual(Object.keys(properties('ScheduledDeliveryListResponseDto')).sort(), ['items', 'nextCursor', 'serviceDate']);
   assert.deepEqual(Object.keys(properties('ScheduledDeliveryResponseDto')).sort(), [
-    'deliverySlotId', 'householdId', 'id', 'plannedQuantity', 'productId', 'routeAssignmentId',
-    'routeStopId', 'sequence', 'serviceDate', 'subscriptionId', 'unitId',
+    'addressLine1', 'addressLine2', 'city', 'countryCode', 'deliverySlotEndLocalTime',
+    'deliverySlotId', 'deliverySlotName', 'deliverySlotStartLocalTime', 'householdAccountNumber',
+    'householdId', 'householdName', 'id', 'locality', 'plannedQuantity', 'postalCode',
+    'productCode', 'productId', 'productName', 'region', 'routeAssignmentId', 'routeCode',
+    'routeId', 'routeName', 'routeStopId', 'sequence', 'serviceDate', 'subscriptionId',
+    'unitCode', 'unitId', 'unitName',
   ]);
 });
 
