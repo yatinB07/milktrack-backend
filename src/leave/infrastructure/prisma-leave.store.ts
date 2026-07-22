@@ -134,6 +134,12 @@ export class PrismaLeaveStore extends LeaveStore {
     return this.request(row);
   }
 
+  async getVendorRequest(context: TransactionContext, vendorId: string, id: string): Promise<LeaveRequestRecord> {
+    const row = await unwrapPrismaTransaction(context).leaveRequest.findFirst({ where: { id, vendorId }, include: requestInclude });
+    if (!row) throw error('LEAVE_REQUEST_NOT_FOUND', 'Leave request was not found', 404);
+    return this.request(row);
+  }
+
   async listRequests(context: TransactionContext, input: LeaveListInput): Promise<LeaveRequestPage> {
     const limit = this.cursors.parseLimit(input.limit); const cursor = input.cursor ? this.cursors.decode(input.cursor) : undefined;
     const rows = await unwrapPrismaTransaction(context).leaveRequest.findMany({

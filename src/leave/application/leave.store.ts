@@ -49,6 +49,7 @@ export abstract class LeaveStore {
   abstract preview(tx: TransactionContext, input: LeavePreviewInput): Promise<LeavePreviewPage>;
   abstract createRevision(tx: TransactionContext, input: PersistLeaveRevision): Promise<LeaveRequestRecord>;
   abstract getRequest(tx: TransactionContext, vendorId: string, householdId: string, id: string): Promise<LeaveRequestRecord>;
+  abstract getVendorRequest(tx: TransactionContext, vendorId: string, id: string): Promise<LeaveRequestRecord>;
   abstract listRequests(tx: TransactionContext, input: LeaveListInput): Promise<LeaveRequestPage>;
   abstract listPendingDecisions(tx: TransactionContext, input: LeaveDecisionListInput): Promise<LeaveDecisionPage>;
   abstract decide(tx: TransactionContext, input: DecideLeaveOccurrence): Promise<LeaveDecisionResult>;
