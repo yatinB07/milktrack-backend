@@ -37,7 +37,7 @@ test.after(() => app?.close());
 
 void test('customer leave preview uses the frozen route and rejects unknown request fields', async () => {
   const url = `http://127.0.0.1:${port}/customer/vendors/${vendorId}/households/${householdId}/leave-requests/preview`;
-  const valid = { startDate: '2030-01-02', endDate: '2030-01-03', subscriptionIds: [subscriptionId] };
+  const valid = { startDate: '2030-01-02', endDate: '2030-01-03', subscriptionIds: [subscriptionId], cursor: 'opaque-page', limit: 25 };
   const response = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer test' }, body: JSON.stringify(valid) });
   assert.equal(response.status, 200); assert.deepEqual(await response.json(), { timezone: 'Asia/Kolkata', skipCutoffMinutes: 60, lateLeavePolicy: 'approval', onTimeCount: 1, lateCount: 0, items: [] });
   const invalid = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer test' }, body: JSON.stringify({ ...valid, unexpected: true }) });

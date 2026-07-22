@@ -30,3 +30,16 @@ void test('customer and vendor leave controllers map safe currentStatus response
   assert.equal('createdBy' in revision, false);
   assert.equal('auditPayload' in revision, false);
 });
+
+void test('customer preview forwards cursor pagination unchanged', async () => {
+  const calls: unknown[][] = [];
+  const controller = new CustomerLeaveController({
+    preview: (...args: unknown[]) => {
+      calls.push(args);
+      return Promise.resolve({ timezone: 'Asia/Kolkata', skipCutoffMinutes: 60, lateLeavePolicy: 'approval', onTimeCount: 0, lateCount: 0, items: [] });
+    },
+  } as never);
+  const body = { startDate: '2030-01-02', endDate: '2030-01-03', subscriptionIds: [], cursor: 'opaque-page', limit: 25 };
+  await requestContextStore.run({ correlationId: 'correlation', actor }, () => controller.preview(vendorId, householdId, body));
+  assert.deepEqual(calls, [[actor, vendorId, householdId, body]]);
+});

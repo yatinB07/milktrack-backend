@@ -19,7 +19,10 @@ class LeaveSelectionDto {
   @ApiProperty({ type: [String], format: 'uuid', minItems: 1, uniqueItems: true }) @IsArray() @ArrayMinSize(1) @ArrayUnique() @IsUUID('4', { each: true }) subscriptionIds!: string[];
   @ApiPropertyOptional({ type: String }) @IsOptional() @Transform(trim) @IsString() @Length(1, 500) note?: string;
 }
-export class CustomerLeavePreviewRequestDto extends LeaveSelectionDto {}
+export class CustomerLeavePreviewRequestDto extends LeaveSelectionDto {
+  @ApiPropertyOptional({ type: String, description: 'Opaque cursor for stable occurrence ordering with an ID tie-breaker.' }) @IsOptional() @IsString() cursor?: string;
+  @ApiPropertyOptional({ type: Number, default: 25, minimum: 1, maximum: 100 }) @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(100) limit?: number;
+}
 export class CreateCustomerLeaveRequestDto extends LeaveSelectionDto {}
 export class AmendCustomerLeaveRequestDto extends LeaveSelectionDto { @Type(() => Number) @IsInt() @Min(1) expectedVersion!: number; }
 export class CancelCustomerLeaveRequestDto { @Type(() => Number) @IsInt() @Min(1) expectedVersion!: number; @ApiPropertyOptional({ type: String }) @IsOptional() @Transform(trim) @IsString() @Length(1, 500) note?: string; }
@@ -47,13 +50,14 @@ export class CustomerLeaveDetailResponseDto {
   @ApiProperty({ type: () => CustomerLeaveRevisionResponseDto, isArray: true }) revisions!: CustomerLeaveRevisionResponseDto[];
   @ApiProperty({ type: String, format: 'date-time' }) createdAt!: string; @ApiProperty({ type: String, format: 'date-time' }) updatedAt!: string;
 }
-export class CustomerLeaveListResponseDto { @ApiProperty({ type: () => CustomerLeaveDetailResponseDto, isArray: true }) items!: CustomerLeaveDetailResponseDto[]; @ApiPropertyOptional({ type: String }) nextCursor?: string; }
+const stableCursorDescription = 'Opaque cursor for stable ordering with an ID tie-breaker.';
+export class CustomerLeaveListResponseDto { @ApiProperty({ type: () => CustomerLeaveDetailResponseDto, isArray: true }) items!: CustomerLeaveDetailResponseDto[]; @ApiPropertyOptional({ type: String, description: stableCursorDescription }) nextCursor?: string; }
 export class VendorLeaveRequestDetailResponseDto extends CustomerLeaveDetailResponseDto {}
 export class VendorLeaveDecisionResponseDto {
   @ApiProperty({ type: String, format: 'uuid' }) id!: string; @ApiProperty({ type: String, format: 'uuid' }) leaveRequestRevisionId!: string; @ApiProperty({ type: String, format: 'uuid' }) subscriptionId!: string; @ApiProperty({ type: String, format: 'uuid' }) deliverySlotId!: string;
   @ApiProperty({ type: String, format: 'date' }) serviceDate!: string; @ApiProperty({ enum: decisionStatuses }) currentStatus!: string; version!: number; @ApiProperty({ type: String, format: 'date-time' }) createdAt!: string;
 }
-export class VendorLeaveDecisionListResponseDto { @ApiProperty({ type: () => VendorLeaveDecisionResponseDto, isArray: true }) items!: VendorLeaveDecisionResponseDto[]; @ApiPropertyOptional({ type: String }) nextCursor?: string; }
+export class VendorLeaveDecisionListResponseDto { @ApiProperty({ type: () => VendorLeaveDecisionResponseDto, isArray: true }) items!: VendorLeaveDecisionResponseDto[]; @ApiPropertyOptional({ type: String, description: stableCursorDescription }) nextCursor?: string; }
 export class VendorLeaveDecisionResponseEnvelopeDto extends VendorLeaveDecisionResponseDto { @ApiProperty({ type: () => VendorLeaveRequestDetailResponseDto }) request!: VendorLeaveRequestDetailResponseDto; }
 
 export function toLeaveRequestResponse(value: LeaveRequestResult): CustomerLeaveDetailResponseDto {

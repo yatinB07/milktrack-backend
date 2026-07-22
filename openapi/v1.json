@@ -164,6 +164,259 @@
         ],
         "type": "object"
       },
+      "AgentStopOutcomeItemDto": {
+        "properties": {
+          "actualQuantity": {
+            "pattern": "^(?!0(?:\\.0+)?$)(?:0|[1-9]\\d*)(?:\\.\\d{1,3})?$",
+            "type": "string"
+          },
+          "expectedVersion": {
+            "minimum": 1,
+            "type": "number"
+          },
+          "scheduledDeliveryId": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "scheduledDeliveryId",
+          "expectedVersion"
+        ],
+        "type": "object"
+      },
+      "AgentStopOutcomeRequestDto": {
+        "discriminator": {
+          "propertyName": "outcome"
+        },
+        "oneOf": [
+          {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/DeliveredAgentStopOutcomeDto"
+              },
+              {
+                "not": {
+                  "anyOf": [
+                    {
+                      "required": [
+                        "reasonCode"
+                      ]
+                    },
+                    {
+                      "required": [
+                        "note"
+                      ]
+                    },
+                    {
+                      "required": [
+                        "latitude"
+                      ]
+                    },
+                    {
+                      "required": [
+                        "longitude"
+                      ]
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/SkippedAgentStopOutcomeDto"
+              },
+              {
+                "oneOf": [
+                  {
+                    "required": [
+                      "latitude",
+                      "longitude"
+                    ]
+                  },
+                  {
+                    "not": {
+                      "anyOf": [
+                        {
+                          "required": [
+                            "latitude"
+                          ]
+                        },
+                        {
+                          "required": [
+                            "longitude"
+                          ]
+                        }
+                      ]
+                    }
+                  }
+                ]
+              },
+              {
+                "oneOf": [
+                  {
+                    "properties": {
+                      "reasonCode": {
+                        "enum": [
+                          "other"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "note"
+                    ]
+                  },
+                  {
+                    "properties": {
+                      "reasonCode": {
+                        "enum": [
+                          "customer_on_leave",
+                          "customer_unavailable",
+                          "customer_requested_skip_at_door"
+                        ]
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/MissedAgentStopOutcomeDto"
+              },
+              {
+                "oneOf": [
+                  {
+                    "required": [
+                      "latitude",
+                      "longitude"
+                    ]
+                  },
+                  {
+                    "not": {
+                      "anyOf": [
+                        {
+                          "required": [
+                            "latitude"
+                          ]
+                        },
+                        {
+                          "required": [
+                            "longitude"
+                          ]
+                        }
+                      ]
+                    }
+                  }
+                ]
+              },
+              {
+                "oneOf": [
+                  {
+                    "properties": {
+                      "reasonCode": {
+                        "enum": [
+                          "other"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "note"
+                    ]
+                  },
+                  {
+                    "properties": {
+                      "reasonCode": {
+                        "enum": [
+                          "address_not_found",
+                          "access_blocked",
+                          "product_unavailable",
+                          "vehicle_or_route_issue",
+                          "safety_issue"
+                        ]
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "AgentStopOutcomeResponseDto": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/DeliverySummaryResponseDto"
+            },
+            "type": "array"
+          },
+          "outcome": {
+            "enum": [
+              "delivered",
+              "skipped_by_agent",
+              "missed"
+            ],
+            "type": "string"
+          },
+          "routeStopId": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "serviceDate": {
+            "format": "date",
+            "type": "string"
+          }
+        },
+        "required": [
+          "routeStopId",
+          "serviceDate",
+          "outcome",
+          "items"
+        ],
+        "type": "object"
+      },
+      "AmendCustomerLeaveRequestDto": {
+        "properties": {
+          "endDate": {
+            "format": "date",
+            "type": "string"
+          },
+          "expectedVersion": {
+            "minimum": 1,
+            "type": "number"
+          },
+          "note": {
+            "maxLength": 500,
+            "minLength": 1,
+            "type": "string"
+          },
+          "startDate": {
+            "format": "date",
+            "type": "string"
+          },
+          "subscriptionIds": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "minItems": 1,
+            "type": "array",
+            "uniqueItems": true
+          }
+        },
+        "required": [
+          "startDate",
+          "endDate",
+          "subscriptionIds",
+          "expectedVersion"
+        ],
+        "type": "object"
+      },
       "ApiErrorResponseDto": {
         "properties": {
           "code": {
@@ -314,6 +567,23 @@
         ],
         "type": "object"
       },
+      "CancelCustomerLeaveRequestDto": {
+        "properties": {
+          "expectedVersion": {
+            "minimum": 1,
+            "type": "number"
+          },
+          "note": {
+            "maxLength": 500,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "expectedVersion"
+        ],
+        "type": "object"
+      },
       "ClosePriceRequestDto": {
         "properties": {
           "effectiveTo": {
@@ -370,6 +640,70 @@
           "vendorId",
           "userId",
           "membershipId"
+        ],
+        "type": "object"
+      },
+      "CorrectDeliveryRequestDto": {
+        "properties": {
+          "actualQuantity": {
+            "pattern": "^(?!0(?:\\.0+)?$)(?:0|[1-9]\\d*)(?:\\.\\d{1,3})?$",
+            "type": "string"
+          },
+          "expectedVersion": {
+            "minimum": 1,
+            "type": "number"
+          },
+          "reason": {
+            "maxLength": 500,
+            "minLength": 3,
+            "pattern": "^\\S(?:.*\\S)?$",
+            "type": "string"
+          },
+          "replacementOutcome": {
+            "enum": [
+              "delivered",
+              "skipped_by_agent",
+              "missed"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "expectedVersion",
+          "replacementOutcome",
+          "reason"
+        ],
+        "type": "object"
+      },
+      "CreateCustomerLeaveRequestDto": {
+        "properties": {
+          "endDate": {
+            "format": "date",
+            "type": "string"
+          },
+          "note": {
+            "maxLength": 500,
+            "minLength": 1,
+            "type": "string"
+          },
+          "startDate": {
+            "format": "date",
+            "type": "string"
+          },
+          "subscriptionIds": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "minItems": 1,
+            "type": "array",
+            "uniqueItems": true
+          }
+        },
+        "required": [
+          "startDate",
+          "endDate",
+          "subscriptionIds"
         ],
         "type": "object"
       },
@@ -770,6 +1104,90 @@
         ],
         "type": "object"
       },
+      "CustomerDeliveryDetailResponseDto": {
+        "properties": {
+          "actualQuantity": {
+            "pattern": "^(?!0(?:\\.0+)?$)(?:0|[1-9]\\d*)(?:\\.\\d{1,3})?$",
+            "type": "string"
+          },
+          "currentStatus": {
+            "enum": [
+              "scheduled",
+              "cancelled",
+              "delivered",
+              "skipped_by_customer",
+              "skipped_by_agent",
+              "missed"
+            ],
+            "type": "string"
+          },
+          "events": {
+            "items": {
+              "$ref": "#/components/schemas/DeliveryEventResponseDto"
+            },
+            "type": "array"
+          },
+          "finalizedAt": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "householdId": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "plannedQuantity": {
+            "pattern": "^(?!0(?:\\.0+)?$)(?:0|[1-9]\\d*)(?:\\.\\d{1,3})?$",
+            "type": "string"
+          },
+          "serviceDate": {
+            "format": "date",
+            "type": "string"
+          },
+          "snapshot": {
+            "$ref": "#/components/schemas/DeliveryPriceSnapshotResponseDto"
+          },
+          "subscriptionId": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "version": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "id",
+          "householdId",
+          "subscriptionId",
+          "serviceDate",
+          "plannedQuantity",
+          "currentStatus",
+          "events",
+          "version"
+        ],
+        "type": "object"
+      },
+      "CustomerDeliveryListResponseDto": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/DeliverySummaryResponseDto"
+            },
+            "type": "array"
+          },
+          "nextCursor": {
+            "description": "Opaque cursor for stable ordering with an ID tie-breaker.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
       "CustomerHouseholdListResponseDto": {
         "properties": {
           "items": {
@@ -863,6 +1281,278 @@
           "postalCode",
           "countryCode",
           "version"
+        ],
+        "type": "object"
+      },
+      "CustomerLeaveDetailResponseDto": {
+        "properties": {
+          "createdAt": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "currentRevisionId": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "currentStatus": {
+            "enum": [
+              "pending_approval",
+              "partially_pending",
+              "accepted",
+              "rejected",
+              "cancelled"
+            ],
+            "type": "string"
+          },
+          "householdId": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "revisions": {
+            "items": {
+              "$ref": "#/components/schemas/CustomerLeaveRevisionResponseDto"
+            },
+            "type": "array"
+          },
+          "updatedAt": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "vendorId": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "version": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "id",
+          "vendorId",
+          "householdId",
+          "currentStatus",
+          "revisions",
+          "createdAt",
+          "updatedAt",
+          "version"
+        ],
+        "type": "object"
+      },
+      "CustomerLeaveListResponseDto": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/CustomerLeaveDetailResponseDto"
+            },
+            "type": "array"
+          },
+          "nextCursor": {
+            "description": "Opaque cursor for stable ordering with an ID tie-breaker.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
+      "CustomerLeavePreviewRequestDto": {
+        "properties": {
+          "cursor": {
+            "description": "Opaque cursor for stable occurrence ordering with an ID tie-breaker.",
+            "type": "string"
+          },
+          "endDate": {
+            "format": "date",
+            "type": "string"
+          },
+          "limit": {
+            "default": 25,
+            "maximum": 100,
+            "minimum": 1,
+            "type": "number"
+          },
+          "note": {
+            "maxLength": 500,
+            "minLength": 1,
+            "type": "string"
+          },
+          "startDate": {
+            "format": "date",
+            "type": "string"
+          },
+          "subscriptionIds": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "minItems": 1,
+            "type": "array",
+            "uniqueItems": true
+          }
+        },
+        "required": [
+          "startDate",
+          "endDate",
+          "subscriptionIds"
+        ],
+        "type": "object"
+      },
+      "CustomerLeavePreviewResponseDto": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/LeaveOccurrenceResponseDto"
+            },
+            "type": "array"
+          },
+          "lateCount": {
+            "type": "number"
+          },
+          "lateLeavePolicy": {
+            "enum": [
+              "reject",
+              "approval"
+            ],
+            "type": "string"
+          },
+          "nextCursor": {
+            "type": "string"
+          },
+          "onTimeCount": {
+            "type": "number"
+          },
+          "skipCutoffMinutes": {
+            "type": "number"
+          },
+          "timezone": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "lateLeavePolicy",
+          "items",
+          "timezone",
+          "skipCutoffMinutes",
+          "onTimeCount",
+          "lateCount"
+        ],
+        "type": "object"
+      },
+      "CustomerLeaveRevisionResponseDto": {
+        "properties": {
+          "action": {
+            "enum": [
+              "create",
+              "amend",
+              "cancel"
+            ],
+            "type": "string"
+          },
+          "createdAt": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "currentStatus": {
+            "enum": [
+              "pending_approval",
+              "partially_pending",
+              "accepted",
+              "rejected",
+              "cancelled"
+            ],
+            "type": "string"
+          },
+          "endDate": {
+            "format": "date",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "note": {
+            "type": "string"
+          },
+          "startDate": {
+            "format": "date",
+            "type": "string"
+          },
+          "subscriptionIds": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "action",
+          "startDate",
+          "endDate",
+          "currentStatus",
+          "subscriptionIds",
+          "createdAt"
+        ],
+        "type": "object"
+      },
+      "CustomerNotificationListResponseDto": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/CustomerNotificationResponseDto"
+            },
+            "type": "array"
+          },
+          "nextCursor": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
+      "CustomerNotificationResponseDto": {
+        "properties": {
+          "createdAt": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "payload": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object"
+          },
+          "readAt": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "type": {
+            "enum": [
+              "leave_accepted",
+              "leave_rejected",
+              "agent_reported_skip",
+              "delivery_corrected"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "type",
+          "payload",
+          "createdAt"
         ],
         "type": "object"
       },
@@ -1092,6 +1782,218 @@
         ],
         "type": "object"
       },
+      "DecideLeaveOccurrenceRequestDto": {
+        "properties": {
+          "decision": {
+            "enum": [
+              "approved",
+              "rejected"
+            ],
+            "type": "string"
+          },
+          "expectedVersion": {
+            "minimum": 1,
+            "type": "number"
+          },
+          "reason": {
+            "maxLength": 500,
+            "minLength": 3,
+            "type": "string"
+          }
+        },
+        "required": [
+          "expectedVersion",
+          "decision",
+          "reason"
+        ],
+        "type": "object"
+      },
+      "DeliveredAgentStopOutcomeDto": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/DeliveredStopOutcomeItemDto"
+            },
+            "minItems": 1,
+            "type": "array"
+          },
+          "occurredAt": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "outcome": {
+            "enum": [
+              "delivered"
+            ],
+            "type": "string"
+          },
+          "serviceDate": {
+            "format": "date",
+            "type": "string"
+          }
+        },
+        "required": [
+          "serviceDate",
+          "occurredAt",
+          "outcome",
+          "items"
+        ],
+        "type": "object"
+      },
+      "DeliveredStopOutcomeItemDto": {
+        "properties": {
+          "actualQuantity": {
+            "description": "Positive decimal quantity with at most three fractional digits.",
+            "pattern": "^(?!0(?:\\.0+)?$)(?:0|[1-9]\\d*)(?:\\.\\d{1,3})?$",
+            "type": "string"
+          },
+          "expectedVersion": {
+            "minimum": 1,
+            "type": "number"
+          },
+          "scheduledDeliveryId": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "scheduledDeliveryId",
+          "expectedVersion",
+          "actualQuantity"
+        ],
+        "type": "object"
+      },
+      "DeliveryEventResponseDto": {
+        "properties": {
+          "actualQuantity": {
+            "pattern": "^(?!0(?:\\.0+)?$)(?:0|[1-9]\\d*)(?:\\.\\d{1,3})?$",
+            "type": "string"
+          },
+          "eventType": {
+            "enum": [
+              "delivered",
+              "skipped_by_customer",
+              "skipped_by_agent",
+              "missed"
+            ],
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "note": {
+            "type": "string"
+          },
+          "occurredAt": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "reasonCode": {
+            "type": "string"
+          },
+          "receivedAt": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "replacedEventId": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "source": {
+            "enum": [
+              "system",
+              "customer",
+              "delivery_agent",
+              "vendor_admin"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "eventType",
+          "source",
+          "occurredAt",
+          "receivedAt"
+        ],
+        "type": "object"
+      },
+      "DeliveryPolicyResponseDto": {
+        "properties": {
+          "captureAgentLocationEvidence": {
+            "type": "boolean"
+          },
+          "lateLeavePolicy": {
+            "enum": [
+              "reject",
+              "approval"
+            ],
+            "type": "string"
+          },
+          "skipCutoffMinutes": {
+            "type": "number"
+          },
+          "vendorId": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "version": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "vendorId",
+          "lateLeavePolicy",
+          "skipCutoffMinutes",
+          "captureAgentLocationEvidence",
+          "version"
+        ],
+        "type": "object"
+      },
+      "DeliveryPriceSnapshotResponseDto": {
+        "properties": {
+          "amountMinor": {
+            "description": "Integer minor-unit amount serialized as a decimal string.",
+            "pattern": "^\\d+$",
+            "type": "string"
+          },
+          "currency": {
+            "type": "string"
+          },
+          "pricingLevel": {
+            "enum": [
+              "global",
+              "customer_specific"
+            ],
+            "type": "string"
+          },
+          "resolvedAt": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "sourcePriceId": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "sourcePriceType": {
+            "enum": [
+              "global_price",
+              "customer_price_override"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "amountMinor",
+          "pricingLevel",
+          "sourcePriceId",
+          "sourcePriceType",
+          "resolvedAt",
+          "currency"
+        ],
+        "type": "object"
+      },
       "DeliverySlotListResponseDto": {
         "properties": {
           "items": {
@@ -1161,6 +2063,62 @@
           "updatedAt",
           "code",
           "name"
+        ],
+        "type": "object"
+      },
+      "DeliverySummaryResponseDto": {
+        "properties": {
+          "actualQuantity": {
+            "pattern": "^(?!0(?:\\.0+)?$)(?:0|[1-9]\\d*)(?:\\.\\d{1,3})?$",
+            "type": "string"
+          },
+          "currentStatus": {
+            "enum": [
+              "scheduled",
+              "cancelled",
+              "delivered",
+              "skipped_by_customer",
+              "skipped_by_agent",
+              "missed"
+            ],
+            "type": "string"
+          },
+          "finalizedAt": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "householdId": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "plannedQuantity": {
+            "pattern": "^(?!0(?:\\.0+)?$)(?:0|[1-9]\\d*)(?:\\.\\d{1,3})?$",
+            "type": "string"
+          },
+          "serviceDate": {
+            "format": "date",
+            "type": "string"
+          },
+          "subscriptionId": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "version": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "id",
+          "householdId",
+          "subscriptionId",
+          "serviceDate",
+          "plannedQuantity",
+          "currentStatus",
+          "version"
         ],
         "type": "object"
       },
@@ -1423,6 +2381,50 @@
         ],
         "type": "object"
       },
+      "LeaveOccurrenceResponseDto": {
+        "properties": {
+          "cutoffAt": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "deliverySlotId": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "proposedBehavior": {
+            "enum": [
+              "accept",
+              "pending_approval",
+              "reject"
+            ],
+            "type": "string"
+          },
+          "serviceDate": {
+            "format": "date",
+            "type": "string"
+          },
+          "subscriptionId": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "timing": {
+            "enum": [
+              "on_time",
+              "late"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "subscriptionId",
+          "deliverySlotId",
+          "serviceDate",
+          "cutoffAt",
+          "timing",
+          "proposedBehavior"
+        ],
+        "type": "object"
+      },
       "ListAuditEventsQueryDto": {
         "properties": {
           "action": {
@@ -1654,6 +2656,76 @@
         ],
         "type": "object"
       },
+      "MissedAgentStopOutcomeDto": {
+        "properties": {
+          "items": {
+            "items": {
+              "allOf": [
+                {
+                  "$ref": "#/components/schemas/NonDeliveredStopOutcomeItemDto"
+                }
+              ],
+              "not": {
+                "required": [
+                  "actualQuantity"
+                ]
+              }
+            },
+            "minItems": 1,
+            "type": "array"
+          },
+          "latitude": {
+            "description": "Present with longitude or both coordinates are absent.",
+            "maximum": 90,
+            "minimum": -90,
+            "type": "number"
+          },
+          "longitude": {
+            "description": "Present with latitude or both coordinates are absent.",
+            "maximum": 180,
+            "minimum": -180,
+            "type": "number"
+          },
+          "note": {
+            "maxLength": 500,
+            "type": "string"
+          },
+          "occurredAt": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "outcome": {
+            "enum": [
+              "missed"
+            ],
+            "type": "string"
+          },
+          "reasonCode": {
+            "description": "`other` requires a non-empty trimmed note.",
+            "enum": [
+              "address_not_found",
+              "access_blocked",
+              "product_unavailable",
+              "vehicle_or_route_issue",
+              "safety_issue",
+              "other"
+            ],
+            "type": "string"
+          },
+          "serviceDate": {
+            "format": "date",
+            "type": "string"
+          }
+        },
+        "required": [
+          "serviceDate",
+          "occurredAt",
+          "reasonCode",
+          "outcome",
+          "items"
+        ],
+        "type": "object"
+      },
       "ModifySubscriptionRequestDto": {
         "properties": {
           "deliverySlotId": {
@@ -1709,6 +2781,23 @@
           "deliverySlotId",
           "expectedVersion",
           "reason"
+        ],
+        "type": "object"
+      },
+      "NonDeliveredStopOutcomeItemDto": {
+        "properties": {
+          "expectedVersion": {
+            "minimum": 1,
+            "type": "number"
+          },
+          "scheduledDeliveryId": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "scheduledDeliveryId",
+          "expectedVersion"
         ],
         "type": "object"
       },
@@ -1862,6 +2951,36 @@
         "required": [
           "pendingMfaToken",
           "expiresAt"
+        ],
+        "type": "object"
+      },
+      "PendingStopItemResponseDto": {
+        "properties": {
+          "expectedVersion": {
+            "minimum": 1,
+            "type": "number"
+          },
+          "plannedQuantity": {
+            "example": "1.25",
+            "type": "string"
+          },
+          "productName": {
+            "type": "string"
+          },
+          "scheduledDeliveryId": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "unitName": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "scheduledDeliveryId",
+          "expectedVersion",
+          "plannedQuantity",
+          "productName",
+          "unitName"
         ],
         "type": "object"
       },
@@ -2760,10 +3879,26 @@
           "addressLine2": {
             "type": "string"
           },
+          "blockedByCustomerLeave": {
+            "type": "boolean"
+          },
+          "captureLocationEvidence": {
+            "type": "boolean"
+          },
           "city": {
             "type": "string"
           },
           "countryCode": {
+            "type": "string"
+          },
+          "currentStatus": {
+            "enum": [
+              "scheduled",
+              "delivered",
+              "skipped_by_customer",
+              "skipped_by_agent",
+              "missed"
+            ],
             "type": "string"
           },
           "deliverySlotEndLocalTime": {
@@ -2795,6 +3930,12 @@
           },
           "locality": {
             "type": "string"
+          },
+          "pendingStopItems": {
+            "items": {
+              "$ref": "#/components/schemas/PendingStopItemResponseDto"
+            },
+            "type": "array"
           },
           "plannedQuantity": {
             "example": "1.25",
@@ -2855,6 +3996,10 @@
           },
           "unitName": {
             "type": "string"
+          },
+          "version": {
+            "minimum": 1,
+            "type": "number"
           }
         },
         "required": [
@@ -2870,6 +4015,9 @@
           "plannedQuantity",
           "sequence",
           "routeId",
+          "currentStatus",
+          "version",
+          "pendingStopItems",
           "routeCode",
           "routeName",
           "householdAccountNumber",
@@ -2885,7 +4033,9 @@
           "unitName",
           "deliverySlotName",
           "deliverySlotStartLocalTime",
-          "deliverySlotEndLocalTime"
+          "deliverySlotEndLocalTime",
+          "blockedByCustomerLeave",
+          "captureLocationEvidence"
         ],
         "type": "object"
       },
@@ -2910,6 +4060,74 @@
           "accessToken",
           "accessExpiresAt",
           "refreshExpiresAt"
+        ],
+        "type": "object"
+      },
+      "SkippedAgentStopOutcomeDto": {
+        "properties": {
+          "items": {
+            "items": {
+              "allOf": [
+                {
+                  "$ref": "#/components/schemas/NonDeliveredStopOutcomeItemDto"
+                }
+              ],
+              "not": {
+                "required": [
+                  "actualQuantity"
+                ]
+              }
+            },
+            "minItems": 1,
+            "type": "array"
+          },
+          "latitude": {
+            "description": "Present with longitude or both coordinates are absent.",
+            "maximum": 90,
+            "minimum": -90,
+            "type": "number"
+          },
+          "longitude": {
+            "description": "Present with latitude or both coordinates are absent.",
+            "maximum": 180,
+            "minimum": -180,
+            "type": "number"
+          },
+          "note": {
+            "maxLength": 500,
+            "type": "string"
+          },
+          "occurredAt": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "outcome": {
+            "enum": [
+              "skipped_by_agent"
+            ],
+            "type": "string"
+          },
+          "reasonCode": {
+            "description": "`other` requires a non-empty trimmed note.",
+            "enum": [
+              "customer_on_leave",
+              "customer_unavailable",
+              "customer_requested_skip_at_door",
+              "other"
+            ],
+            "type": "string"
+          },
+          "serviceDate": {
+            "format": "date",
+            "type": "string"
+          }
+        },
+        "required": [
+          "serviceDate",
+          "occurredAt",
+          "outcome",
+          "items",
+          "reasonCode"
         ],
         "type": "object"
       },
@@ -3264,6 +4482,42 @@
         ],
         "type": "object"
       },
+      "UpdateDeliveryPolicyRequestDto": {
+        "properties": {
+          "captureAgentLocationEvidence": {
+            "type": "boolean"
+          },
+          "expectedVersion": {
+            "minimum": 1,
+            "type": "number"
+          },
+          "lateLeavePolicy": {
+            "enum": [
+              "reject",
+              "approval"
+            ],
+            "type": "string"
+          },
+          "reason": {
+            "maxLength": 500,
+            "minLength": 3,
+            "type": "string"
+          },
+          "skipCutoffMinutes": {
+            "maximum": 10080,
+            "minimum": 0,
+            "type": "number"
+          }
+        },
+        "required": [
+          "lateLeavePolicy",
+          "skipCutoffMinutes",
+          "captureAgentLocationEvidence",
+          "expectedVersion",
+          "reason"
+        ],
+        "type": "object"
+      },
       "UpdateHouseholdRequestDto": {
         "properties": {
           "accountNumber": {
@@ -3432,6 +4686,336 @@
           "lifecycle",
           "createdAt",
           "updatedAt"
+        ],
+        "type": "object"
+      },
+      "VendorDeliveryDetailResponseDto": {
+        "properties": {
+          "actualQuantity": {
+            "pattern": "^(?!0(?:\\.0+)?$)(?:0|[1-9]\\d*)(?:\\.\\d{1,3})?$",
+            "type": "string"
+          },
+          "currentStatus": {
+            "enum": [
+              "scheduled",
+              "cancelled",
+              "delivered",
+              "skipped_by_customer",
+              "skipped_by_agent",
+              "missed"
+            ],
+            "type": "string"
+          },
+          "events": {
+            "items": {
+              "$ref": "#/components/schemas/VendorDeliveryEventResponseDto"
+            },
+            "type": "array"
+          },
+          "finalizedAt": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "householdId": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "plannedQuantity": {
+            "pattern": "^(?!0(?:\\.0+)?$)(?:0|[1-9]\\d*)(?:\\.\\d{1,3})?$",
+            "type": "string"
+          },
+          "serviceDate": {
+            "format": "date",
+            "type": "string"
+          },
+          "snapshot": {
+            "$ref": "#/components/schemas/DeliveryPriceSnapshotResponseDto"
+          },
+          "subscriptionId": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "version": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "id",
+          "householdId",
+          "subscriptionId",
+          "serviceDate",
+          "plannedQuantity",
+          "currentStatus",
+          "events",
+          "version"
+        ],
+        "type": "object"
+      },
+      "VendorDeliveryEventResponseDto": {
+        "properties": {
+          "actualQuantity": {
+            "pattern": "^(?!0(?:\\.0+)?$)(?:0|[1-9]\\d*)(?:\\.\\d{1,3})?$",
+            "type": "string"
+          },
+          "eventType": {
+            "enum": [
+              "delivered",
+              "skipped_by_customer",
+              "skipped_by_agent",
+              "missed"
+            ],
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "latitude": {
+            "description": "Latitude decimal string in [-90, 90], present only with longitude.",
+            "pattern": "^-?(?:90(?:\\.0+)?|(?:[0-8]?\\d)(?:\\.\\d+)?)$",
+            "type": "string"
+          },
+          "longitude": {
+            "description": "Longitude decimal string in [-180, 180], present only with latitude.",
+            "pattern": "^-?(?:180(?:\\.0+)?|(?:1[0-7]\\d|[0-9]?\\d)(?:\\.\\d+)?)$",
+            "type": "string"
+          },
+          "note": {
+            "type": "string"
+          },
+          "occurredAt": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "reasonCode": {
+            "type": "string"
+          },
+          "receivedAt": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "replacedEventId": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "source": {
+            "enum": [
+              "system",
+              "customer",
+              "delivery_agent",
+              "vendor_admin"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "eventType",
+          "source",
+          "occurredAt",
+          "receivedAt"
+        ],
+        "type": "object"
+      },
+      "VendorDeliveryListResponseDto": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/DeliverySummaryResponseDto"
+            },
+            "type": "array"
+          },
+          "nextCursor": {
+            "description": "Opaque cursor for stable ordering with an ID tie-breaker.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
+      "VendorLeaveDecisionListResponseDto": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/VendorLeaveDecisionResponseDto"
+            },
+            "type": "array"
+          },
+          "nextCursor": {
+            "description": "Opaque cursor for stable ordering with an ID tie-breaker.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
+      "VendorLeaveDecisionResponseDto": {
+        "properties": {
+          "createdAt": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "currentStatus": {
+            "enum": [
+              "pending",
+              "approved",
+              "rejected"
+            ],
+            "type": "string"
+          },
+          "deliverySlotId": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "leaveRequestRevisionId": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "serviceDate": {
+            "format": "date",
+            "type": "string"
+          },
+          "subscriptionId": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "version": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "id",
+          "leaveRequestRevisionId",
+          "subscriptionId",
+          "deliverySlotId",
+          "serviceDate",
+          "currentStatus",
+          "createdAt",
+          "version"
+        ],
+        "type": "object"
+      },
+      "VendorLeaveDecisionResponseEnvelopeDto": {
+        "properties": {
+          "createdAt": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "currentStatus": {
+            "enum": [
+              "pending",
+              "approved",
+              "rejected"
+            ],
+            "type": "string"
+          },
+          "deliverySlotId": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "leaveRequestRevisionId": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "request": {
+            "$ref": "#/components/schemas/VendorLeaveRequestDetailResponseDto"
+          },
+          "serviceDate": {
+            "format": "date",
+            "type": "string"
+          },
+          "subscriptionId": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "version": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "id",
+          "leaveRequestRevisionId",
+          "subscriptionId",
+          "deliverySlotId",
+          "serviceDate",
+          "currentStatus",
+          "createdAt",
+          "request",
+          "version"
+        ],
+        "type": "object"
+      },
+      "VendorLeaveRequestDetailResponseDto": {
+        "properties": {
+          "createdAt": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "currentRevisionId": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "currentStatus": {
+            "enum": [
+              "pending_approval",
+              "partially_pending",
+              "accepted",
+              "rejected",
+              "cancelled"
+            ],
+            "type": "string"
+          },
+          "householdId": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "revisions": {
+            "items": {
+              "$ref": "#/components/schemas/CustomerLeaveRevisionResponseDto"
+            },
+            "type": "array"
+          },
+          "updatedAt": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "vendorId": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "version": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "id",
+          "vendorId",
+          "householdId",
+          "currentStatus",
+          "revisions",
+          "createdAt",
+          "updatedAt",
+          "version"
         ],
         "type": "object"
       },
@@ -3824,6 +5408,119 @@
         ],
         "tags": [
           "Agent route assignments"
+        ]
+      }
+    },
+    "/v1/agent/vendors/{vendorId}/route-stops/{routeStopId}/outcomes": {
+      "post": {
+        "operationId": "AgentDeliveryController_record",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "vendorId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "routeStopId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AgentStopOutcomeRequestDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentStopOutcomeResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "opaqueBearer": []
+          }
+        ],
+        "tags": [
+          "Agent deliveries"
         ]
       }
     },
@@ -4566,6 +6263,1050 @@
         ],
         "tags": [
           "Customer households"
+        ]
+      }
+    },
+    "/v1/customer/vendors/{vendorId}/households/{householdId}/deliveries": {
+      "get": {
+        "operationId": "CustomerDeliveryController_list",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "vendorId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "householdId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 25,
+              "maximum": 100,
+              "minimum": 1,
+              "type": "number"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CustomerDeliveryListResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "opaqueBearer": []
+          }
+        ],
+        "tags": [
+          "Customer deliveries"
+        ]
+      }
+    },
+    "/v1/customer/vendors/{vendorId}/households/{householdId}/deliveries/{scheduledDeliveryId}": {
+      "get": {
+        "operationId": "CustomerDeliveryController_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "vendorId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "householdId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "scheduledDeliveryId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CustomerDeliveryDetailResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "opaqueBearer": []
+          }
+        ],
+        "tags": [
+          "Customer deliveries"
+        ]
+      }
+    },
+    "/v1/customer/vendors/{vendorId}/households/{householdId}/leave-requests": {
+      "get": {
+        "operationId": "CustomerLeaveController_list",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "vendorId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "householdId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 25,
+              "maximum": 100,
+              "minimum": 1,
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CustomerLeaveListResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "opaqueBearer": []
+          }
+        ],
+        "tags": [
+          "Customer leave"
+        ]
+      },
+      "post": {
+        "operationId": "CustomerLeaveController_create",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "vendorId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "householdId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateCustomerLeaveRequestDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CustomerLeaveDetailResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "opaqueBearer": []
+          }
+        ],
+        "tags": [
+          "Customer leave"
+        ]
+      }
+    },
+    "/v1/customer/vendors/{vendorId}/households/{householdId}/leave-requests/preview": {
+      "post": {
+        "operationId": "CustomerLeaveController_preview",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "vendorId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "householdId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CustomerLeavePreviewRequestDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CustomerLeavePreviewResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "opaqueBearer": []
+          }
+        ],
+        "tags": [
+          "Customer leave"
+        ]
+      }
+    },
+    "/v1/customer/vendors/{vendorId}/households/{householdId}/leave-requests/{leaveRequestId}": {
+      "get": {
+        "operationId": "CustomerLeaveController_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "vendorId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "householdId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "leaveRequestId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CustomerLeaveDetailResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "opaqueBearer": []
+          }
+        ],
+        "tags": [
+          "Customer leave"
+        ]
+      }
+    },
+    "/v1/customer/vendors/{vendorId}/households/{householdId}/leave-requests/{leaveRequestId}/amendments": {
+      "post": {
+        "operationId": "CustomerLeaveController_amend",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "vendorId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "householdId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "leaveRequestId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AmendCustomerLeaveRequestDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CustomerLeaveDetailResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "opaqueBearer": []
+          }
+        ],
+        "tags": [
+          "Customer leave"
+        ]
+      }
+    },
+    "/v1/customer/vendors/{vendorId}/households/{householdId}/leave-requests/{leaveRequestId}/cancellations": {
+      "post": {
+        "operationId": "CustomerLeaveController_cancel",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "vendorId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "householdId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "leaveRequestId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CancelCustomerLeaveRequestDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CustomerLeaveDetailResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "opaqueBearer": []
+          }
+        ],
+        "tags": [
+          "Customer leave"
+        ]
+      }
+    },
+    "/v1/customer/vendors/{vendorId}/households/{householdId}/notifications": {
+      "get": {
+        "operationId": "CustomerNotificationController_list",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "vendorId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "householdId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 25,
+              "maximum": 100,
+              "minimum": 1,
+              "type": "number"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CustomerNotificationListResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "opaqueBearer": []
+          }
+        ],
+        "tags": [
+          "Customer notifications"
         ]
       }
     },
@@ -6394,6 +9135,595 @@
         "summary": "List tenant audit events",
         "tags": [
           "Vendor audit"
+        ]
+      }
+    },
+    "/v1/vendors/{vendorId}/deliveries": {
+      "get": {
+        "operationId": "VendorDeliveryController_list",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "vendorId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 25,
+              "maximum": 100,
+              "minimum": 1,
+              "type": "number"
+            }
+          },
+          {
+            "in": "query",
+            "name": "serviceDate",
+            "required": false,
+            "schema": {
+              "format": "date",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "householdId",
+            "required": false,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "routeId",
+            "required": false,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "agentMembershipId",
+            "required": false,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "productId",
+            "required": false,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "currentStatus",
+            "required": false,
+            "schema": {
+              "enum": [
+                "scheduled",
+                "cancelled",
+                "delivered",
+                "skipped_by_customer",
+                "skipped_by_agent",
+                "missed"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VendorDeliveryListResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "opaqueBearer": []
+          }
+        ],
+        "tags": [
+          "Vendor deliveries"
+        ]
+      }
+    },
+    "/v1/vendors/{vendorId}/deliveries/{scheduledDeliveryId}": {
+      "get": {
+        "operationId": "VendorDeliveryController_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "vendorId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "scheduledDeliveryId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VendorDeliveryDetailResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "opaqueBearer": []
+          }
+        ],
+        "tags": [
+          "Vendor deliveries"
+        ]
+      }
+    },
+    "/v1/vendors/{vendorId}/deliveries/{scheduledDeliveryId}/corrections": {
+      "post": {
+        "operationId": "VendorDeliveryController_correct",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "vendorId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "scheduledDeliveryId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CorrectDeliveryRequestDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VendorDeliveryDetailResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "opaqueBearer": []
+          }
+        ],
+        "tags": [
+          "Vendor deliveries"
+        ]
+      }
+    },
+    "/v1/vendors/{vendorId}/delivery-policy": {
+      "get": {
+        "operationId": "DeliveryPolicyController_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "vendorId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeliveryPolicyResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "opaqueBearer": []
+          }
+        ],
+        "tags": [
+          "Vendor delivery policy"
+        ]
+      },
+      "patch": {
+        "operationId": "DeliveryPolicyController_update",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "vendorId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateDeliveryPolicyRequestDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeliveryPolicyResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "opaqueBearer": []
+          }
+        ],
+        "tags": [
+          "Vendor delivery policy"
         ]
       }
     },
@@ -9061,6 +12391,336 @@
         ],
         "tags": [
           "Vendor households"
+        ]
+      }
+    },
+    "/v1/vendors/{vendorId}/leave-occurrence-decisions": {
+      "get": {
+        "operationId": "VendorLeaveController_listDecisions",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "vendorId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 25,
+              "maximum": 100,
+              "minimum": 1,
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VendorLeaveDecisionListResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "opaqueBearer": []
+          }
+        ],
+        "tags": [
+          "Vendor leave"
+        ]
+      }
+    },
+    "/v1/vendors/{vendorId}/leave-occurrence-decisions/{decisionId}/decision": {
+      "post": {
+        "operationId": "VendorLeaveController_decide",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "vendorId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "decisionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DecideLeaveOccurrenceRequestDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VendorLeaveDecisionResponseEnvelopeDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "opaqueBearer": []
+          }
+        ],
+        "tags": [
+          "Vendor leave"
+        ]
+      }
+    },
+    "/v1/vendors/{vendorId}/leave-requests/{leaveRequestId}": {
+      "get": {
+        "operationId": "VendorLeaveController_getRequest",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "vendorId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "leaveRequestId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VendorLeaveRequestDetailResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponseDto"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "opaqueBearer": []
+          }
+        ],
+        "tags": [
+          "Vendor leave"
         ]
       }
     },

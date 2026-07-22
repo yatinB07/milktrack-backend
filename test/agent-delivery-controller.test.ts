@@ -33,10 +33,16 @@ void test('agent outcome DTO validates the discriminated transport shape', async
   const invalid = [
     { ...valid[0], items: [] },
     { ...valid[0], occurredAt: '2030-01-01T01:00:00' },
+    { ...valid[0], items: [{ ...item, actualQuantity: '0' }] },
+    { ...valid[0], items: [{ ...item, actualQuantity: '1e2' }] },
+    { ...valid[0], note: 'not allowed' },
     { ...valid[1], reasonCode: 'customer_unavailable' },
+    { ...valid[1], items: [item] },
     { ...valid[2], longitude: undefined },
     { ...valid[2], latitude: Number.NaN },
     { ...valid[2], note: 'x'.repeat(501) },
+    { ...valid[2], note: '   ' },
+    { ...valid[2], note: undefined },
   ];
   for (const body of invalid) assert.notEqual((await validate(plainToInstance(AgentStopOutcomeRequestDto, body))).length, 0);
 });

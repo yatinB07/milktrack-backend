@@ -34,6 +34,25 @@ const phaseOneOperations = {
   '/v1/vendors/{vendorId}/profile': ['get'],
 } as const;
 
+const phaseThreePaths = [
+  '/v1/vendors/{vendorId}/delivery-policy',
+  '/v1/customer/vendors/{vendorId}/households/{householdId}/leave-requests/preview',
+  '/v1/customer/vendors/{vendorId}/households/{householdId}/leave-requests',
+  '/v1/customer/vendors/{vendorId}/households/{householdId}/leave-requests/{leaveRequestId}',
+  '/v1/customer/vendors/{vendorId}/households/{householdId}/leave-requests/{leaveRequestId}/amendments',
+  '/v1/customer/vendors/{vendorId}/households/{householdId}/leave-requests/{leaveRequestId}/cancellations',
+  '/v1/vendors/{vendorId}/leave-occurrence-decisions',
+  '/v1/vendors/{vendorId}/leave-requests/{leaveRequestId}',
+  '/v1/vendors/{vendorId}/leave-occurrence-decisions/{decisionId}/decision',
+  '/v1/agent/vendors/{vendorId}/route-stops/{routeStopId}/outcomes',
+  '/v1/vendors/{vendorId}/deliveries',
+  '/v1/vendors/{vendorId}/deliveries/{scheduledDeliveryId}',
+  '/v1/vendors/{vendorId}/deliveries/{scheduledDeliveryId}/corrections',
+  '/v1/customer/vendors/{vendorId}/households/{householdId}/deliveries',
+  '/v1/customer/vendors/{vendorId}/households/{householdId}/deliveries/{scheduledDeliveryId}',
+  '/v1/customer/vendors/{vendorId}/households/{householdId}/notifications',
+] as const;
+
 const bodyOperations = new Set([
   'post /v1/auth/admin/mfa',
   'post /v1/auth/admin/password',
@@ -259,7 +278,7 @@ void test('publishes the complete Phase 1 HTTP contract without persistence secr
   for (const path of subscriptionPaths) assert.ok(paths[path], `missing ${path}`);
   for (const path of routePaths) assert.ok(paths[path], `missing ${path}`);
   for (const path of scheduleRunPaths) assert.ok(paths[path], `missing ${path}`);
-  assert.deepEqual(Object.keys(paths).sort(), [...Object.keys(phaseOneOperations), ...householdPaths, ...catalogPaths, ...pricingPaths, ...subscriptionPaths, ...routePaths, ...scheduleRunPaths].sort());
+  assert.deepEqual(Object.keys(paths).sort(), [...Object.keys(phaseOneOperations), ...householdPaths, ...catalogPaths, ...pricingPaths, ...subscriptionPaths, ...routePaths, ...scheduleRunPaths, ...phaseThreePaths].sort());
 
   for (const [path, methods] of Object.entries(phaseOneOperations)) {
     const pathItem = object(paths[path], `missing OpenAPI path ${path}`);
@@ -756,13 +775,112 @@ void test('publishes the safe agent scheduled-delivery projection', async () => 
   assert.deepEqual((operation.parameters as JsonObject[]).map(({ name }) => name).sort(), ['cursor', 'limit', 'serviceDate', 'vendorId']);
   assert.deepEqual(Object.keys(properties('ScheduledDeliveryListResponseDto')).sort(), ['items', 'nextCursor', 'serviceDate']);
   assert.deepEqual(Object.keys(properties('ScheduledDeliveryResponseDto')).sort(), [
-    'addressLine1', 'addressLine2', 'city', 'countryCode', 'deliverySlotEndLocalTime',
+    'addressLine1', 'addressLine2', 'blockedByCustomerLeave', 'captureLocationEvidence', 'city', 'countryCode', 'currentStatus', 'deliverySlotEndLocalTime',
     'deliverySlotId', 'deliverySlotName', 'deliverySlotStartLocalTime', 'householdAccountNumber',
-    'householdId', 'householdName', 'id', 'locality', 'plannedQuantity', 'postalCode',
+    'householdId', 'householdName', 'id', 'locality', 'pendingStopItems', 'plannedQuantity', 'postalCode',
     'productCode', 'productId', 'productName', 'region', 'routeAssignmentId', 'routeCode',
     'routeId', 'routeName', 'routeStopId', 'sequence', 'serviceDate', 'subscriptionId',
-    'unitCode', 'unitId', 'unitName',
+    'unitCode', 'unitId', 'unitName', 'version',
   ]);
+});
+
+void test('publishes the frozen Phase 3 online-delivery contract', async () => {
+  const { document, serialized } = await readDocument();
+  const paths = object(document.paths, 'paths');
+  const operations = [
+    ['get', '/v1/vendors/{vendorId}/delivery-policy', undefined, 'DeliveryPolicyResponseDto'],
+    ['patch', '/v1/vendors/{vendorId}/delivery-policy', 'UpdateDeliveryPolicyRequestDto', 'DeliveryPolicyResponseDto'],
+    ['post', '/v1/customer/vendors/{vendorId}/households/{householdId}/leave-requests/preview', 'CustomerLeavePreviewRequestDto', 'CustomerLeavePreviewResponseDto'],
+    ['get', '/v1/customer/vendors/{vendorId}/households/{householdId}/leave-requests', undefined, 'CustomerLeaveListResponseDto'],
+    ['post', '/v1/customer/vendors/{vendorId}/households/{householdId}/leave-requests', 'CreateCustomerLeaveRequestDto', 'CustomerLeaveDetailResponseDto'],
+    ['get', '/v1/customer/vendors/{vendorId}/households/{householdId}/leave-requests/{leaveRequestId}', undefined, 'CustomerLeaveDetailResponseDto'],
+    ['post', '/v1/customer/vendors/{vendorId}/households/{householdId}/leave-requests/{leaveRequestId}/amendments', 'AmendCustomerLeaveRequestDto', 'CustomerLeaveDetailResponseDto'],
+    ['post', '/v1/customer/vendors/{vendorId}/households/{householdId}/leave-requests/{leaveRequestId}/cancellations', 'CancelCustomerLeaveRequestDto', 'CustomerLeaveDetailResponseDto'],
+    ['get', '/v1/vendors/{vendorId}/leave-occurrence-decisions', undefined, 'VendorLeaveDecisionListResponseDto'],
+    ['get', '/v1/vendors/{vendorId}/leave-requests/{leaveRequestId}', undefined, 'VendorLeaveRequestDetailResponseDto'],
+    ['post', '/v1/vendors/{vendorId}/leave-occurrence-decisions/{decisionId}/decision', 'DecideLeaveOccurrenceRequestDto', 'VendorLeaveDecisionResponseEnvelopeDto'],
+    ['post', '/v1/agent/vendors/{vendorId}/route-stops/{routeStopId}/outcomes', 'AgentStopOutcomeRequestDto', 'AgentStopOutcomeResponseDto'],
+    ['get', '/v1/vendors/{vendorId}/deliveries', undefined, 'VendorDeliveryListResponseDto'],
+    ['get', '/v1/vendors/{vendorId}/deliveries/{scheduledDeliveryId}', undefined, 'VendorDeliveryDetailResponseDto'],
+    ['post', '/v1/vendors/{vendorId}/deliveries/{scheduledDeliveryId}/corrections', 'CorrectDeliveryRequestDto', 'VendorDeliveryDetailResponseDto'],
+    ['get', '/v1/customer/vendors/{vendorId}/households/{householdId}/deliveries', undefined, 'CustomerDeliveryListResponseDto'],
+    ['get', '/v1/customer/vendors/{vendorId}/households/{householdId}/deliveries/{scheduledDeliveryId}', undefined, 'CustomerDeliveryDetailResponseDto'],
+    ['get', '/v1/customer/vendors/{vendorId}/households/{householdId}/notifications', undefined, 'CustomerNotificationListResponseDto'],
+  ] as const;
+
+  for (const [method, path, request, response] of operations) {
+    const operation = object(object(paths[path], `missing ${path}`)[method], `missing ${method.toUpperCase()} ${path}`);
+    assert.deepEqual(operation.security, [{ opaqueBearer: [] }]);
+    const responses = object(operation.responses, `${path} responses`);
+    const success = Object.entries(responses).find(([status]) => status.startsWith('2'));
+    assert(success);
+    assert.equal(responseSchema(success[1], `${path} response`).$ref, `#/components/schemas/${response}`);
+    if (request) {
+      const content = object(object(operation.requestBody, `${path} body`).content, `${path} body content`);
+      assert.equal(object(object(content['application/json'], `${path} JSON`).schema, `${path} request schema`).$ref, `#/components/schemas/${request}`);
+    }
+  }
+
+  assert.equal(paths['/v1/vendors/{vendorId}/deliveries/{deliveryId}'], undefined);
+  assert.equal(paths['/v1/customer/vendors/{vendorId}/households/{householdId}/deliveries/{deliveryId}'], undefined);
+
+  const schemas = object(object(document.components, 'components').schemas, 'schemas');
+  for (const name of [...new Set(operations.flatMap(([, , request, response]) => request ? [request, response] : [response]))]) {
+    assert(schemas[name], `missing schema ${name}`);
+  }
+
+  const preview = object(object(schemas.CustomerLeavePreviewRequestDto, 'preview schema').properties, 'preview properties');
+  assert.equal(object(preview.cursor, 'preview cursor').type, 'string');
+  assert.deepEqual(object(preview.limit, 'preview limit'), { type: 'number', default: 25, minimum: 1, maximum: 100 });
+
+  for (const name of ['VendorDeliveryListResponseDto', 'CustomerDeliveryListResponseDto', 'CustomerLeaveListResponseDto', 'VendorLeaveDecisionListResponseDto']) {
+    const properties = object(object(schemas[name], name).properties, `${name} properties`);
+    assert.match(String(object(properties.nextCursor, `${name} next cursor`).description), /stable.*ID tie-breaker/iu);
+  }
+
+  const events = object(object(schemas.DeliveryEventResponseDto, 'event schema').properties, 'event properties');
+  assert.deepEqual(object(events.eventType, 'event type').enum, ['delivered', 'skipped_by_customer', 'skipped_by_agent', 'missed']);
+  for (const field of ['occurredAt', 'receivedAt']) assert.equal(object(events[field], field).format, 'date-time');
+  const vendorEvent = object(object(schemas.VendorDeliveryEventResponseDto, 'vendor event').properties, 'vendor event properties');
+  assert.match(String(object(vendorEvent.latitude, 'latitude').description), /\[-90, 90\].*longitude/iu);
+  assert.match(String(object(vendorEvent.longitude, 'longitude').description), /\[-180, 180\].*latitude/iu);
+
+  const agentOperation = object(object(paths['/v1/agent/vendors/{vendorId}/route-stops/{routeStopId}/outcomes'], 'agent outcome path').post, 'agent outcome operation');
+  const outcomeReference = object(object(object(object(agentOperation.requestBody, 'agent outcome body').content, 'agent outcome content')['application/json'], 'agent outcome JSON').schema, 'agent outcome schema');
+  assert.deepEqual(outcomeReference, { $ref: '#/components/schemas/AgentStopOutcomeRequestDto' });
+  const outcome = object(schemas.AgentStopOutcomeRequestDto, 'agent outcome component');
+  assert.equal(object(outcome.discriminator, 'outcome discriminator').propertyName, 'outcome');
+  assert.equal((outcome.oneOf as unknown[]).length, 3);
+  const variants = (outcome.oneOf as JsonObject[]).map((variant) => object(variant, 'outcome variant'));
+  const variantRefs = variants.map((variant) => (variant.allOf as JsonObject[])[0]?.$ref);
+  assert.equal(new Set(variantRefs).size, 3);
+  for (const ref of variantRefs) {
+    assert.equal(typeof ref, 'string');
+    const schema = object(schemas[String(ref).split('/').at(-1)!], String(ref));
+    const properties = object(schema.properties, `${String(ref)} properties`);
+    assert.equal((object(properties.outcome, 'literal outcome').enum as unknown[]).length, 1);
+    assert((schema.required as string[]).includes('items'));
+    assert.equal(object(properties.items, 'items').minItems, 1);
+  }
+  const deliveredItem = object(object(schemas.DeliveredStopOutcomeItemDto, 'delivered item').properties, 'delivered item properties');
+  assert.match(String(object(deliveredItem.actualQuantity, 'actual quantity').description), /positive/iu);
+  assert.match(object(deliveredItem.actualQuantity, 'actual quantity').pattern as string, /\(\?!0/);
+  const outcomeJson = JSON.stringify(outcome);
+  assert.match(outcomeJson, /latitude.*longitude/iu);
+  assert.match(outcomeJson, /reasonCode.*other.*note/iu);
+  const nonDeliveredItem = object(object(schemas.NonDeliveredStopOutcomeItemDto, 'non-delivered item').properties, 'non-delivered item properties');
+  assert.equal(nonDeliveredItem.actualQuantity, undefined);
+
+  for (const name of ['UpdateDeliveryPolicyRequestDto', 'AmendCustomerLeaveRequestDto', 'CancelCustomerLeaveRequestDto', 'DecideLeaveOccurrenceRequestDto', 'CorrectDeliveryRequestDto', 'DeliveredStopOutcomeItemDto', 'NonDeliveredStopOutcomeItemDto']) {
+    const schema = object(schemas[name], name);
+    assert((schema.required as string[]).includes('expectedVersion'), `${name}.expectedVersion must be required`);
+    assert.equal(object(object(schema.properties, `${name} properties`).expectedVersion, `${name}.expectedVersion`).minimum, 1);
+  }
+
+  const normalized = serialized.replaceAll(/[^a-z0-9]/gi, '').toLowerCase();
+  for (const deferred of ['IdempotencyRecord', 'SyncConflict', 'OutboxMessage', 'NotificationAttempt', 'PaymentAttempt', 'Dispute', 'backgroundTracking', 'photoEvidence']) {
+    assert(!normalized.includes(deferred.toLowerCase()), `OpenAPI must not expose deferred ${deferred}`);
+  }
 });
 
 void test('publishes the complete additive household contract', async () => {

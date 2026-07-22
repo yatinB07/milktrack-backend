@@ -65,4 +65,12 @@ void test('agent stop outcome HTTP route returns the authoritative stop and reje
     assert.equal(invalid.status, 400);
     assert.equal((await invalid.json() as { code: string }).code, 'INVALID_REQUEST');
   }
+  for (const body of [
+    { ...valid, items: [{ scheduledDeliveryId: deliveryId, expectedVersion: 1, actualQuantity: '0' }] },
+    { ...valid, note: 'not allowed' },
+    { ...valid, outcome: 'missed', reasonCode: 'access_blocked' },
+  ]) {
+    const invalid = await post(body);
+    assert.equal(invalid.status, 400);
+  }
 });
