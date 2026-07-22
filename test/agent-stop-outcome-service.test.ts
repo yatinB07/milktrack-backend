@@ -111,6 +111,10 @@ void test('agent skip accepts every reason, optional GPS, and notifies each acti
       ...(reasonCode === 'other' ? { note: 'Customer confirmed leave' } : {}), latitude: 18.52, longitude: 73.85,
     });
     assert.equal(calls.filter(({ kind }) => kind === 'notification').length, 2);
+    assert.deepEqual(
+      calls.filter(({ kind }) => kind === 'notification').map(({ value }) => (value as { householdId: string }).householdId).sort(),
+      pending.map(({ householdId }) => householdId).sort(),
+    );
   }
 });
 

@@ -35,6 +35,7 @@ void test('migrations safely upgrade legacy data without resetting it', async ()
     '202607200010_schedule_generation_runs',
     '202607210001_authentication_authority_lookup',
     '202607220001_phase_3_online_delivery',
+    '202607230001_phase_3_final_corrections',
   ] as const;
   const migrations = await Promise.all(
     migrationDirectories.map((directory) =>
@@ -154,6 +155,21 @@ void test('migrations safely upgrade legacy data without resetting it', async ()
     await client.query(migrations[18]);
     await client.query(migrations[19]);
     await client.query(migrations[20]);
+    await client.query(migrations[21]);
+
+    const legacyLeaveRequestId = randomUUID();
+    const legacyNotificationId = randomUUID();
+    await client.query(
+      `INSERT INTO leave_requests (id,vendor_id,household_id,status,updated_at)
+       VALUES ($1,$2,$3,'accepted',now())`,
+      [legacyLeaveRequestId, legacyVendorId, legacyHouseholdId],
+    );
+    await client.query(
+      `INSERT INTO notifications (id,vendor_id,recipient_user_id,type,payload)
+       VALUES ($1,$2,$3,'leave_accepted',$4::jsonb)`,
+      [legacyNotificationId, legacyVendorId, userId, JSON.stringify({ leaveRequestId: legacyLeaveRequestId })],
+    );
+    await client.query(migrations[22]);
 
     const session = await client.query<{
       authentication_method: string;
@@ -244,6 +260,13 @@ void test('migrations safely upgrade legacy data without resetting it', async ()
        WHERE table_schema = $1 AND table_name = 'schedule_generation_runs'`,
       [schema],
     )).rowCount, 1);
+    assert.deepEqual(
+      (await client.query<{ household_id: string }>(
+        `SELECT payload->>'householdId' AS household_id FROM notifications WHERE id=$1`,
+        [legacyNotificationId],
+      )).rows,
+      [{ household_id: legacyHouseholdId }],
+    );
 
     const anonymousChallengeId = randomUUID();
     await client.query(

@@ -150,7 +150,8 @@ export class DefaultLeaveService extends LeaveService {
       const agents = command.decision === 'approved' && effective
         ? await this.agentUserIds(tx, vendorId, result.request.householdId, [{ serviceDate: result.serviceDate, deliverySlotId: result.deliverySlotId }])
         : [];
-      await this.notify(tx, vendorId, result.request.id, revision.createdBy, command.decision === 'approved' && effective ? 'leave_accepted' : 'leave_rejected', agents);
+      await this.notify(tx, vendorId, result.request.id, revision.createdBy, result.request.householdId,
+        command.decision === 'approved' && effective ? 'leave_accepted' : 'leave_rejected', agents);
       return decision(result);
     });
   }
@@ -249,6 +250,7 @@ export class DefaultLeaveService extends LeaveService {
   ) {
     if (result.status !== 'accepted' && result.status !== 'partially_pending' && result.status !== 'rejected') return Promise.resolve();
     return this.notify(tx, result.vendorId, result.id, customerUserId,
+      result.householdId,
       result.status === 'rejected' ? 'leave_rejected' : 'leave_accepted',
       result.status === 'rejected' ? [] : agentUserIds);
   }
@@ -258,12 +260,13 @@ export class DefaultLeaveService extends LeaveService {
     vendorId: string,
     leaveRequestId: string,
     customerUserId: string,
-    type: NotificationType,
+    householdId: string,
+    type: Extract<NotificationType, 'leave_accepted' | 'leave_rejected'>,
     agentUserIds: readonly string[],
   ) {
     const recipients = new Set([customerUserId, ...agentUserIds]);
     for (const recipientUserId of recipients) {
-      await this.notifications.append(tx, { id: randomUUID(), vendorId, recipientUserId, type, payload: { leaveRequestId } });
+      await this.notifications.append(tx, { id: randomUUID(), vendorId, householdId, recipientUserId, type, payload: { leaveRequestId } });
     }
   }
 

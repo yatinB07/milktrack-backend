@@ -20,7 +20,7 @@ const owner = new pg.Pool({ connectionString: process.env.TEST_OWNER_DATABASE_UR
 const deliveries = new PrismaDeliveryStore();
 test.after(() => Promise.all([prisma.$disconnect(), owner.end()]));
 
-type Fixture = Readonly<{ vendorId: string; otherVendorId: string; deliveryId: string; sourcePriceId: string; actors: readonly Actor[]; ownerActor: Actor; admin: Actor; customerId: string; originalEventId: string }>;
+type Fixture = Readonly<{ vendorId: string; otherVendorId: string; householdId: string; deliveryId: string; sourcePriceId: string; actors: readonly Actor[]; ownerActor: Actor; admin: Actor; customerId: string; originalEventId: string }>;
 
 async function fixture(): Promise<Fixture> {
   const vendorId = randomUUID(); const otherVendorId = randomUUID(); const ownerId = randomUUID(); const adminId = randomUUID(); const customerId = randomUUID(); const agentId = randomUUID(); const platformId = randomUUID();
@@ -44,7 +44,7 @@ async function fixture(): Promise<Fixture> {
   const customer = actor(customerId, 'Customer', 'phone_otp', [], 'customer', customerMembershipId);
   const agent = actor(agentId, 'Agent', 'phone_otp', [], 'delivery_agent', agentMembershipId);
   const platform = actor(platformId, 'Platform', 'administrator_mfa', ['platform_administrator']);
-  return { vendorId, otherVendorId, deliveryId, sourcePriceId, actors: [ownerActor, admin, customer, agent, platform], ownerActor, admin, customerId, originalEventId };
+  return { vendorId, otherVendorId, householdId, deliveryId, sourcePriceId, actors: [ownerActor, admin, customer, agent, platform], ownerActor, admin, customerId, originalEventId };
 }
 
 async function cleanup(value: Fixture) {
@@ -87,7 +87,7 @@ void test('correction transaction rolls back snapshot, event, projection, audit,
     assert.deepEqual(event, { source: 'vendor_admin', replaced_event_id: value.originalEventId, reason_code: correction.reason, actual_quantity: '1.500' });
     const audit = (await owner.query<{ old_value: unknown; new_value: unknown; reason: string }>("SELECT old_value,new_value,reason FROM audit_events WHERE vendor_id=$1 AND action='delivery.corrected'", [value.vendorId])).rows[0];
     assert.deepEqual(audit, { old_value: { status: 'skipped_by_customer', version: 2 }, new_value: { status: 'delivered', actualQuantity: '1.5', version: 3 }, reason: correction.reason });
-    assert.deepEqual((await owner.query('SELECT recipient_user_id,type,payload FROM notifications WHERE vendor_id=$1', [value.vendorId])).rows, [{ recipient_user_id: value.customerId, type: 'delivery_corrected', payload: { scheduledDeliveryId: value.deliveryId } }]);
+    assert.deepEqual((await owner.query('SELECT recipient_user_id,type,payload FROM notifications WHERE vendor_id=$1', [value.vendorId])).rows, [{ recipient_user_id: value.customerId, type: 'delivery_corrected', payload: { householdId: value.householdId, scheduledDeliveryId: value.deliveryId } }]);
     assert.deepEqual((await owner.query("SELECT amount_minor::text AS amount,source_price_id,source_price_type,resolved_at AT TIME ZONE 'UTC' AS resolved_at FROM delivery_price_snapshots WHERE scheduled_delivery_id=$1", [value.deliveryId])).rows, [{ amount: '95', source_price_id: value.sourcePriceId, source_price_type: 'global_price', resolved_at: new Date('2030-01-01T00:30:00.000Z') }]);
 
     await assert.rejects(requestContextStore.run({ correlationId: randomUUID() }, () => service(value).correct(value.admin, value.vendorId, value.deliveryId, correction)), (error: unknown) => (error as { code?: string }).code === 'STALE_VERSION');

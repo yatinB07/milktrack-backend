@@ -38,6 +38,26 @@ export type PendingDelivery = DeliveryOccurrenceKey & Readonly<{
 
 export type DeliveryEventSource = 'system' | 'customer' | 'delivery_agent' | 'vendor_admin';
 export type DeliveryFinalStatus = AgentOutcomeStatus | 'skipped_by_customer';
+export type DeliveryEventType = DeliveryFinalStatus | 'scheduled';
+
+export type DeliveryLeaveSelection = Readonly<{
+  startDate: string;
+  endDate: string;
+  subscriptionIds: readonly string[];
+}>;
+export type DeliveryLeaveCandidate = DeliveryOccurrenceKey & Readonly<{
+  id: string;
+  version: number;
+}>;
+export type DeliveryLeaveCandidatePage = Readonly<{
+  items: readonly DeliveryLeaveCandidate[];
+  nextCursor?: string;
+}>;
+export type DeliveryLeaveState = DeliveryLeaveCandidate & Readonly<{ effective: boolean }>;
+export type DeliveryLeaveActor = Readonly<{
+  userId: string;
+  source: 'customer' | 'vendor_admin';
+}>;
 
 export type AppendFinalOutcome = Readonly<{
   id: string;
@@ -82,7 +102,7 @@ export type CreatePriceSnapshot = Readonly<{
 
 export type DeliveryEvent = Readonly<{
   id: string;
-  eventType: DeliveryFinalStatus;
+  eventType: DeliveryEventType;
   source: DeliveryEventSource;
   actorUserId?: string;
   occurredAt: Date;

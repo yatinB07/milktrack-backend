@@ -18,10 +18,10 @@ export type NotificationRecord = Readonly<{
 export type NotificationPage = Readonly<{ items: readonly NotificationRecord[]; nextCursor?: string }>;
 
 const allowedPayloadKeys: Readonly<Record<NotificationType, readonly string[]>> = {
-  leave_accepted: ['leaveRequestId'],
-  leave_rejected: ['leaveRequestId'],
-  agent_reported_skip: ['scheduledDeliveryId'],
-  delivery_corrected: ['scheduledDeliveryId'],
+  leave_accepted: ['householdId', 'leaveRequestId'],
+  leave_rejected: ['householdId', 'leaveRequestId'],
+  agent_reported_skip: ['householdId', 'scheduledDeliveryId'],
+  delivery_corrected: ['householdId', 'scheduledDeliveryId'],
 };
 const prohibitedPayloadKey = /password|otp|token|secret|phone|address|latitude|longitude|note/i;
 
@@ -30,9 +30,11 @@ export class PrismaNotificationStore extends NotificationWriter {
   private readonly cursors = new CursorCodec();
 
   async append(tx: TransactionContext, notification: AppendNotification): Promise<void> {
-    this.validatePayload(notification);
+    const { householdId, payload: subjectPayload, ...columns } = notification;
+    const payload = { householdId, ...subjectPayload };
+    this.validatePayload(notification.type, payload);
     await unwrapPrismaTransaction(tx).notification.create({
-      data: { ...notification, type: this.databaseType(notification.type), payload: notification.payload },
+      data: { ...columns, type: this.databaseType(notification.type), payload },
     });
   }
 
@@ -51,9 +53,11 @@ export class PrismaNotificationStore extends NotificationWriter {
     return { items, ...(rows.length > limit && last ? { nextCursor: this.cursors.encode(last) } : {}) };
   }
 
-  private validatePayload(notification: AppendNotification) {
-    const allowed = allowedPayloadKeys[notification.type];
-    for (const [key, value] of Object.entries(notification.payload)) {
+  private validatePayload(type: NotificationType, payload: Readonly<Record<string, string>>) {
+    const allowed = allowedPayloadKeys[type];
+    if (Object.keys(payload).length !== allowed.length || allowed.some((key) => !(key in payload)))
+      throw new ApplicationError('INVALID_NOTIFICATION_PAYLOAD', 'Notification payload is invalid', 400);
+    for (const [key, value] of Object.entries(payload)) {
       if (prohibitedPayloadKey.test(key) || !allowed.includes(key) || typeof value !== 'string')
         throw new ApplicationError('INVALID_NOTIFICATION_PAYLOAD', 'Notification payload is invalid', 400);
     }
@@ -65,7 +69,7 @@ export class PrismaNotificationStore extends NotificationWriter {
     if (!['leave_accepted', 'leave_rejected', 'agent_reported_skip', 'delivery_corrected'].includes(type) || !this.isPayload(row.payload))
       throw new ApplicationError('INVALID_NOTIFICATION_PAYLOAD', 'Notification payload is invalid', 500);
     const payload = row.payload;
-    this.validatePayload({ id: row.id, vendorId: '', recipientUserId: '', type: type as NotificationType, payload });
+    this.validatePayload(type as NotificationType, payload);
     return { id: row.id, type: type as NotificationType, payload, readAt: row.readAt, createdAt: row.createdAt };
   }
   private isPayload(value: Prisma.JsonValue): value is Record<string, string> { return typeof value === 'object' && value !== null && !Array.isArray(value) && Object.values(value).every((entry) => typeof entry === 'string'); }

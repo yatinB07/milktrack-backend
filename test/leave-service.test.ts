@@ -19,6 +19,7 @@ const tx = {} as TransactionContext;
 
 void test('preview is household-scoped and advisory while create revalidates and persists an accepted request', async () => {
   const calls: string[] = [];
+  const notifications: unknown[] = [];
   const store = {
     preview: () => { calls.push('preview'); return Promise.resolve({ items: [{ subscriptionId, deliverySlotId: slotId, serviceDate: '2030-01-02', cutoffAt: new Date('2030-01-01T00:00:00.000Z'), timing: 'on_time', proposedBehavior: 'accept' }], onTimeCount: 1, lateCount: 0 }); },
     lockSubscriptions: () => { calls.push('lock'); return Promise.resolve(); },
@@ -32,7 +33,7 @@ void test('preview is household-scoped and advisory while create revalidates and
     { getDeliveryPolicyForTransaction: () => Promise.resolve({ vendorId, skipCutoffMinutes: 60, lateLeavePolicy: 'approval', captureAgentLocationEvidence: false, version: 1 }), getSubscriptionTimezone: () => Promise.resolve({ timezone: 'Asia/Kolkata' }) } as never,
     { append: () => { calls.push('audit'); return Promise.resolve(); } },
     { applyCustomerLeave: () => { calls.push('project'); return Promise.resolve(); }, reverseCustomerLeave: () => Promise.resolve() },
-    { append: () => { calls.push('notification'); return Promise.resolve(); } },
+    { append: (_tx: TransactionContext, value: unknown) => { calls.push('notification'); notifications.push(value); return Promise.resolve(); } },
     { project: () => { calls.push('routing'); return Promise.resolve([{ routeId: 'route', routeVersion: 1, deliverySlotId: slotId, stops: [{ stopId: 'stop', householdId, sequence: 1 }], assignment: { assignmentId: 'assignment', agentMembershipId } }]); }, projectRoute: () => Promise.resolve(undefined) },
     { customerMembershipHistory: () => { calls.push('membership'); return Promise.resolve([{ membershipId: agentMembershipId, userId: agentUserId }]); } } as never,
   );
@@ -45,6 +46,7 @@ void test('preview is household-scoped and advisory while create revalidates and
     assert.equal(created.currentStatus, 'accepted');
   });
   assert.deepEqual(calls, ['household', 'preview', 'household', 'lock', 'preview', 'create', 'preview', 'effective', 'project', 'routing', 'membership', 'audit', 'notification', 'notification']);
+  assert.equal(notifications.every((value) => (value as { householdId?: string }).householdId === householdId), true);
 });
 
 function request() {

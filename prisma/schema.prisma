@@ -737,6 +737,7 @@ model LeaveRevisionSubscription {
   vendorId               String @map("vendor_id") @db.Uuid
   leaveRequestRevisionId String @map("leave_request_revision_id") @db.Uuid
   subscriptionId         String @map("subscription_id") @db.Uuid
+  selected               Boolean @default(true)
   vendor                 Vendor @relation(fields: [vendorId], references: [id], onDelete: NoAction, onUpdate: NoAction)
   revision               LeaveRequestRevision @relation(fields: [vendorId, leaveRequestRevisionId], references: [vendorId, id], onDelete: NoAction, onUpdate: NoAction, map: "leave_revision_subscriptions_revision_fkey")
   subscription           Subscription @relation(fields: [vendorId, subscriptionId], references: [vendorId, id], onDelete: NoAction, onUpdate: NoAction, map: "leave_revision_subscriptions_subscription_fkey")

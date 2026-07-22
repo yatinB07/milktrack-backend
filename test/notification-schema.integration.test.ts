@@ -15,7 +15,7 @@ void test('notification records are tenant-isolated and roll back with the autho
     const client = await runtime.connect();
     try {
       await client.query('BEGIN'); await client.query("SELECT set_config('app.vendor_id',$1,true)", [vendorId]);
-      await client.query("INSERT INTO notifications (id,vendor_id,recipient_user_id,type,payload) VALUES ($1,$2,$3,'leave_accepted',$4::jsonb)", [notificationId, vendorId, userId, JSON.stringify({ leaveRequestId: randomUUID() })]);
+      await client.query("INSERT INTO notifications (id,vendor_id,recipient_user_id,type,payload) VALUES ($1,$2,$3,'leave_accepted',$4::jsonb)", [notificationId, vendorId, userId, JSON.stringify({ householdId: randomUUID(), leaveRequestId: randomUUID() })]);
       await client.query("UPDATE vendors SET display_name='Rolled back notification' WHERE id=$1", [vendorId]);
     } finally { await client.query('ROLLBACK'); client.release(); }
     assert.equal((await owner.query('SELECT id FROM notifications WHERE id=$1', [notificationId])).rowCount, 0);

@@ -49,7 +49,7 @@ void test('correction creates a price snapshot at original service time, preserv
   assert.deepEqual((audits[0] as { oldValue: unknown }).oldValue, { status: 'skipped_by_customer', version: 2 });
   assert.deepEqual((audits[0] as { newValue: unknown }).newValue, { status: 'delivered', actualQuantity: '1.5', version: 3 });
   const notification = notifications[0] as { id: string; recipientUserId: string; type: string; payload: unknown };
-  assert.deepEqual(notification, { id: notification.id, vendorId, recipientUserId: customerId, type: 'delivery_corrected', payload: { scheduledDeliveryId: deliveryId } });
+  assert.deepEqual(notification, { id: notification.id, vendorId, householdId: initial.householdId, recipientUserId: customerId, type: 'delivery_corrected', payload: { scheduledDeliveryId: deliveryId } });
 });
 
 void test('correction locks before resolving a missing delivered snapshot, including a legacy delivered record', async () => {

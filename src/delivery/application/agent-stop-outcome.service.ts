@@ -117,7 +117,7 @@ export class DefaultAgentStopOutcomeService extends AgentStopOutcomeService {
       if (command.outcome === 'skipped_by_agent') {
         for (const recipientUserId of recipients.get(delivery.householdId) ?? []) {
           await this.notifications.append(tx, {
-            id: randomUUID(), vendorId, recipientUserId, type: 'agent_reported_skip', payload: { scheduledDeliveryId: delivery.id },
+            id: randomUUID(), vendorId, householdId: delivery.householdId, recipientUserId, type: 'agent_reported_skip', payload: { scheduledDeliveryId: delivery.id },
           });
         }
       }

@@ -62,7 +62,7 @@ export class DefaultDeliveryCorrectionService extends DeliveryCorrectionService 
         correlationId: requestContextStore.require().correlationId,
       });
       await Promise.all((before.customerUserIds ?? []).map((recipientUserId) => this.notifications.append(tx, {
-        id: randomUUID(), vendorId, recipientUserId, type: 'delivery_corrected', payload: { scheduledDeliveryId },
+        id: randomUUID(), vendorId, householdId: before.householdId, recipientUserId, type: 'delivery_corrected', payload: { scheduledDeliveryId },
       })));
       return after;
     });

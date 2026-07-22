@@ -21,11 +21,12 @@ void test('notification writer appends through the caller transaction and reject
   const writes: unknown[] = [];
   const tx = wrapPrismaTransaction({ notification: { create: (input: unknown) => { writes.push(input); return Promise.resolve({}); } } } as never);
   const store = new PrismaNotificationStore();
-  const notification = { id: randomUUID(), vendorId, recipientUserId, type: 'leave_accepted' as const, payload: { leaveRequestId: randomUUID() } };
+  const notification = { id: randomUUID(), vendorId, householdId, recipientUserId, type: 'leave_accepted' as const, payload: { leaveRequestId: randomUUID() } };
   await store.append(tx, notification);
-  assert.deepEqual(writes, [{ data: notification }]);
+  const { payload, householdId: subjectHouseholdId, ...columns } = notification;
+  assert.deepEqual(writes, [{ data: { ...columns, payload: { householdId: subjectHouseholdId, ...payload } } }]);
   await assert.rejects(
-    store.append(tx, { ...notification, payload: { token: 'private' } }),
+    store.append(tx, { ...notification, payload: { token: 'private' } } as never),
     (error: unknown) => error instanceof ApplicationError && error.code === 'INVALID_NOTIFICATION_PAYLOAD',
   );
 });
@@ -44,7 +45,7 @@ void test('customer notifications authorize and scope the list to the active hou
 
 void test('notification store uses descending created-at and id cursor pagination', async () => {
   const id = randomUUID(); const olderId = randomUUID(); const createdAt = new Date('2026-07-22T00:00:00.000Z'); let query: unknown;
-  const tx = wrapPrismaTransaction({ notification: { findMany: (input: unknown) => { query = input; return Promise.resolve([{ id, type: 'leave_accepted', payload: { leaveRequestId: 'request' }, readAt: null, createdAt }, { id: olderId, type: 'leave_accepted', payload: { leaveRequestId: 'request' }, readAt: null, createdAt }]); } } } as never);
+  const tx = wrapPrismaTransaction({ notification: { findMany: (input: unknown) => { query = input; return Promise.resolve([{ id, type: 'leave_accepted', payload: { householdId, leaveRequestId: 'request' }, readAt: null, createdAt }, { id: olderId, type: 'leave_accepted', payload: { householdId, leaveRequestId: 'request' }, readAt: null, createdAt }]); } } } as never);
   const page = await new PrismaNotificationStore().list(tx, vendorId, recipientUserId, { limit: 1 });
   assert.deepEqual((query as { orderBy: unknown }).orderBy, [{ createdAt: 'desc' }, { id: 'desc' }]);
   assert.equal(page.items.length, 1); assert.ok(page.nextCursor);
@@ -54,10 +55,10 @@ void test('agent-reported skip uses the schema spelling only at the persistence 
   const id = randomUUID(); const scheduledDeliveryId = randomUUID(); const createdAt = new Date('2026-07-22T00:00:00.000Z'); let persistedType: unknown;
   const tx = wrapPrismaTransaction({ notification: {
     create: ({ data }: { data: { type: unknown } }) => { persistedType = data.type; return Promise.resolve({}); },
-    findMany: () => Promise.resolve([{ id, type: 'agent_skip', payload: { scheduledDeliveryId }, readAt: null, createdAt }]),
+    findMany: () => Promise.resolve([{ id, type: 'agent_skip', payload: { householdId, scheduledDeliveryId }, readAt: null, createdAt }]),
   } } as never);
   const store = new PrismaNotificationStore();
-  await store.append(tx, { id, vendorId, recipientUserId, type: 'agent_reported_skip', payload: { scheduledDeliveryId } });
+  await store.append(tx, { id, vendorId, householdId, recipientUserId, type: 'agent_reported_skip', payload: { scheduledDeliveryId } });
   const page = await store.list(tx, vendorId, recipientUserId, {});
   assert.equal(persistedType, 'agent_skip');
   assert.equal(page.items[0]?.type, 'agent_reported_skip');

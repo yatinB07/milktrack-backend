@@ -4,6 +4,19 @@ import type { LeaveAction, LeaveOccurrenceClassification, LeaveRequestStatus } f
 
 export type LeaveDecisionStatus = 'pending' | 'approved' | 'rejected';
 export type LeaveSource = 'customer' | 'vendor_admin' | 'system';
+export type LeaveRevisionSubscription = Readonly<{
+  subscriptionId: string;
+  selected: boolean;
+}>;
+export type LeaveOccurrenceTransition = Readonly<{
+  subscriptionId: string;
+  deliverySlotId: string;
+  serviceDate: string;
+  previousEffectiveStatus: 'scheduled' | 'skipped_by_customer';
+  requestedEffectiveStatus: 'scheduled' | 'skipped_by_customer';
+  timing: 'on_time' | 'late';
+  proposedBehavior: 'accept' | 'pending_approval' | 'reject';
+}>;
 
 export type LeaveRevisionRecord = Readonly<{
   id: string; action: LeaveAction; startDate: string; endDate: string; source: LeaveSource; createdBy: string;

@@ -9,6 +9,7 @@ test.after(() => Promise.all([runtime.end(), owner.end()]));
 
 type Fixture = Readonly<{
   vendorId: string;
+  userId: string;
   householdId: string;
   deliveryId: string;
 }>;
@@ -69,7 +70,7 @@ async function fixture(label: string): Promise<Fixture> {
     client.release();
   }
   await owner.query(`INSERT INTO scheduled_deliveries (id, vendor_id, subscription_id, subscription_revision_id, household_id, product_id, unit_id, delivery_slot_id, service_date, planned_quantity, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, '2030-01-01', 1, now())`, [deliveryId, vendorId, subscriptionId, revisionId, householdId, productId, unitId, slotId]);
-  return { vendorId, householdId, deliveryId };
+  return { vendorId, userId, householdId, deliveryId };
 }
 
 async function cleanup(values: readonly Fixture[]) {
@@ -119,6 +120,13 @@ void test('Phase 3 tables enforce tenant isolation, immutable history, and deliv
       await client.query(`INSERT INTO delivery_price_snapshots (vendor_id, scheduled_delivery_id, amount_minor, currency, pricing_level, source_price_id, source_price_type, resolved_at) VALUES ($1, $2, 1000, 'INR', 'global', $3, 'global_price', now())`, [a.vendorId, a.deliveryId, randomUUID()]);
       await rejects(client, `INSERT INTO delivery_price_snapshots (vendor_id, scheduled_delivery_id, amount_minor, currency, pricing_level, source_price_id, source_price_type, resolved_at) VALUES ($1, $2, 1000, 'INR', 'global', $3, 'global_price', now())`, [a.vendorId, a.deliveryId, randomUUID()], /duplicate key/u);
       await rejects(client, `INSERT INTO delivery_events (id, vendor_id, scheduled_delivery_id, event_type, source, occurred_at, received_at, latitude) VALUES ($1, $2, $3, 'skipped_by_agent', 'delivery_agent', now(), now(), 91)`, [randomUUID(), a.vendorId, a.deliveryId], /delivery_events_coordinates_check/u);
+      await rejects(client, `INSERT INTO delivery_events (id, vendor_id, scheduled_delivery_id, event_type, source, occurred_at, received_at, latitude) VALUES ($1, $2, $3, 'skipped_by_agent', 'delivery_agent', now(), now(), 18.52)`, [randomUUID(), a.vendorId, a.deliveryId], /delivery_events_coordinates_check/u);
+      await rejects(client, `INSERT INTO delivery_events (id, vendor_id, scheduled_delivery_id, event_type, source, occurred_at, received_at, longitude) VALUES ($1, $2, $3, 'skipped_by_agent', 'delivery_agent', now(), now(), 73.85)`, [randomUUID(), a.vendorId, a.deliveryId], /delivery_events_coordinates_check/u);
+      await client.query(`INSERT INTO delivery_events (id, vendor_id, scheduled_delivery_id, event_type, source, occurred_at, received_at) VALUES ($1, $2, $3, 'missed', 'delivery_agent', now(), now())`, [randomUUID(), a.vendorId, a.deliveryId]);
+      await client.query(`INSERT INTO delivery_events (id, vendor_id, scheduled_delivery_id, event_type, source, occurred_at, received_at, latitude, longitude) VALUES ($1, $2, $3, 'missed', 'delivery_agent', now(), now(), 18.52, 73.85)`, [randomUUID(), a.vendorId, a.deliveryId]);
+      await client.query(`INSERT INTO delivery_events (id, vendor_id, scheduled_delivery_id, event_type, source, actor_user_id, occurred_at, received_at, reason_code, replaced_event_id) VALUES ($1, $2, $3, 'scheduled', 'customer', $4, now(), now(), 'customer_leave_reversed', $5)`, [randomUUID(), a.vendorId, a.deliveryId, a.userId, eventId]);
+      await rejects(client, `INSERT INTO delivery_events (id, vendor_id, scheduled_delivery_id, event_type, source, actor_user_id, occurred_at, received_at, reason_code) VALUES ($1, $2, $3, 'scheduled', 'customer', $4, now(), now(), 'customer_leave_reversed')`, [randomUUID(), a.vendorId, a.deliveryId, a.userId], /delivery_events_reversal_check/u);
+      await rejects(client, `INSERT INTO notifications (id, vendor_id, recipient_user_id, type, payload) VALUES ($1, $2, $3, 'agent_skip', $4::jsonb)`, [randomUUID(), a.vendorId, a.userId, JSON.stringify({ scheduledDeliveryId: a.deliveryId })], /notifications_household_payload_check/u);
       await rejects(client, "UPDATE scheduled_deliveries SET status='delivered' WHERE id=$1", [a.deliveryId], /scheduled_deliveries_status_consistency_check/u);
     });
   } finally {
