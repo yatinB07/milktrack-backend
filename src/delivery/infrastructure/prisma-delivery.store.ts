@@ -25,7 +25,9 @@ import {
 import {
   canonicalizePositiveQuantity,
   type DeliveryCurrentStatus,
+  requireAgentOutcomeQuantity,
   requireAgentOutcomeTransition,
+  requireCorrectionReason,
   requireCorrectionTransition,
   requireOutcomeReason,
 } from '../domain/delivery-rules.js';
@@ -124,10 +126,18 @@ export class PrismaDeliveryStore extends DeliveryStore {
     const current = await this.lockDelivery(tx, input.vendorId, input.scheduledDeliveryId);
     this.requireVersion(current, input.expectedVersion);
     requireAgentOutcomeTransition(current.currentStatus, input.outcome);
-    const actualQuantity = input.outcome === 'delivered'
-      ? canonicalizePositiveQuantity(input.actualQuantity)
-      : undefined;
+    const actualQuantity = requireAgentOutcomeQuantity(input.outcome, input.actualQuantity);
     if (input.outcome !== 'delivered') requireOutcomeReason(input.outcome, input.reasonCode, input.note);
+    if (input.outcome === 'delivered') {
+      const snapshots = await tx.$queryRaw<Readonly<{ present: boolean }>[]>(Prisma.sql`
+        SELECT EXISTS(
+          SELECT 1 FROM delivery_price_snapshots
+          WHERE vendor_id=${input.vendorId}::uuid AND scheduled_delivery_id=${input.scheduledDeliveryId}::uuid
+        ) AS present`);
+      if (!snapshots[0]?.present) {
+        throw failure('DELIVERY_PRICE_SNAPSHOT_REQUIRED', 'Delivered outcome requires a price snapshot', 409);
+      }
+    }
     await tx.$executeRaw(Prisma.sql`
       INSERT INTO delivery_events (
         id,vendor_id,scheduled_delivery_id,event_type,source,actor_user_id,occurred_at,received_at,
@@ -145,6 +155,7 @@ export class PrismaDeliveryStore extends DeliveryStore {
     const current = await this.lockDelivery(tx, input.vendorId, input.scheduledDeliveryId);
     this.requireVersion(current, input.expectedVersion);
     requireCorrectionTransition(current.currentStatus, input.replacementOutcome, input.actualQuantity);
+    requireCorrectionReason(input.reason);
     const previous = await tx.$queryRaw<Readonly<{ id: string }>[]>(Prisma.sql`
       SELECT id FROM delivery_events WHERE vendor_id=${input.vendorId}::uuid
         AND scheduled_delivery_id=${input.scheduledDeliveryId}::uuid
@@ -182,24 +193,21 @@ export class PrismaDeliveryStore extends DeliveryStore {
   }
 
   async reverseCustomerLeave(context: TransactionContext, key: DeliveryOccurrenceKey, actorUserId: string): Promise<void> {
+    void actorUserId;
     const tx = unwrapPrismaTransaction(context);
     const rows = await tx.$queryRaw<DeliveryRow[]>(Prisma.sql`
-      SELECT ${deliveryColumns} FROM scheduled_deliveries
-      WHERE vendor_id=${key.vendorId}::uuid AND subscription_id=${key.subscriptionId}::uuid
-        AND service_date=${key.serviceDate}::date AND delivery_slot_id=${key.deliverySlotId}::uuid
-        AND status='skipped_by_customer'
-      ORDER BY id FOR UPDATE`);
+      SELECT ${deliveryColumns} FROM scheduled_deliveries d
+      JOIN LATERAL (
+        SELECT event_type,source FROM delivery_events e
+        WHERE e.vendor_id=d.vendor_id AND e.scheduled_delivery_id=d.id
+        ORDER BY e.created_at DESC,e.id DESC LIMIT 1
+      ) latest ON latest.event_type='skipped_by_customer' AND latest.source='customer'
+      WHERE d.vendor_id=${key.vendorId}::uuid AND d.subscription_id=${key.subscriptionId}::uuid
+        AND d.service_date=${key.serviceDate}::date AND d.delivery_slot_id=${key.deliverySlotId}::uuid
+        AND d.status='skipped_by_customer'
+      ORDER BY d.id FOR UPDATE OF d`);
     for (const row of rows) {
       const now = new Date();
-      const previous = await tx.$queryRaw<Readonly<{ id: string }>[]>(Prisma.sql`
-        SELECT id FROM delivery_events WHERE vendor_id=${key.vendorId}::uuid AND scheduled_delivery_id=${row.id}::uuid
-        ORDER BY created_at DESC,id DESC LIMIT 1`);
-      await tx.$executeRaw(Prisma.sql`
-        INSERT INTO delivery_events(
-          id,vendor_id,scheduled_delivery_id,event_type,source,actor_user_id,occurred_at,received_at,note,replaced_event_id
-        ) VALUES (
-          ${Prisma.raw(`gen_random_uuid()`)},${key.vendorId}::uuid,${row.id}::uuid,'skipped_by_customer','system',
-          ${actorUserId}::uuid,${now},${now},'Customer leave reversed',${previous[0]?.id ?? null}::uuid)`);
       const changed = await tx.$executeRaw(Prisma.sql`
         UPDATE scheduled_deliveries SET status='scheduled',finalized_at=NULL,version=version+1,updated_at=${now}
         WHERE id=${row.id}::uuid AND vendor_id=${key.vendorId}::uuid AND version=${row.version}`);

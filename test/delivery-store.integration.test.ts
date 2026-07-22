@@ -78,6 +78,19 @@ void test('delivery store appends before final projection, fences stale versions
   const value = await fixture('store');
   const now = new Date('2030-01-01T06:30:00.000Z');
   try {
+    await assert.rejects(
+      transactions.run(value.vendorId, (tx) => store.appendFinalOutcome(tx, {
+        id: randomUUID(), vendorId: value.vendorId, scheduledDeliveryId: value.deliveryId, expectedVersion: 1,
+        outcome: 'delivered', source: 'delivery_agent', actorUserId: value.actorUserId,
+        occurredAt: now, receivedAt: now, actualQuantity: '1.500',
+      })),
+      (error: unknown) => error instanceof ApplicationError
+        && error.code === 'DELIVERY_PRICE_SNAPSHOT_REQUIRED',
+    );
+    await transactions.run(value.vendorId, (tx) => store.createPriceSnapshot(tx, {
+      vendorId: value.vendorId, scheduledDeliveryId: value.deliveryId, amountMinor: '1000', currency: 'INR',
+      pricingLevel: 'global', sourcePriceId: randomUUID(), sourcePriceType: 'global_price', resolvedAt: now,
+    }));
     const result = await transactions.run(value.vendorId, (tx) => store.appendFinalOutcome(tx, {
       id: randomUUID(), vendorId: value.vendorId, scheduledDeliveryId: value.deliveryId, expectedVersion: 1,
       outcome: 'delivered', source: 'delivery_agent', actorUserId: value.actorUserId,
@@ -85,10 +98,6 @@ void test('delivery store appends before final projection, fences stale versions
     }));
     assert.equal(result.currentStatus, 'delivered');
     assert.equal(result.version, 2);
-    await transactions.run(value.vendorId, (tx) => store.createPriceSnapshot(tx, {
-      vendorId: value.vendorId, scheduledDeliveryId: value.deliveryId, amountMinor: '1000', currency: 'INR',
-      pricingLevel: 'global', sourcePriceId: randomUUID(), sourcePriceType: 'global_price', resolvedAt: now,
-    }));
     const detail = await transactions.run(value.vendorId, (tx) => store.getVendorDetail(tx, value.vendorId, value.deliveryId));
     assert.equal(detail.currentStatus, 'delivered');
     assert.equal(detail.events.length, 1);
@@ -109,6 +118,15 @@ void test('delivery store appends before final projection, fences stale versions
       (error: unknown) => error instanceof ApplicationError && error.code === 'DELIVERY_SNAPSHOT_EXISTS',
     );
     await assert.rejects(
+      transactions.run(value.vendorId, (tx) => store.appendCorrection(tx, {
+        id: randomUUID(), vendorId: value.vendorId, scheduledDeliveryId: value.deliveryId,
+        expectedVersion: 2, replacementOutcome: 'missed', actorUserId: value.actorUserId,
+        occurredAt: now, receivedAt: now, reason: 'x',
+      })),
+      (error: unknown) => error instanceof ApplicationError
+        && error.code === 'INVALID_CORRECTION_REASON',
+    );
+    await assert.rejects(
       transactions.run(value.vendorId, (tx) => store.getCustomerDetail(tx, value.vendorId, value.otherHouseholdId, value.deliveryId)),
       (error: unknown) => error instanceof ApplicationError && error.code === 'DELIVERY_NOT_FOUND',
     );
@@ -127,6 +145,7 @@ void test('leave projection changes only its own final outcome and rolls all wri
     assert.equal((await transactions.run(value.vendorId, (tx) => store.getVendorDetail(tx, value.vendorId, value.deliveryId))).currentStatus, 'skipped_by_customer');
     await transactions.run(value.vendorId, (tx) => projection.reverseCustomerLeave(tx, key, value.actorUserId));
     assert.equal((await transactions.run(value.vendorId, (tx) => store.getVendorDetail(tx, value.vendorId, value.deliveryId))).currentStatus, 'scheduled');
+    assert.equal((await owner.query<{ count: number }>('SELECT count(*)::int AS count FROM delivery_events WHERE vendor_id=$1', [value.vendorId])).rows[0]?.count, 1);
     await assert.rejects(transactions.run(value.vendorId, async (tx) => {
       await store.appendFinalOutcome(tx, {
         id: randomUUID(), vendorId: value.vendorId, scheduledDeliveryId: value.deliveryId, expectedVersion: 3,
@@ -135,6 +154,13 @@ void test('leave projection changes only its own final outcome and rolls all wri
       });
       throw new Error('rollback');
     }), /rollback/u);
-    assert.equal((await owner.query<{ count: number }>('SELECT count(*)::int AS count FROM delivery_events WHERE vendor_id=$1', [value.vendorId])).rows[0]?.count, 2);
+    assert.equal((await owner.query<{ count: number }>('SELECT count(*)::int AS count FROM delivery_events WHERE vendor_id=$1', [value.vendorId])).rows[0]?.count, 1);
+    await transactions.run(value.vendorId, (tx) => projection.applyCustomerLeave(tx, key, value.actorUserId));
+    await owner.query(`INSERT INTO delivery_events(
+      id,vendor_id,scheduled_delivery_id,event_type,source,occurred_at,received_at
+    ) VALUES($1,$2,$3,'skipped_by_customer','system',now(),now())`, [randomUUID(), value.vendorId, value.deliveryId]);
+    await transactions.run(value.vendorId, (tx) => projection.reverseCustomerLeave(tx, key, value.actorUserId));
+    assert.equal((await transactions.run(value.vendorId, (tx) => store.getVendorDetail(tx, value.vendorId, value.deliveryId))).currentStatus, 'skipped_by_customer');
+    assert.equal((await owner.query<{ count: number }>('SELECT count(*)::int AS count FROM delivery_events WHERE vendor_id=$1', [value.vendorId])).rows[0]?.count, 3);
   } finally { await cleanup(value); }
 });

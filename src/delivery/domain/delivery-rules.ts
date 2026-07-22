@@ -68,6 +68,23 @@ export function requireCorrectionTransition(
   }
 }
 
+export function requireAgentOutcomeQuantity(
+  outcome: AgentOutcomeStatus,
+  actualQuantity: string | undefined,
+): string | undefined {
+  if (outcome === 'delivered') return canonicalizePositiveQuantity(actualQuantity);
+  if (actualQuantity !== undefined) {
+    throw new ApplicationError('INVALID_DELIVERY_QUANTITY', 'Only delivered outcomes may have quantity', 400);
+  }
+  return undefined;
+}
+
+export function requireCorrectionReason(reason: string): void {
+  if (reason !== reason.trim() || reason.length < 3 || reason.length > 500) {
+    throw new ApplicationError('INVALID_CORRECTION_REASON', 'Correction reason is invalid', 400);
+  }
+}
+
 export function canonicalizePositiveQuantity(value: string | undefined): string {
   requirePositiveQuantity(value);
   const [integer, fraction = ''] = value.split('.');
