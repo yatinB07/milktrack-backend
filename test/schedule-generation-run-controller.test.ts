@@ -28,6 +28,10 @@ const actor: Actor = {
   memberships: [],
 };
 
+const originalNow = Settings.now;
+test.beforeEach(() => { Settings.now = () => Date.parse('2026-07-20T23:30:00.000Z'); });
+test.afterEach(() => { Settings.now = originalNow; });
+
 const run = {
   id: '00000000-0000-4000-8000-000000000011',
   vendorId,
