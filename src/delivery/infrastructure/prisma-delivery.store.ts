@@ -253,22 +253,27 @@ export class PrismaDeliveryStore extends DeliveryStore {
   ): Promise<DeliveryPage> {
     const limit = this.cursors.parseLimit(query.limit);
     const cursor = query.cursor ? this.cursors.decode(query.cursor) : undefined;
-    const filters = [Prisma.sql`vendor_id=${vendorId}::uuid`];
-    if (householdId) filters.push(Prisma.sql`household_id=${householdId}::uuid`);
-    if ('serviceDate' in query && query.serviceDate) filters.push(Prisma.sql`service_date=${query.serviceDate}::date`);
-    if ('productId' in query && query.productId) filters.push(Prisma.sql`product_id=${query.productId}::uuid`);
-    if ('routeAssignmentId' in query && query.routeAssignmentId) filters.push(Prisma.sql`route_assignment_id=${query.routeAssignmentId}::uuid`);
-    if ('currentStatus' in query && query.currentStatus) filters.push(Prisma.sql`status=${query.currentStatus}`);
-    if (cursor) filters.push(Prisma.sql`(created_at<${cursor.createdAt} OR (created_at=${cursor.createdAt} AND id<${cursor.id}::uuid))`);
+    const filters = [Prisma.sql`d.vendor_id=${vendorId}::uuid`];
+    const scopedHouseholdId = householdId ?? ('householdId' in query ? query.householdId : undefined);
+    if (scopedHouseholdId) filters.push(Prisma.sql`d.household_id=${scopedHouseholdId}::uuid`);
+    if ('serviceDate' in query && query.serviceDate) filters.push(Prisma.sql`d.service_date=${query.serviceDate}::date`);
+    if ('productId' in query && query.productId) filters.push(Prisma.sql`d.product_id=${query.productId}::uuid`);
+    if ('routeAssignmentId' in query && query.routeAssignmentId) filters.push(Prisma.sql`d.route_assignment_id=${query.routeAssignmentId}::uuid`);
+    if ('routeId' in query && query.routeId) filters.push(Prisma.sql`a.route_id=${query.routeId}::uuid`);
+    if ('agentMembershipId' in query && query.agentMembershipId) filters.push(Prisma.sql`a.agent_membership_id=${query.agentMembershipId}::uuid`);
+    if ('currentStatus' in query && query.currentStatus) filters.push(Prisma.sql`d.status=${query.currentStatus}`);
+    if (cursor) filters.push(Prisma.sql`(d.service_date<${cursor.createdAt}::date OR (d.service_date=${cursor.createdAt}::date AND d.id<${cursor.id}::uuid))`);
     const rows = await tx.$queryRaw<DeliveryRow[]>(Prisma.sql`
-      SELECT ${deliveryColumns} FROM scheduled_deliveries WHERE ${Prisma.join(filters, ' AND ')}
-      ORDER BY created_at DESC,id DESC LIMIT ${limit + 1}`);
+      SELECT ${deliveryColumns} FROM scheduled_deliveries d
+      LEFT JOIN route_assignments a ON a.vendor_id=d.vendor_id AND a.id=d.route_assignment_id
+      WHERE ${Prisma.join(filters, ' AND ')}
+      ORDER BY d.service_date DESC,d.id DESC LIMIT ${limit + 1}`);
     const visible = rows.slice(0, limit);
     const last = visible.at(-1);
     return {
       items: visible.map((row) => this.record(row)),
       ...(rows.length > limit && last
-        ? { nextCursor: this.cursors.encode({ createdAt: last.createdAt, id: last.id }) }
+        ? { nextCursor: this.cursors.encode({ createdAt: new Date(`${last.serviceDate}T00:00:00.000Z`), id: last.id }) }
         : {}),
     };
   }

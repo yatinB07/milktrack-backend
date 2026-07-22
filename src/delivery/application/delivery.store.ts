@@ -127,6 +127,8 @@ export type VendorDeliveryQuery = Readonly<{
   serviceDate?: string;
   householdId?: string;
   routeAssignmentId?: string;
+  routeId?: string;
+  agentMembershipId?: string;
   productId?: string;
   currentStatus?: DeliveryCurrentStatus;
   cursor?: string;
