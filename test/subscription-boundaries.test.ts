@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
 import { PrismaCatalogService } from '../src/catalog/application/catalog.service.js';
@@ -54,4 +55,13 @@ void test('Vendors exposes only the transaction-bound subscription timezone', as
     undefined as never, undefined as never,
   );
   assert.deepEqual(await service.getSubscriptionTimezone(tx, 'vendor'), { timezone: 'Asia/Kolkata' });
+});
+
+void test('subscription labels keep a narrow database-only module boundary', async () => {
+  const moduleSource = await readFile(new URL('../src/subscriptions/subscription-labels.module.ts', import.meta.url), 'utf8');
+  const readerSource = await readFile(new URL('../src/subscriptions/infrastructure/prisma-subscription-label.reader.ts', import.meta.url), 'utf8');
+
+  assert.match(moduleSource, /from '\.\.\/database\/database\.module\.js'/u);
+  assert.doesNotMatch(moduleSource, /SubscriptionsModule|from '\.\.\/leave\//u);
+  assert.doesNotMatch(readerSource, /from '\.\.\/\.\.\/catalog\/infrastructure|from '\.\.\/\.\.\/leave\//u);
 });
