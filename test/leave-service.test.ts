@@ -3,6 +3,7 @@ import test from 'node:test';
 
 import type { TransactionContext } from '../src/common/application/transaction-context.js';
 import { requestContextStore, type Actor } from '../src/common/context/request-context.js';
+import type { DeliveryLeaveCandidate } from '../src/delivery/application/delivery.store.js';
 import { DefaultLeaveService } from '../src/leave/application/leave.service.js';
 import type { LeaveRequestRecord, LeaveRevisionDecisionRecord, LeaveRevisionRecord } from '../src/leave/application/leave.store.js';
 import type { SubscriptionLabelReference } from '../src/subscriptions/application/subscription-label.reader.js';
@@ -28,7 +29,7 @@ void test('preview is household-scoped and advisory while create revalidates and
     assertNoOverlap: () => { calls.push('overlap'); return Promise.resolve(); },
     lockSubscriptions: () => { calls.push('lock'); return Promise.resolve(); },
     createRevision: () => { calls.push('create'); return Promise.resolve(request()); },
-    isEffectivelyOnLeave: () => { calls.push('effective'); return Promise.resolve(true); },
+    effectiveOccurrenceKeys: () => { calls.push('effective'); return Promise.resolve(new Set([deliveryOccurrenceKey(deliveryCandidate(1, '2030-01-02'))])); },
   };
   const service = new DefaultLeaveService(
     { execute: (_input: unknown, operation: (current: TransactionContext) => Promise<unknown>) => operation(tx) } as never,
@@ -37,9 +38,9 @@ void test('preview is household-scoped and advisory while create revalidates and
     { getDeliveryPolicyForTransaction: () => Promise.resolve({ vendorId, skipCutoffMinutes: 60, lateLeavePolicy: 'approval', captureAgentLocationEvidence: false, version: 1 }), getSubscriptionTimezone: () => Promise.resolve({ timezone: 'Asia/Kolkata' }) } as never,
     { append: () => { calls.push('audit'); return Promise.resolve(); } },
     {
-      listAffected: () => { throw new Error('Unexpected bounded delivery lookup'); },
-      synchronize: () => { throw new Error('Unexpected bounded delivery synchronization'); },
-      applyCustomerLeave: () => { calls.push('project'); return Promise.resolve(); },
+      listAffected: () => { calls.push('list'); return Promise.resolve({ items: [deliveryCandidate(1, '2030-01-02')] }); },
+      synchronize: () => { calls.push('project'); return Promise.resolve({ agentMembershipIds: [agentMembershipId] }); },
+      applyCustomerLeave: () => Promise.resolve(),
       reverseCustomerLeave: () => Promise.resolve(),
     },
     { append: (_tx: TransactionContext, value: unknown) => { calls.push('notification'); notifications.push(value); return Promise.resolve(); } },
@@ -55,7 +56,7 @@ void test('preview is household-scoped and advisory while create revalidates and
     const created = await service.create(actor, vendorId, householdId, selection);
     assert.equal(created.currentStatus, 'accepted');
   });
-  assert.deepEqual(calls, ['household', 'preview', 'overlap', 'labels', 'household', 'lock', 'preview', 'create', 'preview', 'effective', 'project', 'routing', 'membership', 'audit', 'notification', 'notification', 'labels']);
+  assert.deepEqual(calls, ['household', 'preview', 'overlap', 'labels', 'household', 'lock', 'preview', 'create', 'list', 'effective', 'project', 'membership', 'audit', 'notification', 'notification', 'labels']);
   assert.equal(notifications.every((value) => (value as { householdId?: string }).householdId === householdId), true);
 });
 
@@ -86,7 +87,8 @@ void test('amend and cancel persist late old-to-new transitions and retain remov
     store as never,
     { getDeliveryPolicyForTransaction: () => Promise.resolve({ vendorId, skipCutoffMinutes: 60, lateLeavePolicy: 'approval', captureAgentLocationEvidence: false, version: 1 }), getSubscriptionTimezone: () => Promise.resolve({ timezone: 'UTC' }) } as never,
     { append: () => Promise.resolve() },
-    { applyCustomerLeave: () => Promise.resolve(), reverseCustomerLeave: () => Promise.resolve() } as never,
+    { listAffected: () => Promise.resolve({ items: [] }), synchronize: () => Promise.resolve({ agentMembershipIds: [] }),
+      applyCustomerLeave: () => Promise.resolve(), reverseCustomerLeave: () => Promise.resolve() },
     { append: () => Promise.resolve() },
     { project: () => Promise.resolve([]), projectRoute: () => Promise.resolve(undefined) },
     { customerMembershipHistory: () => Promise.resolve([]) } as never,
@@ -146,6 +148,135 @@ void test('late transition derivation bounds a hundred-year request to the seven
   assert.deepEqual(previewEnds, ['2129-12-31', '2030-01-07']);
 });
 
+void test('hundred-year leave synchronizes only two existing delivery rows without preview or routing enumeration', async () => {
+  const candidates = [deliveryCandidate(1, '2030-01-02'), deliveryCandidate(2, '2129-12-30')];
+  const labelCalls: SubscriptionLabelReference[][] = [];
+  const membershipCalls: string[][] = [];
+  const notifiedUsers: string[] = [];
+  let persisted = false;
+  let previewPageCallsForFullRange = 0;
+  let deliveryCandidateCount = 0;
+  let maxCandidatePageSize = 0;
+  let routingProjectCalls = 0;
+  const service = boundedService({
+    preview: () => {
+      if (persisted) previewPageCallsForFullRange += 1;
+      return Promise.resolve({ items: [], onTimeCount: 2, lateCount: 0 });
+    },
+    lockSubscriptions: () => Promise.resolve(),
+    createRevision: () => { persisted = true; return Promise.resolve(request()); },
+    effectiveOccurrenceKeys: (_tx: TransactionContext, input: { candidates: readonly DeliveryLeaveCandidate[] }) =>
+      Promise.resolve(new Set(input.candidates.map(deliveryOccurrenceKey))),
+  }, {
+    listAffected: () => Promise.resolve({ items: candidates }),
+    synchronize: (_tx: TransactionContext, _actor: unknown, states: readonly DeliveryLeaveCandidate[]) => {
+      deliveryCandidateCount += states.length;
+      maxCandidatePageSize = Math.max(maxCandidatePageSize, states.length);
+      return Promise.resolve({ agentMembershipIds: [agentMembershipId, agentMembershipId] });
+    },
+  }, {
+    routing: { project: () => { routingProjectCalls += 1; return Promise.resolve([]); }, projectRoute: () => Promise.resolve(undefined) },
+    memberships: { customerMembershipHistory: (_tx: TransactionContext, _vendorId: string, ids: readonly string[]) => {
+      membershipCalls.push([...ids]);
+      return Promise.resolve([{ membershipId: agentMembershipId, userId: agentUserId }]);
+    } },
+    notifications: { append: (_tx: TransactionContext, notification: { recipientUserId: string }) => {
+      notifiedUsers.push(notification.recipientUserId);
+      return Promise.resolve();
+    } },
+    labels: { read: (_tx: TransactionContext, input: { references: readonly SubscriptionLabelReference[] }) => {
+      labelCalls.push([...input.references]);
+      return Promise.resolve(labelMatches(input.references));
+    } },
+  });
+  (service as unknown as { now: () => Date }).now = () => new Date('2029-12-31T00:00:00.000Z');
+
+  await requestContextStore.run({ correlationId: '00000000-0000-4000-8000-000000000095' }, () => service.create(
+    actor, vendorId, householdId, { startDate: '2030-01-01', endDate: '2129-12-31', subscriptionIds: [subscriptionId] },
+  ));
+
+  assert.equal(previewPageCallsForFullRange, 0);
+  assert.equal(deliveryCandidateCount, 2);
+  assert.ok(maxCandidatePageSize <= 100);
+  assert.equal(routingProjectCalls, 0);
+  assert.deepEqual(membershipCalls, [[agentMembershipId]]);
+  assert.deepEqual(notifiedUsers.sort(), [actor.userId, agentUserId].sort());
+  assert.equal(labelCalls.length, 1);
+});
+
+void test('delivery synchronization pages at 100 in cursor order and deduplicates one membership lookup', async () => {
+  const candidates = Array.from({ length: 102 }, (_, index) => deliveryCandidate(index + 1, `${2030 + index}-01-01`));
+  const cursors: Array<string | undefined> = [];
+  const effectiveBatches: string[][] = [];
+  const synchronizedBatches: Array<readonly (DeliveryLeaveCandidate & { effective: boolean })[]> = [];
+  const membershipCalls: string[][] = [];
+  const secondAgentMembershipId = '00000000-0000-4000-8000-000000000017';
+  let persisted = false;
+  const service = boundedService({
+    preview: () => Promise.resolve({ items: [], onTimeCount: 102, lateCount: 0 }),
+    lockSubscriptions: () => Promise.resolve(),
+    createRevision: () => { persisted = true; return Promise.resolve(request()); },
+    effectiveOccurrenceKeys: (_tx: TransactionContext, input: { candidates: readonly DeliveryLeaveCandidate[] }) => {
+      effectiveBatches.push(input.candidates.map(({ id }) => id));
+      return Promise.resolve(new Set(input.candidates.filter((_, index) => index % 2 === 0).map(deliveryOccurrenceKey)));
+    },
+  }, {
+    listAffected: (_tx: TransactionContext, _vendorId: string, _selections: unknown, query: { cursor?: string; limit: number }) => {
+      assert.equal(persisted, true);
+      assert.equal(query.limit, 100);
+      cursors.push(query.cursor);
+      return Promise.resolve(query.cursor
+        ? { items: candidates.slice(100) }
+        : { items: candidates.slice(0, 100), nextCursor: 'page-2' });
+    },
+    synchronize: (_tx: TransactionContext, _actor: unknown, states: readonly (DeliveryLeaveCandidate & { effective: boolean })[]) => {
+      synchronizedBatches.push(states);
+      return Promise.resolve({ agentMembershipIds: states.length === 100
+        ? [secondAgentMembershipId, agentMembershipId, secondAgentMembershipId]
+        : [agentMembershipId] });
+    },
+  }, {
+    memberships: { customerMembershipHistory: (_tx: TransactionContext, _vendorId: string, ids: readonly string[]) => {
+      membershipCalls.push([...ids]);
+      return Promise.resolve(ids.map((id) => ({ membershipId: id, userId: id })));
+    } },
+  });
+  (service as unknown as { now: () => Date }).now = () => new Date('2029-12-31T00:00:00.000Z');
+
+  await requestContextStore.run({ correlationId: '00000000-0000-4000-8000-000000000094' }, () => service.create(
+    actor, vendorId, householdId, { startDate: '2030-01-01', endDate: '2131-12-31', subscriptionIds: [subscriptionId] },
+  ));
+
+  assert.deepEqual(cursors, [undefined, 'page-2']);
+  assert.deepEqual(effectiveBatches.map(({ length }) => length), [100, 2]);
+  assert.deepEqual(synchronizedBatches.map(({ length }) => length), [100, 2]);
+  assert.deepEqual(synchronizedBatches.flat().map(({ id }) => id), candidates.map(({ id }) => id));
+  assert.equal(synchronizedBatches.every((batch) => batch.length <= 100), true);
+  assert.equal(synchronizedBatches.flat().every((item, index) => item.effective === ((index % 100) % 2 === 0)), true);
+  assert.deepEqual(membershipCalls, [[agentMembershipId, secondAgentMembershipId]]);
+});
+
+void test('empty affected-delivery page skips effective, synchronization, and membership work', async () => {
+  const calls: string[] = [];
+  const service = boundedService({
+    preview: () => Promise.resolve({ items: [], onTimeCount: 1, lateCount: 0 }),
+    lockSubscriptions: () => Promise.resolve(),
+    createRevision: () => Promise.resolve(request()),
+    effectiveOccurrenceKeys: () => { calls.push('effective'); return Promise.resolve(new Set()); },
+  }, {
+    listAffected: () => { calls.push('list'); return Promise.resolve({ items: [] }); },
+    synchronize: () => { calls.push('synchronize'); return Promise.resolve({ agentMembershipIds: [] }); },
+  }, {
+    memberships: { customerMembershipHistory: () => { calls.push('memberships'); return Promise.resolve([]); } },
+  });
+  (service as unknown as { now: () => Date }).now = () => new Date('2029-12-31T00:00:00.000Z');
+
+  await requestContextStore.run({ correlationId: '00000000-0000-4000-8000-000000000093' }, () => service.create(
+    actor, vendorId, householdId, { startDate: '2030-01-01', endDate: '2030-01-02', subscriptionIds: [subscriptionId] },
+  ));
+  assert.deepEqual(calls, ['list']);
+});
+
 void test('subsequent amend and cancel retain effectively skipped unselected associations', async () => {
   const replacementId = requestedSubscriptionId;
   const nextId = '00000000-0000-4000-8000-000000000017';
@@ -179,7 +310,8 @@ void test('subsequent amend and cancel retain effectively skipped unselected ass
     { execute: (_input: unknown, operation: (currentTx: TransactionContext) => Promise<unknown>) => operation(tx) } as never,
     { requireCustomerSubscriptionHousehold: () => Promise.resolve({ householdId }) } as never, store as never,
     { getDeliveryPolicyForTransaction: () => Promise.resolve({ vendorId, skipCutoffMinutes: 60, lateLeavePolicy: 'approval', captureAgentLocationEvidence: false, version: 1 }), getSubscriptionTimezone: () => Promise.resolve({ timezone: 'UTC' }) } as never,
-    { append: () => Promise.resolve() }, { applyCustomerLeave: () => Promise.resolve(), reverseCustomerLeave: () => Promise.resolve() } as never,
+    { append: () => Promise.resolve() }, { listAffected: () => Promise.resolve({ items: [] }), synchronize: () => Promise.resolve({ agentMembershipIds: [] }),
+      applyCustomerLeave: () => Promise.resolve(), reverseCustomerLeave: () => Promise.resolve() },
     { append: () => Promise.resolve() }, { project: () => Promise.resolve([]), projectRoute: () => Promise.resolve(undefined) },
     { customerMembershipHistory: () => Promise.resolve([]) } as never,
     { read: (_tx: TransactionContext, input: { references: readonly SubscriptionLabelReference[] }) => Promise.resolve(labelMatches(input.references)) },
@@ -406,6 +538,41 @@ function directService(store: Record<string, unknown>, labels: Record<string, un
     { customerMembershipHistory: () => Promise.resolve([]) } as never,
     labels as never,
   );
+}
+
+function boundedService(
+  store: Record<string, unknown>,
+  deliveries: Record<string, unknown>,
+  overrides: Readonly<{
+    notifications?: Record<string, unknown>;
+    routing?: Record<string, unknown>;
+    memberships?: Record<string, unknown>;
+    labels?: Record<string, unknown>;
+  }> = {},
+) {
+  return new DefaultLeaveService(
+    { execute: (_input: unknown, operation: (current: TransactionContext) => Promise<unknown>) => operation(tx) } as never,
+    { requireCustomerSubscriptionHousehold: () => Promise.resolve({ householdId }) } as never,
+    store as never,
+    { getDeliveryPolicyForTransaction: () => Promise.resolve({ vendorId, skipCutoffMinutes: 60, lateLeavePolicy: 'approval', captureAgentLocationEvidence: false, version: 1 }), getSubscriptionTimezone: () => Promise.resolve({ timezone: 'UTC' }) } as never,
+    { append: () => Promise.resolve() },
+    deliveries as never,
+    (overrides.notifications ?? { append: () => Promise.resolve() }) as never,
+    (overrides.routing ?? { project: () => Promise.resolve([]), projectRoute: () => Promise.resolve(undefined) }) as never,
+    (overrides.memberships ?? { customerMembershipHistory: () => Promise.resolve([]) }) as never,
+    (overrides.labels ?? { read: (_tx: TransactionContext, input: { references: readonly SubscriptionLabelReference[] }) => Promise.resolve(labelMatches(input.references)) }) as never,
+  );
+}
+
+function deliveryCandidate(index: number, serviceDate: string): DeliveryLeaveCandidate {
+  return {
+    id: `00000000-0000-4000-8000-${String(index).padStart(12, '0')}`,
+    vendorId, subscriptionId, deliverySlotId: slotId, serviceDate, version: 1,
+  };
+}
+
+function deliveryOccurrenceKey(value: Pick<DeliveryLeaveCandidate, 'subscriptionId' | 'serviceDate' | 'deliverySlotId'>) {
+  return `${value.serviceDate}:${value.subscriptionId}:${value.deliverySlotId}`;
 }
 
 function labelMatches(references: readonly SubscriptionLabelReference[]) {

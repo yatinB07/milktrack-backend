@@ -9,7 +9,7 @@ import type { TransactionContext } from '../src/common/application/transaction-c
 import { requestContextStore, type Actor } from '../src/common/context/request-context.js';
 import { PrismaTenantTransactionRunner } from '../src/database/infrastructure/prisma-tenant-transaction.runner.js';
 import { PrismaService } from '../src/database/infrastructure/prisma.service.js';
-import { DefaultDeliveryLeaveProjection } from '../src/delivery/application/delivery-leave.projection.js';
+import { DefaultDeliveryLeaveProjection, type DeliveryLeaveProjection } from '../src/delivery/application/delivery-leave.projection.js';
 import { PrismaDeliveryStore } from '../src/delivery/infrastructure/prisma-delivery.store.js';
 import { DefaultLeaveService } from '../src/leave/application/leave.service.js';
 import { DefaultSchedulingLeaveService } from '../src/leave/application/scheduling-leave.service.js';
@@ -110,7 +110,9 @@ function actor(value: Fixture): Actor {
   };
 }
 
-function service(writer: NotificationWriter = notificationStore, options: Readonly<{ now?: Date; skipCutoffMinutes?: number }> = {}) {
+function service(writer: NotificationWriter = notificationStore, options: Readonly<{
+  now?: Date; skipCutoffMinutes?: number; deliveryProjection?: DeliveryLeaveProjection;
+}> = {}) {
   const authorization = { execute: ({ vendorId }: { vendorId: string }, work: (tx: TransactionContext) => Promise<unknown>) => transactions.run(vendorId, work) } as TenantAuthorizationExecutor;
   const memberService = { customerMembershipHistory: (tx: TransactionContext, vendorId: string, ids: readonly string[]) => memberships.customerMembershipHistory(tx, vendorId, ids) } as MembershipService;
   const leave = new DefaultLeaveService(
@@ -119,7 +121,7 @@ function service(writer: NotificationWriter = notificationStore, options: Readon
     leaves,
     { getDeliveryPolicyForTransaction: () => Promise.resolve({ skipCutoffMinutes: options.skipCutoffMinutes ?? 60, lateLeavePolicy: 'approval', captureAgentLocationEvidence: false, version: 1 }), getSubscriptionTimezone: () => Promise.resolve({ timezone: 'UTC' }) } as never,
     { append: () => Promise.resolve() },
-    projection,
+    options.deliveryProjection ?? projection,
     writer,
     routing,
     memberService,
@@ -198,18 +200,38 @@ void test('rejected leave decision notifies only the requesting customer', async
 
 void test('notification failure rolls back the accepted leave, schedule event, and prior notification', async () => {
   const value = await fixture('rollback');
+  let synchronizedPages = 0;
+  const countedProjection = {
+    listAffected: projection.listAffected.bind(projection),
+    synchronize: (...input: Parameters<DefaultDeliveryLeaveProjection['synchronize']>) => {
+      synchronizedPages += 1;
+      return projection.synchronize(...input);
+    },
+    applyCustomerLeave: projection.applyCustomerLeave.bind(projection),
+    reverseCustomerLeave: projection.reverseCustomerLeave.bind(projection),
+  };
   const writer: NotificationWriter = { append: async (tx, notification) => {
     await notificationStore.append(tx, notification);
     if (notification.recipientUserId === value.agentUserId) throw new Error('notification failed');
   } };
   try {
-    await assert.rejects(requestContextStore.run({ correlationId: randomUUID() }, () => service(writer).create(actor(value), value.vendorId, value.householdId, {
-      startDate: '2030-01-01', endDate: '2030-01-01', subscriptionIds: [value.subscriptionId],
+    await owner.query(`INSERT INTO scheduled_deliveries(
+      id,vendor_id,subscription_id,subscription_revision_id,household_id,product_id,unit_id,delivery_slot_id,
+      service_date,planned_quantity,status,updated_at
+    ) SELECT gen_random_uuid(),$1,$2,$3,$4,$5,$6,$7,date '2030-01-08'+series,1,'scheduled',now()
+      FROM generate_series(1,100) series`, [
+      value.vendorId, value.subscriptionId, value.revisionId, value.householdId, value.productId, value.unitId, value.slotId,
+    ]);
+    await assert.rejects(requestContextStore.run({ correlationId: randomUUID() }, () => service(writer, { deliveryProjection: countedProjection }).create(actor(value), value.vendorId, value.householdId, {
+      startDate: '2030-01-01', endDate: '2030-04-18', subscriptionIds: [value.subscriptionId],
     })), /notification failed/u);
+    assert.equal(synchronizedPages, 2);
     assert.equal((await owner.query<{ count: number }>('SELECT count(*)::int AS count FROM leave_requests WHERE vendor_id=$1', [value.vendorId])).rows[0]?.count, 0);
     assert.equal((await owner.query<{ count: number }>('SELECT count(*)::int AS count FROM delivery_events WHERE vendor_id=$1', [value.vendorId])).rows[0]?.count, 0);
     assert.equal((await owner.query<{ count: number }>('SELECT count(*)::int AS count FROM notifications WHERE vendor_id=$1', [value.vendorId])).rows[0]?.count, 0);
-    assert.deepEqual((await owner.query<{ status: string }>('SELECT status FROM scheduled_deliveries WHERE vendor_id=$1 ORDER BY service_date', [value.vendorId])).rows, [{ status: 'scheduled' }, { status: 'scheduled' }]);
+    assert.deepEqual((await owner.query<{ total: number; scheduled: number }>(`SELECT count(*)::int AS total,
+      count(*) FILTER (WHERE status='scheduled')::int AS scheduled FROM scheduled_deliveries WHERE vendor_id=$1`, [value.vendorId])).rows,
+    [{ total: 102, scheduled: 102 }]);
   } finally {
     await cleanup(value);
   }

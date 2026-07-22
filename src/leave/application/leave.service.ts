@@ -103,7 +103,7 @@ export class DefaultLeaveService extends LeaveService {
         subscriptions: command.subscriptionIds.map((subscriptionId) => ({ subscriptionId, selected: true })),
         status: status.status, decisions: status.decisions,
       });
-      const agentUserIds = await this.synchronize(tx, vendorId, householdId, [command], context, actor.userId);
+      const agentUserIds = await this.synchronize(tx, vendorId, [command], actor.userId);
       await this.audit(tx, actor, vendorId, result, 'leave.created');
       await this.notifyOutcome(tx, result, actor.userId, agentUserIds);
       return this.customerResult(tx, vendorId, householdId, result);
@@ -133,7 +133,7 @@ export class DefaultLeaveService extends LeaveService {
         subscriptions: subscriptionIds.map((subscriptionId) => ({ subscriptionId, selected: command.subscriptionIds.includes(subscriptionId) })),
         expectedVersion: command.expectedVersion, status: status.status, decisions: status.decisions,
       });
-      const agentUserIds = await this.synchronize(tx, vendorId, householdId, [...previous, command], context, actor.userId);
+      const agentUserIds = await this.synchronize(tx, vendorId, [...previous, command], actor.userId);
       await this.audit(tx, actor, vendorId, result, 'leave.amended');
       await this.notifyOutcome(tx, result, actor.userId, agentUserIds);
       return this.customerResult(tx, vendorId, householdId, result);
@@ -156,7 +156,7 @@ export class DefaultLeaveService extends LeaveService {
         subscriptions: subscriptionIds.map((subscriptionId) => ({ subscriptionId, selected: false })),
         expectedVersion: command.expectedVersion, ...(command.note ? { note: command.note } : {}), status: status.status, decisions: status.decisions,
       });
-      await this.synchronize(tx, vendorId, householdId, previous, context, actor.userId);
+      await this.synchronize(tx, vendorId, previous, actor.userId);
       await this.audit(tx, actor, vendorId, result, 'leave.cancelled'); return this.customerResult(tx, vendorId, householdId, result);
     });
   }
@@ -269,31 +269,25 @@ export class DefaultLeaveService extends LeaveService {
   private async synchronize(
     tx: TransactionContext,
     vendorId: string,
-    householdId: string,
     selections: readonly Readonly<{ startDate: string; endDate: string; subscriptionIds: readonly string[] }>[],
-    context: Awaited<ReturnType<DefaultLeaveService['context']>>,
     actorUserId: string,
   ): Promise<readonly string[]> {
-    const accepted: Array<{ serviceDate: string; deliverySlotId: string }> = [];
-    for (const selection of selections) {
-      let cursor: string | undefined;
-      do {
-        const page = await this.leaves.preview(tx, {
-          vendorId, householdId, ...selection, ...context, now: this.now(), limit: 100, ...(cursor ? { cursor } : {}),
-        });
-        for (const occurrence of page.items) {
-          const key = { vendorId, subscriptionId: occurrence.subscriptionId, serviceDate: occurrence.serviceDate, deliverySlotId: occurrence.deliverySlotId };
-          if (await this.leaves.isEffectivelyOnLeave(tx, key)) {
-            await this.deliveries.applyCustomerLeave(tx, key, actorUserId);
-            accepted.push(occurrence);
-          } else {
-            await this.deliveries.reverseCustomerLeave(tx, key, actorUserId);
-          }
-        }
-        cursor = page.nextCursor;
-      } while (cursor);
-    }
-    return this.agentUserIds(tx, vendorId, householdId, accepted);
+    const agentMembershipIds = new Set<string>();
+    let cursor: string | undefined;
+    do {
+      const page = await this.deliveries.listAffected(tx, vendorId, selections, {
+        limit: 100, ...(cursor ? { cursor } : {}),
+      });
+      if (page.items.length > 0) {
+        const effective = await this.leaves.effectiveOccurrenceKeys(tx, { vendorId, candidates: page.items });
+        const synchronized = await this.deliveries.synchronize(tx, { userId: actorUserId, source: 'customer' },
+          page.items.map((item) => ({ ...item, effective: effective.has(occurrenceKey(item)) })));
+        for (const id of synchronized.agentMembershipIds) agentMembershipIds.add(id);
+      }
+      cursor = page.nextCursor;
+    } while (cursor);
+    if (agentMembershipIds.size === 0) return [];
+    return (await this.memberships.customerMembershipHistory(tx, vendorId, [...agentMembershipIds].sort())).map(({ userId }) => userId);
   }
 
   private async agentUserIds(
