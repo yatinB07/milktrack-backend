@@ -25,9 +25,20 @@ export type CancelLeaveCommand = Readonly<{ expectedVersion: number; note?: stri
 export type LeaveDecisionQuery = PageQuery;
 export type DecideLeaveOccurrenceCommand = Readonly<{ expectedVersion: number; decision: 'approved' | 'rejected'; reason: string }>;
 
-export type LeaveRequestResult = Omit<LeaveRequestRecord, 'status'> & Readonly<{ currentStatus: LeaveRequestStatus }>;
+export type CustomerLeaveAction = 'amend' | 'cancel';
+export type VendorLeaveDecisionAction = 'approve' | 'reject';
+export type LeaveRequestResult = Omit<LeaveRequestRecord, 'status'> & Readonly<{
+  currentStatus: LeaveRequestStatus; availableActions: readonly CustomerLeaveAction[];
+}>;
+export type VendorLeaveRequestResult = Omit<LeaveRequestResult, 'availableActions' | 'revisions'> & Readonly<{
+  revisions: readonly (Omit<LeaveRequestRecord['revisions'][number], 'decisions'> & Readonly<{
+    decisions?: readonly ((NonNullable<LeaveRequestRecord['revisions'][number]['decisions']>[number]) & Readonly<{
+      availableActions: readonly VendorLeaveDecisionAction[];
+    }>)[];
+  }>)[];
+}>;
 export type LeaveRequestPage = Readonly<{ items: readonly LeaveRequestResult[]; nextCursor?: string }>;
-export type LeaveDecisionResult = Omit<StoreDecisionResult, 'status' | 'request'> & Readonly<{ currentStatus: StoreDecisionResult['status']; request: LeaveRequestResult }>;
+export type LeaveDecisionResult = Omit<StoreDecisionResult, 'status' | 'request'> & Readonly<{ currentStatus: StoreDecisionResult['status']; request: VendorLeaveRequestResult }>;
 export type LeaveDecisionPage = Readonly<{ items: readonly (Omit<StoreDecisionPage['items'][number], 'status'> & Readonly<{ currentStatus: StoreDecisionPage['items'][number]['status'] }>)[]; nextCursor?: string }>;
 export type LeavePreviewResult = LeavePreviewPage & Readonly<{ timezone: string; skipCutoffMinutes: number; lateLeavePolicy: 'reject' | 'approval' }>;
 
@@ -39,7 +50,7 @@ export abstract class LeaveService {
   abstract amend(actor: Actor, vendorId: string, householdId: string, leaveRequestId: string, command: AmendLeaveCommand): Promise<LeaveRequestResult>;
   abstract cancel(actor: Actor, vendorId: string, householdId: string, leaveRequestId: string, command: CancelLeaveCommand): Promise<LeaveRequestResult>;
   abstract listDecisions(actor: Actor, vendorId: string, query: LeaveDecisionQuery): Promise<LeaveDecisionPage>;
-  abstract getVendorRequest(actor: Actor, vendorId: string, leaveRequestId: string): Promise<LeaveRequestResult>;
+  abstract getVendorRequest(actor: Actor, vendorId: string, leaveRequestId: string): Promise<VendorLeaveRequestResult>;
   abstract decideOccurrence(actor: Actor, vendorId: string, decisionId: string, command: DecideLeaveOccurrenceCommand): Promise<LeaveDecisionResult>;
 }
 
@@ -85,7 +96,7 @@ export class DefaultLeaveService extends LeaveService {
       const agentUserIds = await this.synchronize(tx, vendorId, householdId, [command], context, actor.userId);
       await this.audit(tx, actor, vendorId, result, 'leave.created');
       await this.notifyOutcome(tx, result, actor.userId, agentUserIds);
-      return request(result);
+      return customerRequest(result);
     });
   }
 
@@ -94,7 +105,7 @@ export class DefaultLeaveService extends LeaveService {
   }
 
   getCustomer(actor: Actor, vendorId: string, householdId: string, leaveRequestId: string) {
-    return this.customer(actor, vendorId, householdId, 'leave.get', async (tx) => request(await this.leaves.getRequest(tx, vendorId, householdId, leaveRequestId)));
+    return this.customer(actor, vendorId, householdId, 'leave.get', async (tx) => customerRequest(await this.leaves.getRequest(tx, vendorId, householdId, leaveRequestId)));
   }
 
   amend(actor: Actor, vendorId: string, householdId: string, leaveRequestId: string, command: AmendLeaveCommand) {
@@ -115,7 +126,7 @@ export class DefaultLeaveService extends LeaveService {
       const agentUserIds = await this.synchronize(tx, vendorId, householdId, [...previous, command], context, actor.userId);
       await this.audit(tx, actor, vendorId, result, 'leave.amended');
       await this.notifyOutcome(tx, result, actor.userId, agentUserIds);
-      return request(result);
+      return customerRequest(result);
     });
   }
 
@@ -136,7 +147,7 @@ export class DefaultLeaveService extends LeaveService {
         expectedVersion: command.expectedVersion, ...(command.note ? { note: command.note } : {}), status: status.status, decisions: status.decisions,
       });
       await this.synchronize(tx, vendorId, householdId, previous, context, actor.userId);
-      await this.audit(tx, actor, vendorId, result, 'leave.cancelled'); return request(result);
+      await this.audit(tx, actor, vendorId, result, 'leave.cancelled'); return customerRequest(result);
     });
   }
 
@@ -145,7 +156,7 @@ export class DefaultLeaveService extends LeaveService {
   }
 
   getVendorRequest(actor: Actor, vendorId: string, leaveRequestId: string) {
-    return this.authorization.execute({ actor, vendorId, permission: 'schedule:read', operation: 'leave.vendor-get' }, async (tx) => request(await this.leaves.getVendorRequest(tx, vendorId, leaveRequestId)));
+    return this.authorization.execute({ actor, vendorId, permission: 'schedule:read', operation: 'leave.vendor-get' }, async (tx) => vendorRequest(await this.leaves.getVendorRequest(tx, vendorId, leaveRequestId)));
   }
 
   decideOccurrence(actor: Actor, vendorId: string, decisionId: string, command: DecideLeaveOccurrenceCommand) {
@@ -331,7 +342,18 @@ export class DefaultLeaveService extends LeaveService {
   }
 }
 
-function request(value: LeaveRequestRecord): LeaveRequestResult { const { status, ...result } = value; return { ...result, currentStatus: status }; }
+function customerRequest(value: LeaveRequestRecord): LeaveRequestResult {
+  const { status, ...result } = value;
+  return { ...result, currentStatus: status, availableActions: value.currentRevisionId && status !== 'cancelled' ? ['amend', 'cancel'] : [] };
+}
+function vendorRequest(value: LeaveRequestRecord): VendorLeaveRequestResult {
+  const { status, revisions, ...result } = value;
+  return { ...result, currentStatus: status, revisions: revisions.map(({ decisions, ...revision }) => ({ ...revision,
+    ...(decisions ? { decisions: decisions.map((item) => ({ ...item,
+      availableActions: revision.id === value.currentRevisionId && item.status === 'pending' ? ['approve', 'reject'] : [],
+    })) } : {}),
+  })) };
+}
 function selections(value: LeaveRequestRecord, fallback: LeaveSelectionCommand): readonly LeaveSelectionCommand[] {
   const revision = value.revisions.find(({ id }) => id === value.currentRevisionId) ?? value.revisions[0];
   if (!revision) return [fallback];
@@ -345,6 +367,6 @@ function selections(value: LeaveRequestRecord, fallback: LeaveSelectionCommand):
   }
   return selected.filter(({ subscriptionIds }) => subscriptionIds.length > 0);
 }
-function page(value: StoreRequestPage): LeaveRequestPage { return { items: value.items.map(request), ...(value.nextCursor ? { nextCursor: value.nextCursor } : {}) }; }
-function decision(value: StoreDecisionResult): LeaveDecisionResult { const { status, request: leave, ...result } = value; return { ...result, currentStatus: status, request: request(leave) }; }
+function page(value: StoreRequestPage): LeaveRequestPage { return { items: value.items.map(customerRequest), ...(value.nextCursor ? { nextCursor: value.nextCursor } : {}) }; }
+function decision(value: StoreDecisionResult): LeaveDecisionResult { const { status, request: leave, ...result } = value; return { ...result, currentStatus: status, request: vendorRequest(leave) }; }
 function decisionPage(value: StoreDecisionPage): LeaveDecisionPage { return { items: value.items.map(({ status, ...item }) => ({ ...item, currentStatus: status })), ...(value.nextCursor ? { nextCursor: value.nextCursor } : {}) }; }

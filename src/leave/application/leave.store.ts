@@ -11,7 +11,7 @@ export type LeaveRevisionSubscription = Readonly<{
 export type LeaveRevisionDecisionRecord = Readonly<{
   id: string; subscriptionId: string; serviceDate: string; deliverySlotId: string; status: LeaveDecisionStatus;
   previousEffectiveStatus: 'scheduled' | 'skipped_by_customer'; requestedEffectiveStatus: 'scheduled' | 'skipped_by_customer';
-  version: number; createdAt: Date;
+  decidedBy?: string; decidedAt?: Date; decisionReason?: string; version: number; createdAt: Date;
 }>;
 export type LeaveRevisionRecord = Readonly<{
   id: string; action: LeaveAction; startDate: string; endDate: string; source: LeaveSource; createdBy: string;

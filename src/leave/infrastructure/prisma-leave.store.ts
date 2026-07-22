@@ -384,8 +384,10 @@ export class PrismaLeaveStore extends LeaveStore {
         decisions: revision.subscriptions.flatMap(({ occurrenceDecisions }) => occurrenceDecisions.map((decision) => ({
           id: decision.id, subscriptionId: decision.subscriptionId, serviceDate: dateString(decision.serviceDate), deliverySlotId: decision.deliverySlotId,
           status: decision.status as LeaveDecisionRecord['status'], previousEffectiveStatus: decision.previousEffectiveStatus as 'scheduled' | 'skipped_by_customer',
-          requestedEffectiveStatus: decision.requestedEffectiveStatus as 'scheduled' | 'skipped_by_customer', version: decision.version, createdAt: decision.createdAt,
-        }))),
+          requestedEffectiveStatus: decision.requestedEffectiveStatus as 'scheduled' | 'skipped_by_customer',
+          ...(decision.decidedBy ? { decidedBy: decision.decidedBy } : {}), ...(decision.decidedAt ? { decidedAt: decision.decidedAt } : {}),
+          ...(decision.decisionReason ? { decisionReason: decision.decisionReason } : {}), version: decision.version, createdAt: decision.createdAt,
+        }))).sort((left, right) => left.serviceDate.localeCompare(right.serviceDate) || left.id.localeCompare(right.id)),
       })), };
   }
 
