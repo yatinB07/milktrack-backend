@@ -82,6 +82,13 @@ const deliveryColumns = Prisma.sql`
   planned_quantity::text AS "plannedQuantity",status AS "currentStatus",version,
   finalized_at AS "finalizedAt",created_at AS "createdAt"`;
 
+const lockedDeliveryColumns = Prisma.sql`
+  d.id,d.vendor_id AS "vendorId",d.subscription_id AS "subscriptionId",d.household_id AS "householdId",
+  d.product_id AS "productId",d.unit_id AS "unitId",d.delivery_slot_id AS "deliverySlotId",
+  d.route_assignment_id AS "routeAssignmentId",d.service_date::text AS "serviceDate",
+  d.planned_quantity::text AS "plannedQuantity",d.status AS "currentStatus",d.version,
+  d.finalized_at AS "finalizedAt",d.created_at AS "createdAt"`;
+
 const deliveryProjectionColumns = Prisma.sql`
   d.id,d.vendor_id AS "vendorId",d.subscription_id AS "subscriptionId",d.household_id AS "householdId",
   d.product_id AS "productId",d.unit_id AS "unitId",d.delivery_slot_id AS "deliverySlotId",
@@ -106,7 +113,7 @@ export class PrismaDeliveryStore extends DeliveryStore {
       throw failure('INCOMPLETE_STOP_SET', 'Delivery items must be unique', 409);
     }
     const rows = await unwrapPrismaTransaction(context).$queryRaw<DeliveryRow[]>(Prisma.sql`
-      SELECT ${deliveryColumns}
+      SELECT ${lockedDeliveryColumns}
       FROM scheduled_deliveries d
       JOIN route_assignments a ON a.vendor_id=d.vendor_id AND a.id=d.route_assignment_id
         AND a.service_date=d.service_date AND a.delivery_slot_id=d.delivery_slot_id
@@ -124,7 +131,7 @@ export class PrismaDeliveryStore extends DeliveryStore {
         AND (s.effective_to IS NULL OR s.effective_to>d.service_date)
       WHERE d.vendor_id=${input.vendorId}::uuid AND d.service_date=${input.serviceDate}::date
         AND s.id=${input.routeStopId}::uuid
-      ORDER BY d.id FOR UPDATE`);
+      ORDER BY d.id FOR UPDATE OF d`);
     if (rows.some((row) => submitted.has(row.id) && row.finalizedAt !== null)) {
       throw failure('DELIVERY_ALREADY_FINALIZED', 'Delivery is already finalized', 409);
     }

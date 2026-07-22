@@ -65,5 +65,6 @@ void test('stop deliveries are locked in stable ID order before conflict checks'
   const queries: unknown[] = [];
   await new PrismaDeliveryStore().lockStopPendingSet(transaction([], queries), { ...input, submitted: [] });
   const sql = (queries[0] as { strings: readonly string[] }).strings.join(' ');
-  assert.match(sql, /ORDER BY d\.id FOR UPDATE/u);
+  assert.match(sql, /SELECT\s+d\.id/u);
+  assert.match(sql, /ORDER BY d\.id FOR UPDATE OF d/u);
 });
