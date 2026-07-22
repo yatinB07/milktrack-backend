@@ -8,6 +8,7 @@ import { unwrapPrismaTransaction } from '../../database/infrastructure/prisma-tr
 import { Prisma } from '../../generated/prisma/client.js';
 import type {
   CreateSubscriptionAggregate,
+  EnrichedCustomerSubscriptionRevision,
   LockedSubscription,
   ReplaceSubscriptionPlan,
   SubscriptionAggregateRecord,
@@ -20,6 +21,11 @@ import { SubscriptionStore } from '../application/subscription.store.js';
 const revisionInclude = {
   weekdays: { select: { weekday: true }, orderBy: { weekday: 'asc' as const } },
 } satisfies Prisma.SubscriptionRevisionInclude;
+const customerRevisionInclude = {
+  ...revisionInclude,
+  product: { select: { code: true, name: true, defaultUnit: { select: { code: true, name: true } } } },
+  deliverySlot: { select: { name: true, startLocalTime: true, endLocalTime: true } },
+} satisfies Prisma.SubscriptionRevisionInclude;
 const aggregateInclude = {
   revisions: { include: revisionInclude, orderBy: [
     { effectiveFrom: 'asc' as const },
@@ -28,12 +34,17 @@ const aggregateInclude = {
     { id: 'asc' as const },
   ] },
 } satisfies Prisma.SubscriptionInclude;
+const customerAggregateInclude = {
+  revisions: { include: customerRevisionInclude, orderBy: aggregateInclude.revisions.orderBy },
+} satisfies Prisma.SubscriptionInclude;
 const error = (code: string, message: string, status: number) => new ApplicationError(code, message, status);
 const date = (value: string) => new Date(`${value}T00:00:00.000Z`);
 const dateString = (value: Date) => value.toISOString().slice(0, 10);
 
 type RevisionRow = Prisma.SubscriptionRevisionGetPayload<{ include: typeof revisionInclude }>;
+type CustomerRevisionRow = Prisma.SubscriptionRevisionGetPayload<{ include: typeof customerRevisionInclude }>;
 type AggregateRow = Prisma.SubscriptionGetPayload<{ include: typeof aggregateInclude }>;
+type CustomerAggregateRow = Prisma.SubscriptionGetPayload<{ include: typeof customerAggregateInclude }>;
 
 @Injectable()
 export class PrismaSubscriptionStore extends SubscriptionStore {
@@ -102,20 +113,21 @@ export class PrismaSubscriptionStore extends SubscriptionStore {
       WHERE ${Prisma.join(filters, ' AND ')}
       ORDER BY s.created_at DESC,s.id DESC LIMIT ${limit + 1}`);
     const selectedIds = selected.map(({ id }) => id);
-    const unordered = await tx.subscription.findMany({ where: { id: { in: selectedIds.slice(0, limit) } }, include: aggregateInclude });
-    const byId = new Map(unordered.map((row) => [row.id, row]));
-    const rows = selectedIds.slice(0, limit).flatMap((id) => { const row = byId.get(id); return row ? [row] : []; });
-    const visible = rows.map((row) => this.aggregate(row));
+    const visible = routeHouseholdId
+      ? this.customerAggregates(await tx.subscription.findMany({ where: { id: { in: selectedIds.slice(0, limit) } }, include: customerAggregateInclude }), selectedIds, limit)
+      : this.aggregates(await tx.subscription.findMany({ where: { id: { in: selectedIds.slice(0, limit) } }, include: aggregateInclude }), selectedIds, limit);
     const next = selected.length > limit ? visible.at(-1) : undefined;
     return { items: visible, ...(next ? { nextCursor: this.cursors.encode({ createdAt: next.createdAt, id: next.id }) } : {}) };
   }
 
   async get(context: TransactionContext, subscriptionId: string, lifecycle: 'current' | 'deleted', householdId?: string) {
-    const row = await unwrapPrismaTransaction(context).subscription.findFirst({
-      where: { id: subscriptionId, deletedAt: lifecycle === 'deleted' ? { not: null } : null, ...(householdId ? { householdId } : {}) }, include: aggregateInclude,
-    });
+    const tx = unwrapPrismaTransaction(context);
+    const where = { id: subscriptionId, deletedAt: lifecycle === 'deleted' ? { not: null } : null, ...(householdId ? { householdId } : {}) };
+    const row = householdId
+      ? await tx.subscription.findFirst({ where, include: customerAggregateInclude })
+      : await tx.subscription.findFirst({ where, include: aggregateInclude });
     if (!row) throw error('SUBSCRIPTION_NOT_FOUND', 'Subscription was not found', 404);
-    return this.aggregate(row);
+    return householdId ? this.customerAggregate(row as CustomerAggregateRow) : this.aggregate(row);
   }
 
   async history(context: TransactionContext, subscriptionId: string, query: Pick<SubscriptionPageQuery, 'cursor' | 'limit'>, householdId?: string) {
@@ -123,11 +135,12 @@ export class PrismaSubscriptionStore extends SubscriptionStore {
     const root = await tx.subscription.findFirst({ where: { id: subscriptionId, deletedAt: null, ...(householdId ? { householdId } : {}) }, select: { id: true } });
     if (!root) throw error('SUBSCRIPTION_NOT_FOUND', 'Subscription was not found', 404);
     const limit = this.cursors.parseLimit(query.limit); const cursor = query.cursor ? this.cursors.decode(query.cursor) : undefined;
-    const rows = await tx.subscriptionRevision.findMany({
-      where: { subscriptionId, ...(cursor ? { OR: [{ createdAt: { lt: cursor.createdAt } }, { createdAt: cursor.createdAt, id: { lt: cursor.id } }] } : {}) },
-      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], take: limit + 1, include: revisionInclude,
-    });
-    const items = rows.slice(0, limit).map((row) => this.revision(row)); const next = rows.length > limit ? items.at(-1) : undefined;
+    const where = { subscriptionId, ...(cursor ? { OR: [{ createdAt: { lt: cursor.createdAt } }, { createdAt: cursor.createdAt, id: { lt: cursor.id } }] } : {}) };
+    const rows = householdId
+      ? await tx.subscriptionRevision.findMany({ where, orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], take: limit + 1, include: customerRevisionInclude })
+      : await tx.subscriptionRevision.findMany({ where, orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], take: limit + 1, include: revisionInclude });
+    const items = rows.slice(0, limit).map((row) => householdId ? this.customerRevision(row as CustomerRevisionRow) : this.revision(row));
+    const next = rows.length > limit ? items.at(-1) : undefined;
     return { items, ...(next ? { nextCursor: this.cursors.encode({ createdAt: next.createdAt, id: next.id }) } : {}) };
   }
 
@@ -255,6 +268,27 @@ export class PrismaSubscriptionStore extends SubscriptionStore {
       ...(row.supersededByRevisionId ? { supersededByRevisionId: row.supersededByRevisionId } : {}),
       ...(row.supersessionReason ? { supersessionReason: row.supersessionReason } : {}), createdAt: row.createdAt, updatedAt: row.updatedAt,
     };
+  }
+  private customerRevision(row: CustomerRevisionRow): SubscriptionRevisionRecord & EnrichedCustomerSubscriptionRevision {
+    return {
+      ...this.revision(row),
+      productCode: row.product.code, productName: row.product.name,
+      unitCode: row.product.defaultUnit.code, unitName: row.product.defaultUnit.name,
+      deliverySlotName: row.deliverySlot.name,
+      deliverySlotStartLocalTime: row.deliverySlot.startLocalTime.toISOString().slice(11, 16),
+      deliverySlotEndLocalTime: row.deliverySlot.endLocalTime.toISOString().slice(11, 16),
+    };
+  }
+  private aggregates(rows: readonly AggregateRow[], selectedIds: readonly string[], limit: number) {
+    const byId = new Map(rows.map((row) => [row.id, row]));
+    return selectedIds.slice(0, limit).flatMap((id) => { const row = byId.get(id); return row ? [this.aggregate(row)] : []; });
+  }
+  private customerAggregates(rows: readonly CustomerAggregateRow[], selectedIds: readonly string[], limit: number) {
+    const byId = new Map(rows.map((row) => [row.id, row]));
+    return selectedIds.slice(0, limit).flatMap((id) => { const row = byId.get(id); return row ? [this.customerAggregate(row)] : []; });
+  }
+  private customerAggregate(row: CustomerAggregateRow): SubscriptionAggregateRecord {
+    return { ...this.aggregate(row), revisions: row.revisions.map((revision) => this.customerRevision(revision)) };
   }
   private aggregate(row: AggregateRow): SubscriptionAggregateRecord {
     return {

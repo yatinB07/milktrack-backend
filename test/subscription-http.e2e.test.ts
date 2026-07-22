@@ -64,8 +64,29 @@ async function json<T>(response: Response, status: number): Promise<T> {
   return response.json() as Promise<T>;
 }
 async function error(response: Response, status: number, code?: string) { const body = await json<{ code: string }>(response, status); if (code) assert.equal(body.code, code); }
-type Revision = Readonly<{ id: string; quantity: string; status: string; startDate: string; endDate?: string; supersededAt?: string; createdBy?: string; supersessionReason?: string }>;
+type Revision = Readonly<{
+  id: string; quantity: string; status: string; startDate: string; endDate?: string; supersededAt?: string;
+  productCode: string; productName: string; unitCode: string; unitName: string;
+  deliverySlotName: string; deliverySlotStartLocalTime: string; deliverySlotEndLocalTime: string;
+  createdBy?: string; supersessionReason?: string;
+}>;
 type Subscription = Readonly<{ id: string; version: number; status: string; lifecycle: 'current' | 'deleted'; supersededRevisionCount?: number; revisions: Revision[] }>;
+
+function assertCustomerRevisionProjection(revision: Revision, productLabel: string, catalogLabel = productLabel) {
+  assert.deepEqual({
+    productCode: revision.productCode, productName: revision.productName,
+    unitCode: revision.unitCode, unitName: revision.unitName,
+    deliverySlotName: revision.deliverySlotName,
+    deliverySlotStartLocalTime: revision.deliverySlotStartLocalTime,
+    deliverySlotEndLocalTime: revision.deliverySlotEndLocalTime,
+  }, {
+    productCode: `MILK_${productLabel}`, productName: `Milk ${productLabel}`,
+    unitCode: `LITRE_${catalogLabel}`, unitName: `Litre ${catalogLabel}`,
+    deliverySlotName: `Morning ${catalogLabel}`,
+    deliverySlotStartLocalTime: '06:00', deliverySlotEndLocalTime: '09:00',
+  });
+  for (const key of ['vendorId', 'subscriptionId', 'createdBy', 'supersessionReason']) assert.equal(key in revision, false);
+}
 
 before(async () => {
   const { createApp } = await import('../src/bootstrap/create-app.js'); app = await createApp({ logger: false }); await app.listen(0, '127.0.0.1');
@@ -153,15 +174,29 @@ void test('subscription HTTP lifecycle enforces duplicate safety, dependency-spe
   } finally { await owner.query(`DROP TRIGGER IF EXISTS ${trigger} ON audit_events`); await owner.query(`DROP FUNCTION IF EXISTS ${fn}()`); }
   assert.equal(Number((await owner.query<{ count: string }>('SELECT count(*) FROM subscriptions WHERE vendor_id=$1', [current.vendorId])).rows[0]?.count), beforeAuditFailure);
 
+  const secondProductId = randomUUID();
+  await owner.query('INSERT INTO products (id,vendor_id,code,name,default_unit_id,updated_at) VALUES ($1,$2,$3,$4,$5,now())',
+    [secondProductId, current.vendorId, 'MILK_SECOND_A', 'Milk SECOND_A', current.unitId]);
+  const second = await json<Subscription>(await api(base, current.ownerToken, { method: 'POST', body: { ...body, productId: secondProductId } }), 201);
+  const customerSortTime = new Date('2026-07-22T10:00:00.000Z');
+  await owner.query('UPDATE subscriptions SET created_at=$1 WHERE id=ANY($2::uuid[])', [customerSortTime, [active.id, second.id]]);
+  const customerOrder = [active.id, second.id].sort().reverse();
   const customerBase = `/v1/customer/vendors/${current.vendorId}/households/${current.householdId}/subscriptions`;
-  const customerList = await json<{ items: Subscription[] }>(await api(`${customerBase}?status=active`, current.customerToken), 200);
-  assert.equal(customerList.items.length, 1); assert.equal(customerList.items[0]?.id, active.id); await error(await api(`${customerBase}?lifecycle=deleted`,current.customerToken),400);
-  const customerDetail = await json<{ id: string }>(await api(`${customerBase}/${active.id}`, current.customerToken), 200);
-  assert.equal(customerDetail.id, active.id);
+  const customerList = await json<{ items: Subscription[]; nextCursor?: string }>(await api(`${customerBase}?status=active&limit=1`, current.customerToken), 200);
+  assert.deepEqual(customerList.items.map(({ id }) => id), customerOrder.slice(0, 1)); assert.ok(customerList.nextCursor);
+  assertCustomerRevisionProjection(customerList.items[0].revisions[0], customerList.items[0].id === active.id ? 'A' : 'SECOND_A', 'A');
+  const customerNext = await json<{ items: Subscription[]; nextCursor?: string }>(await api(`${customerBase}?status=active&limit=1&cursor=${encodeURIComponent(customerList.nextCursor)}`, current.customerToken), 200);
+  assert.deepEqual(customerNext.items.map(({ id }) => id), customerOrder.slice(1)); assert.equal(customerNext.nextCursor, undefined);
+  assertCustomerRevisionProjection(customerNext.items[0].revisions[0], customerNext.items[0].id === active.id ? 'A' : 'SECOND_A', 'A');
+  await error(await api(`${customerBase}?lifecycle=deleted`,current.customerToken),400);
+  const customerDetail = await json<Subscription>(await api(`${customerBase}/${active.id}`, current.customerToken), 200);
+  assert.equal(customerDetail.id, active.id); assertCustomerRevisionProjection(customerDetail.revisions[0], 'A');
   const history = await json<{ items: Revision[] }>(await api(`${customerBase}/${active.id}/revisions`, current.customerToken), 200);
-  assert.equal('createdBy' in history.items[0], false); assert.equal('supersessionReason' in history.items[0], false);
+  assertCustomerRevisionProjection(history.items[0], 'A');
+  await error(await api(`/v1/customer/vendors/${current.vendorId}/households/${current.otherHouseholdId}/subscriptions`, current.customerToken), 403, 'FORBIDDEN');
   await error(await api(`/v1/customer/vendors/${current.vendorId}/households/${current.otherHouseholdId}/subscriptions/${future.id}`, current.customerToken), 403, 'FORBIDDEN');
   await error(await api(`${customerBase}/${future.id}`, current.customerToken), 404, 'SUBSCRIPTION_NOT_FOUND');
+  await error(await api(`/v1/customer/vendors/${other.vendorId}/households/${other.householdId}/subscriptions`, current.customerToken), 403, 'FORBIDDEN');
   await error(await api(`${customerBase}/${active.id}?lifecycle=deleted`, current.customerToken), 400);
   await error(await api(`${customerBase}/${active.id}/revisions?lifecycle=deleted`, current.customerToken), 400);
   await error(await api(base, current.customerToken), 403, 'FORBIDDEN'); await error(await api(base, other.ownerToken), 403, 'FORBIDDEN');
