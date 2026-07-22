@@ -44,6 +44,9 @@ void test('delivery policy reason is trimmed before validating its bounds', asyn
   const accepted = value(`  ${'x'.repeat(500)}  `);
   assert.equal((await validate(accepted)).length, 0);
   assert.equal(accepted.reason, 'x'.repeat(500));
+  const minimum = value('  abc  ');
+  assert.equal((await validate(minimum)).length, 0);
+  assert.equal(minimum.reason, 'abc');
   assert.notEqual((await validate(value('   '))).length, 0);
   assert.notEqual((await validate(value('x'.repeat(501)))).length, 0);
 });

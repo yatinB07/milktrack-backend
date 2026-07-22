@@ -64,3 +64,39 @@ void test('delivery policy HTTP contract validates, authorizes, versions, and au
   const audit = (await owner.query<{ old_value: object; new_value: object; action: string; reason: string }>("SELECT action,old_value,new_value,reason FROM audit_events WHERE vendor_id=$1 AND action='vendor.delivery_policy.updated'", [current.vendorId])).rows[0]; assert.deepEqual(audit, { action: 'vendor.delivery_policy.updated', old_value: { version: 1, lateLeavePolicy: 'approval', skipCutoffMinutes: 60, captureAgentLocationEvidence: false }, new_value: { version: 2, lateLeavePolicy: 'reject', skipCutoffMinutes: 0, captureAgentLocationEvidence: true }, reason: 'Align cutoff with dispatch' });
   assert.equal((await owner.query<{ reason: string }>("SELECT reason FROM audit_events WHERE vendor_id=$1 AND action='vendor.delivery_policy.updated'", [admin.vendorId])).rows[0]?.reason, 'x'.repeat(500));
 });
+
+void test('concurrent policy update audits the exact locked state it overwrites', async () => {
+  const current = await fixture('vendor_owner');
+  const blocker = await owner.connect();
+  let settled = false;
+  let pending: Promise<Response> | undefined;
+  try {
+    await blocker.query('BEGIN');
+    await blocker.query(`UPDATE vendors SET skip_cutoff_minutes=75 WHERE id=$1`, [current.vendorId]);
+    pending = api(`/v1/vendors/${current.vendorId}/delivery-policy`, current.token, {
+      method: 'PATCH',
+      body: { skipCutoffMinutes: 90, lateLeavePolicy: 'reject', captureAgentLocationEvidence: true, expectedVersion: 1, reason: '  abc  ' },
+    }).then((response) => { settled = true; return response; });
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    assert.equal(settled, false);
+    await blocker.query('COMMIT');
+  } catch (error) {
+    await blocker.query('ROLLBACK');
+    throw error;
+  } finally {
+    blocker.release();
+  }
+  assert.ok(pending);
+  const response = await pending;
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), { vendorId: current.vendorId, skipCutoffMinutes: 90, lateLeavePolicy: 'reject', captureAgentLocationEvidence: true, version: 2 });
+  const audit = (await owner.query<{ old_value: object; new_value: object; reason: string }>(
+    "SELECT old_value,new_value,reason FROM audit_events WHERE vendor_id=$1 AND action='vendor.delivery_policy.updated'",
+    [current.vendorId],
+  )).rows[0];
+  assert.deepEqual(audit, {
+    old_value: { version: 1, lateLeavePolicy: 'approval', skipCutoffMinutes: 75, captureAgentLocationEvidence: false },
+    new_value: { version: 2, lateLeavePolicy: 'reject', skipCutoffMinutes: 90, captureAgentLocationEvidence: true },
+    reason: 'abc',
+  });
+});
