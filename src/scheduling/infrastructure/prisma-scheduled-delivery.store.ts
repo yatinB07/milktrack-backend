@@ -12,9 +12,17 @@ type DeliveryRow = Omit<ScheduledDeliveryState, 'finalized' | 'status'> & {
   status: 'scheduled' | 'cancelled' | 'delivered' | 'skipped_by_customer' | 'skipped_by_agent' | 'missed';
   finalized: boolean;
 };
-type AgentScheduledDeliveryRow = Omit<AgentScheduledDelivery, 'addressLine2' | 'locality'> & Readonly<{
+type AgentScheduledDeliveryRow = Omit<AgentScheduledDelivery, 'addressLine2' | 'locality' | 'pendingStopItems'> & Readonly<{
   addressLine2: string | null;
   locality: string | null;
+  pendingEligible: boolean;
+  pendingStopItems: Array<Readonly<{
+    scheduledDeliveryId: string;
+    expectedVersion: number;
+    plannedQuantity: string;
+    productName: string;
+    unitName: string;
+  }>>;
 }>;
 type AgentCursor = Readonly<{ sequence: number; id: string }>;
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
@@ -116,10 +124,15 @@ export class PrismaScheduledDeliveryStore extends ScheduledDeliveryStore {
     const limit = this.limit(query.limit);
     const cursor = query.cursor ? this.decode(query.cursor) : undefined;
     const rows = await tx.$queryRaw<AgentScheduledDeliveryRow[]>(Prisma.sql`
+      WITH eligible AS MATERIALIZED (
       SELECT d.id,d.subscription_id AS "subscriptionId",d.household_id AS "householdId",
         d.product_id AS "productId",d.unit_id AS "unitId",d.delivery_slot_id AS "deliverySlotId",
         d.route_assignment_id AS "routeAssignmentId",s.id AS "routeStopId",
         d.service_date::text AS "serviceDate",d.planned_quantity::text AS "plannedQuantity",s.sequence,
+        d.status AS "currentStatus",d.version,
+        (d.status='skipped_by_customer') AS "blockedByCustomerLeave",
+        v.capture_agent_location_evidence AS "captureLocationEvidence",
+        (d.status='scheduled' AND d.finalized_at IS NULL) AS "pendingEligible",
         r.id AS "routeId",r.code AS "routeCode",r.name AS "routeName",
         h.account_number AS "householdAccountNumber",h.name AS "householdName",
         h.address_line_1 AS "addressLine1",h.address_line_2 AS "addressLine2",h.locality,
@@ -150,14 +163,37 @@ export class PrismaScheduledDeliveryStore extends ScheduledDeliveryStore {
         AND product.default_unit_id=d.unit_id
       JOIN units unit ON unit.vendor_id=d.vendor_id AND unit.id=d.unit_id
       JOIN delivery_slots slot ON slot.vendor_id=d.vendor_id AND slot.id=d.delivery_slot_id
-      WHERE d.vendor_id=${vendorId}::uuid AND d.service_date=${serviceDate}::date AND d.status='scheduled'
-        ${cursor ? Prisma.sql`AND (s.sequence>${cursor.sequence} OR (s.sequence=${cursor.sequence} AND d.id>${cursor.id}::uuid))` : Prisma.empty}
-      ORDER BY s.sequence,d.id LIMIT ${limit + 1}`);
-    const items = rows.slice(0, limit).map(({ addressLine2, locality, ...row }): AgentScheduledDelivery => ({
-      ...row,
-      ...(addressLine2 === null ? {} : { addressLine2 }),
-      ...(locality === null ? {} : { locality }),
-    }));
+      JOIN vendors v ON v.id=d.vendor_id
+      WHERE d.vendor_id=${vendorId}::uuid AND d.service_date=${serviceDate}::date
+        AND d.status IN ('scheduled','delivered','skipped_by_customer','skipped_by_agent','missed')
+      ), page AS (
+        SELECT * FROM eligible d
+        ${cursor ? Prisma.sql`WHERE (d.sequence>${cursor.sequence} OR (d.sequence=${cursor.sequence} AND d.id>${cursor.id}::uuid))` : Prisma.empty}
+        ORDER BY d.sequence,d.id LIMIT ${limit + 1}
+      )
+      SELECT page.*,
+        COALESCE((
+          SELECT jsonb_agg(jsonb_build_object(
+            'scheduledDeliveryId',pending.id,
+            'expectedVersion',pending.version,
+            'plannedQuantity',pending."plannedQuantity",
+            'productName',pending."productName",
+            'unitName',pending."unitName"
+          ) ORDER BY pending.id)
+          FROM eligible pending
+          WHERE pending."routeStopId"=page."routeStopId" AND pending."pendingEligible"
+        ),'[]'::jsonb) AS "pendingStopItems"
+      FROM page ORDER BY page.sequence,page.id`);
+    const items = rows.slice(0, limit).map(({ addressLine2, locality, pendingEligible, pendingStopItems, ...row }): AgentScheduledDelivery => {
+      void pendingEligible;
+      return {
+        ...row,
+        plannedQuantity: canonicalDecimal(row.plannedQuantity),
+        pendingStopItems: pendingStopItems.map((item) => ({ ...item, plannedQuantity: canonicalDecimal(item.plannedQuantity) })),
+        ...(addressLine2 === null ? {} : { addressLine2 }),
+        ...(locality === null ? {} : { locality }),
+      };
+    });
     const last = items.at(-1);
     return { items, ...(rows.length > limit && last ? { nextCursor: this.encode(last) } : {}) };
   }

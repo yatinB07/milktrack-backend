@@ -47,6 +47,17 @@ const delivery = {
   serviceDate: '2026-07-20',
   plannedQuantity: '1.25',
   sequence: 1,
+  currentStatus: 'scheduled' as const,
+  version: 3,
+  blockedByCustomerLeave: false,
+  captureLocationEvidence: true,
+  pendingStopItems: [{
+    scheduledDeliveryId: '00000000-0000-4000-8000-000000000010',
+    expectedVersion: 3,
+    plannedQuantity: '1.25',
+    productName: 'Full cream milk',
+    unitName: 'Litre',
+  }],
 };
 
 void test('agent scheduled-delivery controller whitelists response fields and page metadata', async () => {
@@ -58,7 +69,18 @@ void test('agent scheduled-delivery controller whitelists response fields and pa
         customerPhone: '+919999999999',
         householdNotes: 'must not cross HTTP boundary',
         priceSourceId: 'must not cross HTTP boundary',
+        amountMinor: '100',
+        latitude: '18.5',
+        longitude: '73.8',
+        billingStatus: 'unbilled',
         internalNote: 'must not cross HTTP boundary',
+        pendingStopItems: [{
+          ...delivery.pendingStopItems[0],
+          amountMinor: '100',
+          latitude: '18.5',
+          customerPhone: '+919999999999',
+          note: 'must not cross HTTP boundary',
+        }],
       }],
       nextCursor: 'next',
       internalPageState: 'must not cross HTTP boundary',
@@ -71,6 +93,62 @@ void test('agent scheduled-delivery controller whitelists response fields and pa
   );
 
   assert.deepEqual(response, { serviceDate: delivery.serviceDate, items: [delivery], nextCursor: 'next' });
+  assert.deepEqual(Object.keys(response.items[0]).sort(), Object.keys(delivery).sort());
+  assert.deepEqual(Object.keys(response.items[0].pendingStopItems[0]).sort(), [
+    'expectedVersion', 'plannedQuantity', 'productName', 'scheduledDeliveryId', 'unitName',
+  ]);
+});
+
+void test('scheduled-delivery query returns finalized leave rows and a complete pending stop set beyond the outer page', async () => {
+  let sql = '';
+  const leave = {
+    ...delivery,
+    currentStatus: 'skipped_by_customer' as const,
+    blockedByCustomerLeave: true,
+    version: 4,
+  };
+  const sibling = {
+    ...delivery,
+    id: '00000000-0000-4000-8000-000000000020',
+    productName: 'Toned milk',
+    version: 5,
+  };
+  const pendingStopItems = [sibling]
+    .map(({ id, version, plannedQuantity, productName, unitName }) => ({
+      scheduledDeliveryId: id, expectedVersion: version, plannedQuantity, productName, unitName,
+    }));
+  const transaction = wrapPrismaTransaction({
+    $queryRaw: (query: Readonly<{ strings: readonly string[] }>) => {
+      sql = query.strings.join('?').replaceAll(/\s+/gu, ' ');
+      return Promise.resolve([
+        { ...leave, pendingStopItems },
+        { ...sibling, pendingStopItems },
+      ]);
+    },
+  } as never);
+
+  const page = await new PrismaScheduledDeliveryStore().listSelf(
+    transaction,
+    '00000000-0000-4000-8000-000000000004',
+    '00000000-0000-4000-8000-000000000005',
+    delivery.serviceDate,
+    { limit: 1 },
+  );
+
+  assert.deepEqual(page.items.map(({ id }) => id), [leave.id]);
+  assert.equal(page.items[0]?.currentStatus, 'skipped_by_customer');
+  assert.equal(page.items[0]?.blockedByCustomerLeave, true);
+  assert.deepEqual(page.items[0]?.pendingStopItems, pendingStopItems);
+  assert.ok(page.nextCursor);
+  assert.match(sql, /d\.status AS "currentStatus"/u);
+  assert.match(sql, /d\.version/u);
+  assert.match(sql, /capture_agent_location_evidence/u);
+  assert.match(sql, /jsonb_agg/u);
+  assert.match(sql, /pendingStopItems/u);
+  assert.match(sql, /d\.status='scheduled' AND d\.finalized_at IS NULL/u);
+  assert.match(sql, /pending\."pendingEligible"/u);
+  assert.match(sql, /ORDER BY pending\.id/u);
+  assert.match(sql, /d\.status IN \('scheduled','delivered','skipped_by_customer','skipped_by_agent','missed'\)/u);
 });
 
 for (const sequence of [0, -1]) {

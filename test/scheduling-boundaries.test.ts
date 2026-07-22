@@ -58,6 +58,14 @@ void test('leave and delivery-policy operations use only existing reviewed permi
   for (const operation of ['leave.decision', 'vendor.delivery-policy.update']) {
     assert.doesNotThrow(() => requireVendorOperation(operation, 'schedule:manage'));
   }
+  for (const operation of ['delivery.list', 'delivery.get']) {
+    assert.doesNotThrow(() => requireVendorOperation(operation, 'schedule:read'));
+  }
+  assert.doesNotThrow(() => requireVendorOperation('delivery.correct', 'schedule:manage'));
+  assert.doesNotThrow(() => requireVendorOperation('delivery.stop-outcome', 'delivery:record'));
+  for (const operation of ['delivery.self-list', 'delivery.self-get']) {
+    assert.doesNotThrow(() => requireVendorOperation(operation, 'customer:self'));
+  }
   assert.doesNotThrow(() => requireVendorOperation('vendor.profile.read', 'vendor:profile:read'));
   for (const role of ['vendor_owner', 'vendor_administrator'] as const) {
     assert.doesNotThrow(() => requireVendorPermission(role, 'schedule:read'));

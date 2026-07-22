@@ -26,7 +26,7 @@ const initial: DeliveryDetail = {
 void test('correction creates a price snapshot at original service time, preserves history, audits, and notifies the customer', async () => {
   const tx = {} as TransactionContext;
   let detail = initial; const snapshots: unknown[] = []; const corrections: unknown[] = []; const audits: unknown[] = []; const notifications: unknown[] = [];
-  const authorization: Pick<TenantAuthorizationExecutor, 'execute'> = { execute: <T>(input: unknown, work: (current: TransactionContext) => Promise<T>): Promise<T> => { assert.deepEqual(input, { actor: admin, vendorId, permission: 'schedule:manage', operation: 'schedule.manual-generate' }); return work(tx); } };
+  const authorization: Pick<TenantAuthorizationExecutor, 'execute'> = { execute: <T>(input: unknown, work: (current: TransactionContext) => Promise<T>): Promise<T> => { assert.deepEqual(input, { actor: admin, vendorId, permission: 'schedule:manage', operation: 'delivery.correct' }); return work(tx); } };
   const deliveries = {
     lockCorrection: () => Promise.resolve(detail),
     getVendorDetail: () => Promise.resolve(detail),

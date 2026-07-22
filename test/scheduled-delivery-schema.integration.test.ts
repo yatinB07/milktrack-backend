@@ -272,15 +272,23 @@ void test('agent HTTP is exact-self scoped and returns only the safe scheduled-s
     assert.equal(body.serviceDate, '2030-01-01');
     assert.equal(body.items[0]?.id, inserted);
     assert.deepEqual(Object.keys(body.items[0]).sort(), [
-      'addressLine1','addressLine2','city','countryCode','deliverySlotEndLocalTime','deliverySlotId',
+      'addressLine1','addressLine2','blockedByCustomerLeave','captureLocationEvidence','city','countryCode','currentStatus','deliverySlotEndLocalTime','deliverySlotId',
       'deliverySlotName','deliverySlotStartLocalTime','householdAccountNumber','householdId','householdName',
-      'id','locality','plannedQuantity','postalCode','productCode','productId','productName','region',
+      'id','locality','pendingStopItems','plannedQuantity','postalCode','productCode','productId','productName','region',
       'routeAssignmentId','routeCode','routeId','routeName','routeStopId','sequence','serviceDate',
-      'subscriptionId','unitCode','unitId','unitName',
+      'subscriptionId','unitCode','unitId','unitName','version',
     ]);
     assert.equal(body.items[0]?.addressLine2, 'Floor 2');
     assert.equal(body.items[0]?.locality, 'Camp');
-    for (const forbidden of ['customerPhone','householdNotes','billingDetails','sourcePriceId']) assert.equal(forbidden in body.items[0], false);
+    assert.equal(body.items[0]?.currentStatus, 'scheduled');
+    assert.equal(body.items[0]?.blockedByCustomerLeave, false);
+    const pending = body.items[0]?.pendingStopItems as Array<Record<string, unknown>>;
+    assert.deepEqual(Object.keys(pending[0]).sort(), ['expectedVersion','plannedQuantity','productName','scheduledDeliveryId','unitName']);
+    assert.equal(pending[0]?.scheduledDeliveryId, inserted);
+    for (const forbidden of ['customerPhone','householdNotes','billingDetails','sourcePriceId','amountMinor','latitude','longitude','note']) {
+      assert.equal(forbidden in body.items[0], false);
+      assert.equal(forbidden in pending[0], false);
+    }
     const foreign = await fetch(`${baseUrl}/v1/agent/vendors/${other.vendorId}/scheduled-deliveries?serviceDate=2030-01-01`, { headers: { authorization: `Bearer ${own.agentToken}` } });
     assert.equal(foreign.status, 403);
     const ownerDenied = await fetch(`${baseUrl}${path}`, { headers: { authorization: `Bearer ${own.ownerToken}` } });

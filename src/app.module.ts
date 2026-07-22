@@ -19,6 +19,7 @@ import { RoutingModule } from './routing/routing.module.js';
 import { SchedulingModule } from './scheduling/scheduling.module.js';
 import { LeaveModule } from './leave/leave.module.js';
 import { NotificationsModule } from './notifications/notifications.module.js';
+import { DeliveryModule } from './delivery/delivery.module.js';
 
 @Module({
   imports: [
@@ -36,6 +37,7 @@ import { NotificationsModule } from './notifications/notifications.module.js';
     RoutingModule,
     LeaveModule,
     NotificationsModule,
+    DeliveryModule,
     SchedulingModule,
   ],
   providers: [{ provide: RequestContextStore, useValue: requestContextStore }],

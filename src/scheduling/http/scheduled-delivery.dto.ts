@@ -4,6 +4,14 @@ import { IsInt, IsOptional, IsString, Matches, Max, Min } from 'class-validator'
 
 import type { AgentScheduledDelivery, ScheduledDeliveryRecord } from '../application/scheduled-delivery.store.js';
 
+export class PendingStopItemResponseDto {
+  @ApiProperty({ type: String, format: 'uuid' }) scheduledDeliveryId!: string;
+  @ApiProperty({ type: Number, minimum: 1 }) expectedVersion!: number;
+  @ApiProperty({ type: String, example: '1.25' }) plannedQuantity!: string;
+  productName!: string;
+  unitName!: string;
+}
+
 export class AgentScheduledDeliveryQueryDto {
   @ApiPropertyOptional({ type: String, format: 'date' }) @IsOptional() @Matches(/^\d{4}-\d{2}-\d{2}$/) serviceDate?: string;
   @IsOptional() @IsString() cursor?: string;
@@ -42,6 +50,13 @@ export class ScheduledDeliveryResponseDto {
   deliverySlotName!: string;
   deliverySlotStartLocalTime!: string;
   deliverySlotEndLocalTime!: string;
+  @ApiProperty({ enum: ['scheduled', 'delivered', 'skipped_by_customer', 'skipped_by_agent', 'missed'] })
+  currentStatus!: AgentScheduledDelivery['currentStatus'];
+  @ApiProperty({ type: Number, minimum: 1 }) version!: number;
+  blockedByCustomerLeave!: boolean;
+  captureLocationEvidence!: boolean;
+  @ApiProperty({ type: () => PendingStopItemResponseDto, isArray: true })
+  pendingStopItems!: PendingStopItemResponseDto[];
 }
 
 export class ScheduledDeliveryListResponseDto {
@@ -86,12 +101,26 @@ export const toScheduledDeliveryResponse = (
   deliverySlotName: value.deliverySlotName,
   deliverySlotStartLocalTime: value.deliverySlotStartLocalTime,
   deliverySlotEndLocalTime: value.deliverySlotEndLocalTime,
+  currentStatus: value.currentStatus,
+  version: value.version,
+  blockedByCustomerLeave: value.blockedByCustomerLeave,
+  captureLocationEvidence: value.captureLocationEvidence,
+  pendingStopItems: value.pendingStopItems.map((item) => ({
+    scheduledDeliveryId: item.scheduledDeliveryId,
+    expectedVersion: item.expectedVersion,
+    plannedQuantity: item.plannedQuantity,
+    productName: item.productName,
+    unitName: item.unitName,
+  })),
   });
 };
 
 function assertAgentScheduledDelivery(value: ScheduledDeliveryRecord): asserts value is AgentScheduledDelivery {
-  const required = ['routeId', 'routeCode', 'routeName', 'householdAccountNumber', 'householdName', 'addressLine1', 'city', 'region', 'postalCode', 'countryCode', 'productCode', 'productName', 'unitCode', 'unitName', 'deliverySlotName', 'deliverySlotStartLocalTime', 'deliverySlotEndLocalTime'] as const;
+  const required = ['routeId', 'routeCode', 'routeName', 'householdAccountNumber', 'householdName', 'addressLine1', 'city', 'region', 'postalCode', 'countryCode', 'productCode', 'productName', 'unitCode', 'unitName', 'deliverySlotName', 'deliverySlotStartLocalTime', 'deliverySlotEndLocalTime', 'currentStatus'] as const;
   for (const key of required) {
     if (typeof (value as Record<string, unknown>)[key] !== 'string') throw new TypeError(`Agent scheduled delivery is missing ${key}`);
+  }
+  if (!Number.isInteger((value as Partial<AgentScheduledDelivery>).version) || !Array.isArray((value as Partial<AgentScheduledDelivery>).pendingStopItems)) {
+    throw new TypeError('Agent scheduled delivery is missing delivery state');
   }
 }

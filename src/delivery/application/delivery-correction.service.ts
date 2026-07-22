@@ -38,7 +38,7 @@ export class DefaultDeliveryCorrectionService extends DeliveryCorrectionService 
   ) { super(); }
 
   correct(actor: Actor, vendorId: string, scheduledDeliveryId: string, command: CorrectDeliveryCommand): Promise<DeliveryDetail> {
-    return this.authorization.execute({ actor, vendorId, permission: 'schedule:manage', operation: 'schedule.manual-generate' }, async (tx) => {
+    return this.authorization.execute({ actor, vendorId, permission: 'schedule:manage', operation: 'delivery.correct' }, async (tx) => {
       const before = await this.deliveries.lockCorrection(tx, vendorId, scheduledDeliveryId, command.expectedVersion);
       requireCorrectionTransition(before.currentStatus, command.replacementOutcome, command.actualQuantity);
       requireCorrectionReason(command.reason);

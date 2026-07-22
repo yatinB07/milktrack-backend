@@ -39,6 +39,19 @@ export type AgentScheduledDelivery = ScheduledDeliveryRecord & Readonly<{
   deliverySlotName: string;
   deliverySlotStartLocalTime: string;
   deliverySlotEndLocalTime: string;
+  currentStatus: 'scheduled' | 'delivered' | 'skipped_by_customer' | 'skipped_by_agent' | 'missed';
+  version: number;
+  blockedByCustomerLeave: boolean;
+  captureLocationEvidence: boolean;
+  pendingStopItems: readonly AgentPendingStopItem[];
+}>;
+
+export type AgentPendingStopItem = Readonly<{
+  scheduledDeliveryId: string;
+  expectedVersion: number;
+  plannedQuantity: string;
+  productName: string;
+  unitName: string;
 }>;
 
 export type AgentScheduledDeliveryPage = Readonly<{

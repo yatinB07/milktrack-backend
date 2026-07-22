@@ -79,3 +79,15 @@ void test('authorization source does not import Identity', async () => {
 
   assert.deepEqual(violations, []);
 });
+
+void test('delivery persistence does not query leave or pricing owned tables', async () => {
+  const files = await typescriptFiles('src/delivery/infrastructure');
+  const forbidden = /\b(?:customer_leave_requests|customer_leave_revisions|global_prices|customer_price_overrides)\b/iu;
+  const violations: string[] = [];
+
+  for (const file of files) {
+    if (forbidden.test(await readFile(file, 'utf8'))) violations.push(file.split(path.sep).join('/'));
+  }
+
+  assert.deepEqual(violations, []);
+});

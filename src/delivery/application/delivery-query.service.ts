@@ -21,27 +21,27 @@ export class DeliveryQueryService {
   ) {}
 
   listVendor(actor: Actor, vendorId: string, query: Omit<VendorDeliveryQuery, 'vendorId'>): Promise<DeliveryPage> {
-    return this.vendor(actor, vendorId, (tx) => this.deliveries.listVendor(tx, { vendorId, ...query }));
+    return this.vendor(actor, vendorId, 'delivery.list', (tx) => this.deliveries.listVendor(tx, { vendorId, ...query }));
   }
 
   getVendorDetail(actor: Actor, vendorId: string, id: string): Promise<DeliveryDetail> {
-    return this.vendor(actor, vendorId, (tx) => this.deliveries.getVendorDetail(tx, vendorId, id));
+    return this.vendor(actor, vendorId, 'delivery.get', (tx) => this.deliveries.getVendorDetail(tx, vendorId, id));
   }
 
   listCustomer(actor: Actor, vendorId: string, householdId: string, query: Omit<CustomerDeliveryQuery, 'vendorId' | 'householdId'>): Promise<DeliveryPage> {
-    return this.customer(actor, vendorId, householdId, (tx) => this.deliveries.listCustomer(tx, { vendorId, householdId, ...query }));
+    return this.customer(actor, vendorId, householdId, 'delivery.self-list', (tx) => this.deliveries.listCustomer(tx, { vendorId, householdId, ...query }));
   }
 
   getCustomerDetail(actor: Actor, vendorId: string, householdId: string, id: string): Promise<DeliveryDetail> {
-    return this.customer(actor, vendorId, householdId, (tx) => this.deliveries.getCustomerDetail(tx, vendorId, householdId, id));
+    return this.customer(actor, vendorId, householdId, 'delivery.self-get', (tx) => this.deliveries.getCustomerDetail(tx, vendorId, householdId, id));
   }
 
-  private vendor<T>(actor: Actor, vendorId: string, work: (tx: TransactionContext) => Promise<T>): Promise<T> {
-    return this.authorization.execute({ actor, vendorId, permission: 'schedule:read', operation: 'schedule.run-list' }, work);
+  private vendor<T>(actor: Actor, vendorId: string, operation: 'delivery.list' | 'delivery.get', work: (tx: TransactionContext) => Promise<T>): Promise<T> {
+    return this.authorization.execute({ actor, vendorId, permission: 'schedule:read', operation }, work);
   }
 
-  private customer<T>(actor: Actor, vendorId: string, householdId: string, work: (tx: TransactionContext) => Promise<T>): Promise<T> {
-    return this.authorization.execute({ actor, vendorId, permission: 'customer:self', operation: 'subscription.self-list' }, async (tx) => {
+  private customer<T>(actor: Actor, vendorId: string, householdId: string, operation: 'delivery.self-list' | 'delivery.self-get', work: (tx: TransactionContext) => Promise<T>): Promise<T> {
+    return this.authorization.execute({ actor, vendorId, permission: 'customer:self', operation }, async (tx) => {
       await this.households.requireCustomerSubscriptionHousehold(tx, actor, vendorId, householdId);
       return work(tx);
     });

@@ -49,7 +49,7 @@ export class AgentStopOutcomeRequestDto {
 
 export class DeliveryPageQueryDto {
   @IsOptional() @IsString() cursor?: string;
-  @ApiPropertyOptional({ default: 25, minimum: 1, maximum: 100 }) @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(100) limit?: number;
+  @ApiPropertyOptional({ type: Number, default: 25, minimum: 1, maximum: 100 }) @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(100) limit?: number;
 }
 
 export class CorrectScheduledDeliveryRequestDto {
@@ -60,50 +60,50 @@ export class CorrectScheduledDeliveryRequestDto {
 }
 
 export class VendorDeliveryPageQueryDto extends DeliveryPageQueryDto {
-  @ApiPropertyOptional({ format: 'date' }) @IsOptional() @Matches(date) serviceDate?: string;
-  @ApiPropertyOptional({ format: 'uuid' }) @IsOptional() @IsUUID('4') householdId?: string;
-  @ApiPropertyOptional({ format: 'uuid' }) @IsOptional() @IsUUID('4') routeId?: string;
-  @ApiPropertyOptional({ format: 'uuid' }) @IsOptional() @IsUUID('4') agentMembershipId?: string;
-  @ApiPropertyOptional({ format: 'uuid' }) @IsOptional() @IsUUID('4') productId?: string;
-  @ApiPropertyOptional({ enum: statuses }) @IsOptional() @IsIn(statuses) currentStatus?: typeof statuses[number];
+  @ApiPropertyOptional({ type: String, format: 'date' }) @IsOptional() @Matches(date) serviceDate?: string;
+  @ApiPropertyOptional({ type: String, format: 'uuid' }) @IsOptional() @IsUUID('4') householdId?: string;
+  @ApiPropertyOptional({ type: String, format: 'uuid' }) @IsOptional() @IsUUID('4') routeId?: string;
+  @ApiPropertyOptional({ type: String, format: 'uuid' }) @IsOptional() @IsUUID('4') agentMembershipId?: string;
+  @ApiPropertyOptional({ type: String, format: 'uuid' }) @IsOptional() @IsUUID('4') productId?: string;
+  @ApiPropertyOptional({ type: String, enum: statuses }) @IsOptional() @IsIn(statuses) currentStatus?: typeof statuses[number];
 }
 
 export class DeliverySummaryResponseDto {
-  @ApiProperty({ format: 'uuid' }) id!: string;
-  @ApiProperty({ format: 'uuid' }) householdId!: string;
-  @ApiProperty({ format: 'uuid' }) subscriptionId!: string;
-  @ApiProperty({ format: 'date' }) serviceDate!: string;
+  @ApiProperty({ type: String, format: 'uuid' }) id!: string;
+  @ApiProperty({ type: String, format: 'uuid' }) householdId!: string;
+  @ApiProperty({ type: String, format: 'uuid' }) subscriptionId!: string;
+  @ApiProperty({ type: String, format: 'date' }) serviceDate!: string;
   plannedQuantity!: string;
-  @ApiPropertyOptional() actualQuantity?: string;
-  @ApiProperty({ enum: statuses }) currentStatus!: typeof statuses[number];
+  @ApiPropertyOptional({ type: String }) actualQuantity?: string;
+  @ApiProperty({ type: String, enum: statuses }) currentStatus!: typeof statuses[number];
   version!: number;
-  @ApiPropertyOptional({ format: 'date-time' }) finalizedAt?: string;
+  @ApiPropertyOptional({ type: String, format: 'date-time' }) finalizedAt?: string;
 }
 
 export class DeliveryPriceSnapshotResponseDto {
   amountMinor!: string;
   currency!: string;
-  @ApiProperty({ enum: ['global', 'customer_specific'] }) pricingLevel!: 'global' | 'customer_specific';
-  @ApiProperty({ format: 'uuid' }) sourcePriceId!: string;
-  @ApiProperty({ enum: ['global_price', 'customer_price_override'] }) sourcePriceType!: 'global_price' | 'customer_price_override';
-  @ApiProperty({ format: 'date-time' }) resolvedAt!: string;
+  @ApiProperty({ type: String, enum: ['global', 'customer_specific'] }) pricingLevel!: 'global' | 'customer_specific';
+  @ApiProperty({ type: String, format: 'uuid' }) sourcePriceId!: string;
+  @ApiProperty({ type: String, enum: ['global_price', 'customer_price_override'] }) sourcePriceType!: 'global_price' | 'customer_price_override';
+  @ApiProperty({ type: String, format: 'date-time' }) resolvedAt!: string;
 }
 
 export class DeliveryEventResponseDto {
-  @ApiProperty({ format: 'uuid' }) id!: string;
-  @ApiProperty({ enum: statuses }) eventType!: string;
-  @ApiProperty({ enum: ['system', 'customer', 'delivery_agent', 'vendor_admin'] }) source!: string;
-  @ApiProperty({ format: 'date-time' }) occurredAt!: string;
-  @ApiProperty({ format: 'date-time' }) receivedAt!: string;
-  @ApiPropertyOptional() actualQuantity?: string;
-  @ApiPropertyOptional() reasonCode?: string;
-  @ApiPropertyOptional() note?: string;
-  @ApiPropertyOptional({ format: 'uuid' }) replacedEventId?: string;
+  @ApiProperty({ type: String, format: 'uuid' }) id!: string;
+  @ApiProperty({ type: String, enum: statuses }) eventType!: string;
+  @ApiProperty({ type: String, enum: ['system', 'customer', 'delivery_agent', 'vendor_admin'] }) source!: string;
+  @ApiProperty({ type: String, format: 'date-time' }) occurredAt!: string;
+  @ApiProperty({ type: String, format: 'date-time' }) receivedAt!: string;
+  @ApiPropertyOptional({ type: String }) actualQuantity?: string;
+  @ApiPropertyOptional({ type: String }) reasonCode?: string;
+  @ApiPropertyOptional({ type: String }) note?: string;
+  @ApiPropertyOptional({ type: String, format: 'uuid' }) replacedEventId?: string;
 }
 
 export class VendorDeliveryEventResponseDto extends DeliveryEventResponseDto {
-  @ApiPropertyOptional() latitude?: string;
-  @ApiPropertyOptional() longitude?: string;
+  @ApiPropertyOptional({ type: String }) latitude?: string;
+  @ApiPropertyOptional({ type: String }) longitude?: string;
 }
 
 export class VendorDeliveryDetailResponseDto extends DeliverySummaryResponseDto {
@@ -116,7 +116,7 @@ export class CustomerDeliveryDetailResponseDto extends DeliverySummaryResponseDt
   @ApiPropertyOptional({ type: () => DeliveryPriceSnapshotResponseDto }) snapshot?: DeliveryPriceSnapshotResponseDto;
 }
 
-export class DeliveryListResponseDto { @ApiProperty({ type: () => DeliverySummaryResponseDto, isArray: true }) items!: DeliverySummaryResponseDto[]; @ApiPropertyOptional() nextCursor?: string; }
+export class DeliveryListResponseDto { @ApiProperty({ type: () => DeliverySummaryResponseDto, isArray: true }) items!: DeliverySummaryResponseDto[]; @ApiPropertyOptional({ type: String }) nextCursor?: string; }
 
 export class AgentStopOutcomeResponseDto {
   @ApiProperty({ type: String, format: 'uuid' }) routeStopId!: string;

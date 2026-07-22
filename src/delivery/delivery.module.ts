@@ -4,6 +4,7 @@ import { AuditModule } from '../audit/audit.module.js';
 import { AuthorizationModule } from '../authorization/authorization.module.js';
 import { CustomersModule } from '../customers/customers.module.js';
 import { LeaveModule } from '../leave/leave.module.js';
+import { IdentityModule } from '../identity/identity.module.js';
 import { MembershipsModule } from '../memberships/memberships.module.js';
 import { NotificationsModule } from '../notifications/notifications.module.js';
 import { PricingModule } from '../pricing/pricing.module.js';
@@ -17,7 +18,7 @@ import { AgentDeliveryController } from './http/agent-delivery.controller.js';
 import { VendorDeliveryController } from './http/vendor-delivery.controller.js';
 
 @Module({
-  imports: [AuditModule, AuthorizationModule, CustomersModule, DeliveryFoundationModule, LeaveModule, MembershipsModule, NotificationsModule, PricingModule, VendorsModule],
+  imports: [AuditModule, AuthorizationModule, CustomersModule, DeliveryFoundationModule, IdentityModule, LeaveModule, MembershipsModule, NotificationsModule, PricingModule, VendorsModule],
   controllers: [VendorDeliveryController, CustomerDeliveryController, AgentDeliveryController],
   providers: [
     DeliveryQueryService,
