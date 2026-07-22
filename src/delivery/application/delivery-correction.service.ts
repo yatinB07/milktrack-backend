@@ -9,6 +9,11 @@ import { requestContextStore } from '../../common/context/request-context.js';
 import { ApplicationError } from '../../common/errors/application.error.js';
 import { NotificationWriter } from '../../notifications/application/notification-writer.js';
 import { DeliveryPriceService } from '../../pricing/application/delivery-price.service.js';
+import {
+  canonicalizePositiveQuantity,
+  requireCorrectionReason,
+  requireCorrectionTransition,
+} from '../domain/delivery-rules.js';
 import { DeliveryStore, type DeliveryDetail, type DeliveryRecord } from './delivery.store.js';
 
 export type CorrectDeliveryCommand = Readonly<{
@@ -35,6 +40,11 @@ export class DefaultDeliveryCorrectionService extends DeliveryCorrectionService 
   correct(actor: Actor, vendorId: string, scheduledDeliveryId: string, command: CorrectDeliveryCommand): Promise<DeliveryDetail> {
     return this.authorization.execute({ actor, vendorId, permission: 'schedule:manage', operation: 'schedule.manual-generate' }, async (tx) => {
       const before = await this.deliveries.lockCorrection(tx, vendorId, scheduledDeliveryId, command.expectedVersion);
+      requireCorrectionTransition(before.currentStatus, command.replacementOutcome, command.actualQuantity);
+      requireCorrectionReason(command.reason);
+      const actualQuantity = command.replacementOutcome === 'delivered'
+        ? canonicalizePositiveQuantity(command.actualQuantity)
+        : undefined;
       if (command.replacementOutcome === 'delivered' && !before.snapshot) {
         const price = await this.prices.resolve(tx, vendorId, before);
         if (!price) throw new ApplicationError('DELIVERY_PRICE_NOT_FOUND', 'Delivery price was not found', 409);
@@ -42,7 +52,7 @@ export class DefaultDeliveryCorrectionService extends DeliveryCorrectionService 
       }
       await this.deliveries.appendCorrection(tx, {
         id: randomUUID(), vendorId, scheduledDeliveryId, expectedVersion: command.expectedVersion,
-        replacementOutcome: command.replacementOutcome, actualQuantity: command.actualQuantity,
+        replacementOutcome: command.replacementOutcome, actualQuantity,
         actorUserId: actor.userId, occurredAt: new Date(), receivedAt: new Date(), reason: command.reason,
       });
       const after = await this.deliveries.getVendorDetail(tx, vendorId, scheduledDeliveryId);

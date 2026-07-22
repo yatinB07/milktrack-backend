@@ -71,3 +71,45 @@ void test('correction locks before resolving a missing delivered snapshot, inclu
   await requestContextStore.run({ correlationId: randomUUID() }, () => service.correct(admin, vendorId, deliveryId, { expectedVersion: 2, replacementOutcome: 'delivered', actualQuantity: '1.5', reason: 'Correct legacy delivery' }));
   assert.deepEqual(calls, ['lock', 'price', 'snapshot', 'append', 'detail']);
 });
+
+void test('correction rejects a non-final delivery before resolving price or creating a snapshot', async () => {
+  const calls: string[] = [];
+  const authorization: Pick<TenantAuthorizationExecutor, 'execute'> = { execute: <T>(_input: unknown, work: (current: TransactionContext) => Promise<T>) => work({} as TransactionContext) };
+  const service = new DefaultDeliveryCorrectionService(
+    authorization,
+    {
+      lockCorrection: () => { calls.push('lock'); return Promise.resolve({ ...initial, currentStatus: 'scheduled' }); },
+      createPriceSnapshot: () => { calls.push('snapshot'); return Promise.resolve(); },
+    } as unknown as DeliveryStore,
+    { resolve: () => { calls.push('price'); return Promise.resolve(undefined); } },
+    { append: () => Promise.resolve() }, { append: () => Promise.resolve() },
+  );
+
+  await assert.rejects(
+    requestContextStore.run({ correlationId: randomUUID() }, () => service.correct(admin, vendorId, deliveryId, { expectedVersion: 2, replacementOutcome: 'delivered', actualQuantity: '1', reason: 'Valid reason' })),
+    (error: unknown) => (error as { code?: string }).code === 'DELIVERY_NOT_FINALIZED',
+  );
+  assert.deepEqual(calls, ['lock']);
+});
+
+void test('correction rejects missing or invalid delivered quantity before resolving price or creating a snapshot', async () => {
+  for (const actualQuantity of [undefined, '0']) {
+    const calls: string[] = [];
+    const authorization: Pick<TenantAuthorizationExecutor, 'execute'> = { execute: <T>(_input: unknown, work: (current: TransactionContext) => Promise<T>) => work({} as TransactionContext) };
+    const service = new DefaultDeliveryCorrectionService(
+      authorization,
+      {
+        lockCorrection: () => { calls.push('lock'); return Promise.resolve(initial); },
+        createPriceSnapshot: () => { calls.push('snapshot'); return Promise.resolve(); },
+      } as unknown as DeliveryStore,
+      { resolve: () => { calls.push('price'); return Promise.resolve(undefined); } },
+      { append: () => Promise.resolve() }, { append: () => Promise.resolve() },
+    );
+
+    await assert.rejects(
+      requestContextStore.run({ correlationId: randomUUID() }, () => service.correct(admin, vendorId, deliveryId, { expectedVersion: 2, replacementOutcome: 'delivered', actualQuantity, reason: 'Valid reason' })),
+      (error: unknown) => (error as { code?: string }).code === 'INVALID_DELIVERY_QUANTITY',
+    );
+    assert.deepEqual(calls, ['lock']);
+  }
+});
