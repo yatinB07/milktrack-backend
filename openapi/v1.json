@@ -72,6 +72,98 @@
         ],
         "type": "object"
       },
+      "AgentRouteAssignmentListResponseDto": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/AgentRouteAssignmentResponseDto"
+            },
+            "type": "array"
+          },
+          "nextCursor": {
+            "type": "string"
+          },
+          "serviceDate": {
+            "format": "date",
+            "type": "string"
+          }
+        },
+        "required": [
+          "serviceDate",
+          "items"
+        ],
+        "type": "object"
+      },
+      "AgentRouteAssignmentResponseDto": {
+        "properties": {
+          "agentMembershipId": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "createdAt": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "deliverySlotEndLocalTime": {
+            "type": "string"
+          },
+          "deliverySlotId": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "deliverySlotName": {
+            "type": "string"
+          },
+          "deliverySlotStartLocalTime": {
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "routeCode": {
+            "type": "string"
+          },
+          "routeId": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "routeName": {
+            "type": "string"
+          },
+          "serviceDate": {
+            "format": "date",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "assigned",
+              "cancelled"
+            ],
+            "type": "string"
+          },
+          "updatedAt": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "routeId",
+          "deliverySlotId",
+          "agentMembershipId",
+          "serviceDate",
+          "status",
+          "createdAt",
+          "updatedAt",
+          "routeCode",
+          "routeName",
+          "deliverySlotName",
+          "deliverySlotStartLocalTime",
+          "deliverySlotEndLocalTime"
+        ],
+        "type": "object"
+      },
       "ApiErrorResponseDto": {
         "properties": {
           "code": {
@@ -782,6 +874,10 @@
           "currency": {
             "type": "string"
           },
+          "serviceDate": {
+            "format": "date",
+            "type": "string"
+          },
           "source": {
             "enum": [
               "customer_specific",
@@ -798,6 +894,7 @@
           }
         },
         "required": [
+          "serviceDate",
           "status"
         ],
         "type": "object"
@@ -896,8 +993,17 @@
             "format": "date-time",
             "type": "string"
           },
+          "deliverySlotEndLocalTime": {
+            "type": "string"
+          },
           "deliverySlotId": {
             "format": "uuid",
+            "type": "string"
+          },
+          "deliverySlotName": {
+            "type": "string"
+          },
+          "deliverySlotStartLocalTime": {
             "type": "string"
           },
           "endDate": {
@@ -908,8 +1014,14 @@
             "format": "uuid",
             "type": "string"
           },
+          "productCode": {
+            "type": "string"
+          },
           "productId": {
             "format": "uuid",
+            "type": "string"
+          },
+          "productName": {
             "type": "string"
           },
           "quantity": {
@@ -935,8 +1047,14 @@
             "format": "uuid",
             "type": "string"
           },
+          "unitCode": {
+            "type": "string"
+          },
           "unitId": {
             "format": "uuid",
+            "type": "string"
+          },
+          "unitName": {
             "type": "string"
           },
           "updatedAt": {
@@ -960,7 +1078,14 @@
           "status",
           "startDate",
           "createdAt",
-          "updatedAt"
+          "updatedAt",
+          "productCode",
+          "productName",
+          "unitCode",
+          "unitName",
+          "deliverySlotName",
+          "deliverySlotStartLocalTime",
+          "deliverySlotEndLocalTime"
         ],
         "type": "object"
       },
@@ -2612,37 +2737,94 @@
           },
           "nextCursor": {
             "type": "string"
+          },
+          "serviceDate": {
+            "format": "date",
+            "type": "string"
           }
         },
         "required": [
+          "serviceDate",
           "items"
         ],
         "type": "object"
       },
       "ScheduledDeliveryResponseDto": {
         "properties": {
+          "addressLine1": {
+            "type": "string"
+          },
+          "addressLine2": {
+            "type": "string"
+          },
+          "city": {
+            "type": "string"
+          },
+          "countryCode": {
+            "type": "string"
+          },
+          "deliverySlotEndLocalTime": {
+            "type": "string"
+          },
           "deliverySlotId": {
             "format": "uuid",
+            "type": "string"
+          },
+          "deliverySlotName": {
+            "type": "string"
+          },
+          "deliverySlotStartLocalTime": {
+            "type": "string"
+          },
+          "householdAccountNumber": {
             "type": "string"
           },
           "householdId": {
             "format": "uuid",
             "type": "string"
           },
+          "householdName": {
+            "type": "string"
+          },
           "id": {
             "format": "uuid",
+            "type": "string"
+          },
+          "locality": {
             "type": "string"
           },
           "plannedQuantity": {
             "example": "1.25",
             "type": "string"
           },
+          "postalCode": {
+            "type": "string"
+          },
+          "productCode": {
+            "type": "string"
+          },
           "productId": {
             "format": "uuid",
             "type": "string"
           },
+          "productName": {
+            "type": "string"
+          },
+          "region": {
+            "type": "string"
+          },
           "routeAssignmentId": {
             "format": "uuid",
+            "type": "string"
+          },
+          "routeCode": {
+            "type": "string"
+          },
+          "routeId": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "routeName": {
             "type": "string"
           },
           "routeStopId": {
@@ -2661,8 +2843,14 @@
             "format": "uuid",
             "type": "string"
           },
+          "unitCode": {
+            "type": "string"
+          },
           "unitId": {
             "format": "uuid",
+            "type": "string"
+          },
+          "unitName": {
             "type": "string"
           }
         },
@@ -2677,7 +2865,24 @@
           "routeStopId",
           "serviceDate",
           "plannedQuantity",
-          "sequence"
+          "sequence",
+          "routeId",
+          "routeCode",
+          "routeName",
+          "householdAccountNumber",
+          "householdName",
+          "addressLine1",
+          "city",
+          "region",
+          "postalCode",
+          "countryCode",
+          "productCode",
+          "productName",
+          "unitCode",
+          "unitName",
+          "deliverySlotName",
+          "deliverySlotStartLocalTime",
+          "deliverySlotEndLocalTime"
         ],
         "type": "object"
       },
@@ -3510,9 +3715,10 @@
           {
             "in": "query",
             "name": "serviceDate",
-            "required": true,
+            "required": false,
             "schema": {
               "format": "date",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
               "type": "string"
             }
           },
@@ -3541,7 +3747,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/RouteAssignmentListResponseDto"
+                  "$ref": "#/components/schemas/AgentRouteAssignmentListResponseDto"
                 }
               }
             },
@@ -3633,9 +3839,10 @@
           {
             "in": "query",
             "name": "serviceDate",
-            "required": true,
+            "required": false,
             "schema": {
               "format": "date",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
               "type": "string"
             }
           },
@@ -4381,6 +4588,16 @@
           },
           {
             "in": "query",
+            "name": "serviceDate",
+            "required": false,
+            "schema": {
+              "format": "date",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
             "name": "productId",
             "required": true,
             "schema": {
@@ -4403,15 +4620,6 @@
             "required": true,
             "schema": {
               "format": "uuid",
-              "type": "string"
-            }
-          },
-          {
-            "in": "query",
-            "name": "serviceDate",
-            "required": true,
-            "schema": {
-              "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
               "type": "string"
             }
           }
