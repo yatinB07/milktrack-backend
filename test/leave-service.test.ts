@@ -206,8 +206,8 @@ void test('direct service results derive exact audience actions and stable timel
   const productId = '00000000-0000-4000-8000-000000000030';
   const secondSubscriptionId = '00000000-0000-4000-8000-000000000031';
   const secondSlotId = '00000000-0000-4000-8000-000000000032';
-  const currentRevisionId = '00000000-0000-4000-8000-000000000040';
-  const historicalRevisionId = '00000000-0000-4000-8000-000000000041';
+  const currentRevisionId = '00000000-0000-4000-8000-000000000041';
+  const historicalRevisionId = '00000000-0000-4000-8000-000000000040';
   const pendingId = '00000000-0000-4000-8000-000000000050';
   const approvedId = '00000000-0000-4000-8000-000000000051';
   const historicalPendingId = '00000000-0000-4000-8000-000000000052';
@@ -216,11 +216,11 @@ void test('direct service results derive exact audience actions and stable timel
   const base = requestWith({
     status: 'accepted', currentRevisionId,
     revisions: [
-      revisionWith({ id: historicalRevisionId, createdAt: new Date('2029-12-31T00:00:00.000Z'), decisions: [
+      revisionWith({ id: historicalRevisionId, createdAt: new Date('2030-01-01T00:00:00.000Z'), decisions: [
         decisionWith({ id: historicalPendingId, status: 'pending', subscriptionId: secondSubscriptionId, deliverySlotId: secondSlotId, serviceDate: '2030-01-01', cutoffAt }),
       ] }),
       revisionWith({ id: currentRevisionId, createdAt: new Date('2030-01-01T00:00:00.000Z'), subscriptionIds: [secondSubscriptionId, subscriptionId], decisions: [
-        decisionWith({ id: approvedId, status: 'approved', subscriptionId: secondSubscriptionId, deliverySlotId: secondSlotId, serviceDate: '2030-01-03', cutoffAt }),
+        decisionWith({ id: approvedId, status: 'approved', subscriptionId: secondSubscriptionId, deliverySlotId: secondSlotId, serviceDate: '2030-01-02', cutoffAt }),
         decisionWith({ id: pendingId, status: 'pending', serviceDate: '2030-01-02', cutoffAt }),
         decisionWith({ id: rejectedId, status: 'rejected', serviceDate: '2030-01-04', cutoffAt }),
       ] }),
@@ -281,6 +281,61 @@ void test('direct service results derive exact audience actions and stable timel
   assert.equal(labelCalls.every(({ householdId: scope }) => scope === householdId || scope === undefined), true);
 });
 
+void test('approve and reject retain finalized decision timelines with one label batch', async () => {
+  const decisionId = '00000000-0000-4000-8000-000000000060';
+  const revisionId = '00000000-0000-4000-8000-000000000061';
+  const productId = '00000000-0000-4000-8000-000000000062';
+  const cutoffAt = new Date('2030-01-01T00:30:00.000Z');
+  const labelCalls: SubscriptionLabelReference[][] = [];
+  let decision: 'approved' | 'rejected' = 'approved';
+  const service = directService({
+    decide: () => {
+      const finalized = decisionWith({ id: decisionId, status: decision, cutoffAt, source: 'system' });
+      const leave = requestWith({
+        currentRevisionId: revisionId,
+        revisions: [revisionWith({ id: revisionId, source: 'system', decisions: [finalized] })],
+      });
+      return Promise.resolve({ ...finalized, vendorId, leaveRequestRevisionId: revisionId, source: 'system', request: leave });
+    },
+    isEffectivelyOnLeave: () => Promise.resolve(decision === 'approved'),
+  }, { read: (_tx: TransactionContext, input: { references: readonly SubscriptionLabelReference[] }) => {
+    labelCalls.push([...input.references]);
+    return Promise.resolve(input.references.map((reference) => ({
+      referenceId: reference.referenceId, subscriptionId: reference.subscriptionId, productId, productName: 'Preserved Milk',
+      deliverySlotId: reference.kind === 'occurrence' ? reference.deliverySlotId : slotId, deliverySlotName: 'Preserved Morning',
+    })));
+  } });
+
+  await requestContextStore.run({ correlationId: '00000000-0000-4000-8000-000000000096' }, async () => {
+    for (const next of ['approved', 'rejected'] as const) {
+      decision = next;
+      const result = await service.decideOccurrence(actor, vendorId, decisionId, { expectedVersion: 1, decision: next, reason: ' reviewed ' });
+      assert.equal(result.id, decisionId);
+      assert.equal(result.leaveRequestRevisionId, revisionId);
+      assert.equal(result.cutoffAt, cutoffAt);
+      assert.equal(result.source, 'system');
+      assert.equal(result.productId, productId);
+      assert.equal(result.productName, 'Preserved Milk');
+      assert.equal(result.deliverySlotName, 'Preserved Morning');
+      assert.equal(result.currentStatus, next);
+      assert.equal(result.request.id, request().id);
+      assert.equal(result.request.currentRevisionId, revisionId);
+      assert.deepEqual(result.request.revisions[0]?.subscriptionLabels, [{
+        subscriptionId, productId, productName: 'Preserved Milk', deliverySlotId: slotId, deliverySlotName: 'Preserved Morning',
+      }]);
+      const timeline = result.request.revisions[0]?.decisions?.[0];
+      assert.equal(timeline?.id, decisionId);
+      assert.equal(timeline?.cutoffAt, cutoffAt);
+      assert.equal(timeline?.source, 'system');
+      assert.equal(timeline?.productId, productId);
+      assert.equal(timeline?.productName, 'Preserved Milk');
+      assert.equal(timeline?.deliverySlotName, 'Preserved Morning');
+      assert.deepEqual(timeline?.availableActions, []);
+      assert.equal(labelCalls.length, next === 'approved' ? 1 : 2);
+    }
+  });
+});
+
 void test('each page and preview batches labels once and empty results short-circuit', async () => {
   const calls: Array<readonly { referenceId: string }[]> = [];
   const record = requestWith({ currentRevisionId: request().revisions[0].id });
@@ -325,7 +380,7 @@ function decisionWith(values: Partial<LeaveRevisionDecisionRecord> = {}): LeaveR
     id: values.id ?? '00000000-0000-4000-8000-000000000080', subscriptionId: values.subscriptionId ?? subscriptionId,
     serviceDate: values.serviceDate ?? '2030-01-02', deliverySlotId: values.deliverySlotId ?? slotId, status: values.status ?? 'pending',
     previousEffectiveStatus: 'scheduled' as const, requestedEffectiveStatus: 'skipped_by_customer' as const,
-    cutoffAt: values.cutoffAt ?? new Date('2030-01-01T00:00:00.000Z'), source: 'customer' as const,
+    cutoffAt: values.cutoffAt ?? new Date('2030-01-01T00:00:00.000Z'), source: values.source ?? 'customer',
     version: 1, createdAt: new Date('2030-01-01T00:00:00.000Z'),
   };
 }
