@@ -57,7 +57,7 @@ async function cleanup(value: Fixture) {
   await owner.query('DELETE FROM users WHERE id=$1', [value.userId]);
 }
 
-function revision(current: Fixture, values: Readonly<{ requestId: string; revisionId: string; action?: 'create' | 'amend' | 'cancel'; previousRevisionId?: string; status?: 'accepted' | 'pending_approval'; decisions?: readonly Readonly<{ id: string; serviceDate: string; deliverySlotId: string; status: 'pending' | 'rejected'; subscriptionId?: string }>[] }>) {
+function revision(current: Fixture, values: Readonly<{ requestId: string; revisionId: string; action?: 'create' | 'amend' | 'cancel'; previousRevisionId?: string; status?: 'accepted' | 'pending_approval' | 'cancelled'; decisions?: readonly Readonly<{ id: string; serviceDate: string; deliverySlotId: string; status: 'pending' | 'rejected'; subscriptionId?: string }>[] }>) {
   return {
     vendorId: current.vendorId, householdId: current.householdId, requestId: values.requestId, revisionId: values.revisionId,
     action: values.action ?? 'create', previousRevisionId: values.previousRevisionId, source: 'customer' as const,
@@ -71,6 +71,14 @@ function rejectsWithCode(work: () => Promise<unknown>, code: string) {
   return assert.rejects(work, (cause: unknown) => {
     assert(cause && typeof cause === 'object' && 'code' in cause);
     assert.equal(cause.code, code);
+    return true;
+  });
+}
+
+function rejectsWithCodeAndStatus(work: () => Promise<unknown>, code: string, status: number) {
+  return assert.rejects(work, (cause: unknown) => {
+    assert(cause && typeof cause === 'object' && 'code' in cause && 'status' in cause);
+    assert.equal(cause.code, code); assert.equal(cause.status, status);
     return true;
   });
 }
@@ -114,6 +122,39 @@ void test('leave store scopes active household subscriptions, persists append-on
       }));
       assert.equal(amended.revisions.length, 2);
       assert.equal(amended.currentRevisionId, amended.revisions[0]?.id);
+      assert.equal(await store.isEffectivelyOnLeave(tx, {
+        vendorId: current.vendorId, subscriptionId: current.subscriptionId, deliverySlotId: current.slotId, serviceDate: '2030-01-01',
+      }), true);
+    });
+  } finally { await cleanup(current); }
+});
+
+void test('approved late amendment becomes effective and cancelled requests reject further lifecycle changes', async () => {
+  const current = await fixture('amend-lifecycle'); const requestId = randomUUID(); const createdRevisionId = randomUUID();
+  try {
+    await transactions.run(current.vendorId, async (tx) => {
+      await store.createRevision(tx, revision(current, { requestId, revisionId: createdRevisionId }));
+      const amendmentRevisionId = randomUUID(); const decisionId = randomUUID();
+      await store.createRevision(tx, revision(current, {
+        requestId, revisionId: amendmentRevisionId, action: 'amend', previousRevisionId: createdRevisionId,
+        status: 'pending_approval', decisions: [{ id: decisionId, serviceDate: '2030-01-01', deliverySlotId: current.slotId, status: 'pending' }],
+      }));
+      assert.equal(await store.isEffectivelyOnLeave(tx, {
+        vendorId: current.vendorId, subscriptionId: current.subscriptionId, deliverySlotId: current.slotId, serviceDate: '2030-01-01',
+      }), false);
+      await store.decide(tx, { vendorId: current.vendorId, id: decisionId, expectedVersion: 1, decision: 'approved', decidedBy: current.userId, reason: 'Approved late amendment', now: new Date() });
+      assert.equal(await store.isEffectivelyOnLeave(tx, {
+        vendorId: current.vendorId, subscriptionId: current.subscriptionId, deliverySlotId: current.slotId, serviceDate: '2030-01-01',
+      }), true);
+      const cancelled = await store.createRevision(tx, { ...revision(current, {
+        requestId, revisionId: randomUUID(), action: 'cancel', previousRevisionId: amendmentRevisionId, status: 'cancelled',
+      }), expectedVersion: 3 });
+      const cancellationRevisionId = cancelled.currentRevisionId;
+      assert.ok(cancellationRevisionId);
+      const next = { ...revision(current, { requestId, revisionId: randomUUID(), action: 'cancel', previousRevisionId: cancellationRevisionId }), expectedVersion: cancelled.version };
+      await rejectsWithCodeAndStatus(() => store.createRevision(tx, next), 'LEAVE_REQUEST_STATE_CONFLICT', 409);
+      await rejectsWithCodeAndStatus(() => store.createRevision(tx, { ...next, revisionId: randomUUID(), action: 'amend' }), 'LEAVE_REQUEST_STATE_CONFLICT', 409);
+      await rejectsWithCodeAndStatus(() => store.createRevision(tx, { ...next, revisionId: randomUUID(), expectedVersion: cancelled.version - 1 }), 'LEAVE_REQUEST_VERSION_CONFLICT', 409);
     });
   } finally { await cleanup(current); }
 });

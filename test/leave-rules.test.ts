@@ -98,10 +98,13 @@ void test('cutoffs choose the earliest instant during a DST overlap', () => {
   }).cutoffAt.toISOString(), '2030-11-03T05:30:00.000Z');
 });
 
-void test('leave actions reverse requested state and aggregate occurrence status', () => {
+void test('create and amendment request leave while cancellation reverses it', () => {
   assert.equal(requestedEffectiveStatus('create'), 'skipped_by_customer');
-  assert.equal(requestedEffectiveStatus('amend'), 'scheduled');
+  assert.equal(requestedEffectiveStatus('amend'), 'skipped_by_customer');
   assert.equal(requestedEffectiveStatus('cancel'), 'scheduled');
+});
+
+void test('leave occurrence counts derive aggregate request status', () => {
   assert.equal(deriveLeaveStatus({ effective: 0, pending: 2 }), 'pending_approval');
   assert.equal(deriveLeaveStatus({ effective: 1, pending: 1 }), 'partially_pending');
   assert.equal(deriveLeaveStatus({ effective: 1, pending: 0 }), 'accepted');

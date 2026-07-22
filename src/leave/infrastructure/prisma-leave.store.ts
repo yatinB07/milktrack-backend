@@ -98,13 +98,15 @@ export class PrismaLeaveStore extends LeaveStore {
     await this.requireApplicableSelection(context, input, true);
     if (input.action !== 'cancel') await this.requireNoOverlap(tx, input);
     if (input.previousRevisionId) {
-      const current = await tx.$queryRaw<Array<{ id: string; version: number; currentRevisionId: string | null }>>(Prisma.sql`
-        SELECT id,version,current_revision_id AS "currentRevisionId" FROM leave_requests
+      const current = await tx.$queryRaw<Array<{ id: string; status: string; version: number; currentRevisionId: string | null }>>(Prisma.sql`
+        SELECT id,status,version,current_revision_id AS "currentRevisionId" FROM leave_requests
         WHERE vendor_id=${input.vendorId}::uuid AND household_id=${input.householdId}::uuid AND id=${input.requestId}::uuid FOR UPDATE`);
       const row = current[0];
       if (!row) throw error('LEAVE_REQUEST_NOT_FOUND', 'Leave request was not found', 404);
       if (row.version !== input.expectedVersion || row.currentRevisionId !== input.previousRevisionId)
         throw error('LEAVE_REQUEST_VERSION_CONFLICT', 'Leave request was changed by another request', 409);
+      if (row.status === 'cancelled')
+        throw error('LEAVE_REQUEST_STATE_CONFLICT', 'Cancelled leave requests cannot be changed', 409);
     } else {
       await tx.leaveRequest.create({ data: { id: input.requestId, vendorId: input.vendorId, householdId: input.householdId, status: input.status } });
     }
@@ -204,7 +206,7 @@ export class PrismaLeaveStore extends LeaveStore {
     if (!row || row.status === 'cancelled') return false;
     if (row.decisionStatus === 'approved') return row.requestedStatus === 'skipped_by_customer';
     if (row.decisionStatus === 'pending' || row.decisionStatus === 'rejected') return row.previousStatus === 'skipped_by_customer';
-    return row.action === 'create';
+    return row.action !== 'cancel' && (row.status === 'accepted' || row.status === 'partially_pending');
   }
 
   private async requireApplicableSelection(context: TransactionContext, input: Readonly<{

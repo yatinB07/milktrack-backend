@@ -105,7 +105,7 @@ export function classifyLeaveOccurrence(input: Readonly<{
 }
 
 export function requestedEffectiveStatus(action: LeaveAction): EffectiveDeliveryStatus {
-  return action === 'create' ? 'skipped_by_customer' : 'scheduled';
+  return action === 'cancel' ? 'scheduled' : 'skipped_by_customer';
 }
 
 export function deriveLeaveStatus(input: Readonly<{ effective: number; pending: number; cancelled?: boolean }>): LeaveRequestStatus {
