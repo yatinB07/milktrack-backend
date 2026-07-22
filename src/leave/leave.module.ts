@@ -11,6 +11,7 @@ import { NotificationsModule } from '../notifications/notifications.module.js';
 import { RoutingModule } from '../routing/routing.module.js';
 import { VendorsModule } from '../vendors/vendors.module.js';
 import { DefaultLeaveService, LeaveService } from './application/leave.service.js';
+import { DefaultEffectiveLeaveService, EffectiveLeaveService } from './application/effective-leave.service.js';
 import { LeaveStore } from './application/leave.store.js';
 import { DefaultSchedulingLeaveService, SchedulingLeaveService } from './application/scheduling-leave.service.js';
 import { CustomerLeaveController } from './http/customer-leave.controller.js';
@@ -20,7 +21,16 @@ import { PrismaLeaveStore } from './infrastructure/prisma-leave.store.js';
 @Module({
   imports: [AuditModule, AuthorizationModule, CustomersModule, DatabaseModule, DeliveryFoundationModule, IdentityModule, MembershipsModule, NotificationsModule, RoutingModule, VendorsModule],
   controllers: [CustomerLeaveController, VendorLeaveController],
-  providers: [PrismaLeaveStore, { provide: LeaveStore, useExisting: PrismaLeaveStore }, DefaultLeaveService, { provide: LeaveService, useExisting: DefaultLeaveService }, DefaultSchedulingLeaveService, { provide: SchedulingLeaveService, useExisting: DefaultSchedulingLeaveService }],
-  exports: [LeaveService, LeaveStore, SchedulingLeaveService],
+  providers: [
+    PrismaLeaveStore,
+    { provide: LeaveStore, useExisting: PrismaLeaveStore },
+    DefaultLeaveService,
+    { provide: LeaveService, useExisting: DefaultLeaveService },
+    DefaultSchedulingLeaveService,
+    { provide: SchedulingLeaveService, useExisting: DefaultSchedulingLeaveService },
+    DefaultEffectiveLeaveService,
+    { provide: EffectiveLeaveService, useExisting: DefaultEffectiveLeaveService },
+  ],
+  exports: [LeaveService, LeaveStore, SchedulingLeaveService, EffectiveLeaveService],
 })
 export class LeaveModule {}
