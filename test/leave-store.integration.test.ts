@@ -57,11 +57,11 @@ async function cleanup(value: Fixture) {
   await owner.query('DELETE FROM users WHERE id=$1', [value.userId]);
 }
 
-function revision(current: Fixture, values: Readonly<{ requestId: string; revisionId: string; action?: 'create' | 'amend' | 'cancel'; previousRevisionId?: string; status?: 'accepted' | 'pending_approval' | 'partially_pending' | 'cancelled'; subscriptions?: readonly Readonly<{ subscriptionId: string; selected: boolean }>[]; decisions?: readonly Readonly<{ id: string; serviceDate: string; deliverySlotId: string; status: 'pending' | 'rejected'; subscriptionId?: string; previousEffectiveStatus?: 'scheduled' | 'skipped_by_customer'; requestedEffectiveStatus?: 'scheduled' | 'skipped_by_customer' }>[] }>) {
+function revision(current: Fixture, values: Readonly<{ requestId: string; revisionId: string; action?: 'create' | 'amend' | 'cancel'; previousRevisionId?: string; status?: 'accepted' | 'pending_approval' | 'partially_pending' | 'cancelled'; startDate?: string; endDate?: string; subscriptions?: readonly Readonly<{ subscriptionId: string; selected: boolean }>[]; decisions?: readonly Readonly<{ id: string; serviceDate: string; deliverySlotId: string; status: 'pending' | 'rejected'; subscriptionId?: string; previousEffectiveStatus?: 'scheduled' | 'skipped_by_customer'; requestedEffectiveStatus?: 'scheduled' | 'skipped_by_customer' }>[] }>) {
   return {
     vendorId: current.vendorId, householdId: current.householdId, requestId: values.requestId, revisionId: values.revisionId,
     action: values.action ?? 'create', previousRevisionId: values.previousRevisionId, source: 'customer' as const,
-    createdBy: current.userId, startDate: '2030-01-01', endDate: '2030-01-31',
+    createdBy: current.userId, startDate: values.startDate ?? '2030-01-01', endDate: values.endDate ?? '2030-01-31',
     subscriptions: values.subscriptions ?? [{ subscriptionId: current.subscriptionId, selected: true }],
     status: values.status ?? 'accepted', expectedVersion: values.previousRevisionId ? 1 : undefined,
     decisions: values.decisions ?? [],
@@ -262,10 +262,11 @@ void test('mixed amendment decisions recompute status from the current selected 
       await client.query('COMMIT');
     } catch (cause) { await client.query('ROLLBACK'); throw cause; } finally { client.release(); }
     await transactions.run(current.vendorId, async (tx) => {
-      await store.createRevision(tx, revision(current, { requestId, revisionId: createdRevisionId }));
+      await store.createRevision(tx, revision(current, { requestId, revisionId: createdRevisionId, startDate: '2030-01-01', endDate: '2030-01-01' }));
       const amendedRevisionId = randomUUID();
       await store.createRevision(tx, revision(current, {
         requestId, revisionId: amendedRevisionId, action: 'amend', previousRevisionId: createdRevisionId,
+        startDate: '2030-01-01', endDate: '2030-01-01',
         status: 'partially_pending', subscriptions: [
           { subscriptionId: current.subscriptionId, selected: false },
           { subscriptionId: replacementSubscriptionId, selected: true },
@@ -282,6 +283,46 @@ void test('mixed amendment decisions recompute status from the current selected 
       const afterAddition = await store.decide(tx, { vendorId: current.vendorId, id: additionDecisionId, expectedVersion: 1,
         decision: 'rejected', decidedBy: current.userId, reason: 'Reject replacement', now: new Date() });
       assert.equal(afterAddition.request.status, 'rejected');
+    });
+  } finally { await cleanup(current); }
+});
+
+void test('same-subscription decisions recompute status at occurrence granularity', async () => {
+  const current = await fixture('occurrence-status');
+  try {
+    await transactions.run(current.vendorId, async (tx) => {
+      const twoLateRequestId = randomUUID(); const firstDecisionId = randomUUID(); const secondDecisionId = randomUUID();
+      await store.createRevision(tx, revision(current, {
+        requestId: twoLateRequestId, revisionId: randomUUID(), startDate: '2030-01-01', endDate: '2030-01-08', status: 'pending_approval',
+        decisions: [
+          { id: firstDecisionId, serviceDate: '2030-01-01', deliverySlotId: current.slotId, status: 'pending' },
+          { id: secondDecisionId, serviceDate: '2030-01-08', deliverySlotId: current.slotId, status: 'pending' },
+        ],
+      }));
+      const partiallyAccepted = await store.decide(tx, { vendorId: current.vendorId, id: firstDecisionId, expectedVersion: 1,
+        decision: 'approved', decidedBy: current.userId, reason: 'Approve one date', now: new Date() });
+      assert.equal(partiallyAccepted.request.status, 'partially_pending');
+      const accepted = await store.decide(tx, { vendorId: current.vendorId, id: secondDecisionId, expectedVersion: 1,
+        decision: 'rejected', decidedBy: current.userId, reason: 'Reject the other date', now: new Date() });
+      assert.equal(accepted.request.status, 'accepted');
+
+      const onTimeRequestId = randomUUID(); const rejectedDecisionId = randomUUID();
+      await store.createRevision(tx, revision(current, {
+        requestId: onTimeRequestId, revisionId: randomUUID(), startDate: '2030-02-05', endDate: '2030-02-12', status: 'partially_pending',
+        decisions: [{ id: rejectedDecisionId, serviceDate: '2030-02-05', deliverySlotId: current.slotId, status: 'pending' }],
+      }));
+      const onTimeAccepted = await store.decide(tx, { vendorId: current.vendorId, id: rejectedDecisionId, expectedVersion: 1,
+        decision: 'rejected', decidedBy: current.userId, reason: 'Keep the on-time date', now: new Date() });
+      assert.equal(onTimeAccepted.request.status, 'accepted');
+
+      const rejectedRequestId = randomUUID(); const rejectedIds = [randomUUID(), randomUUID()];
+      await store.createRevision(tx, revision(current, {
+        requestId: rejectedRequestId, revisionId: randomUUID(), startDate: '2030-03-05', endDate: '2030-03-12', status: 'pending_approval',
+        decisions: rejectedIds.map((id, index) => ({ id, serviceDate: index === 0 ? '2030-03-05' : '2030-03-12', deliverySlotId: current.slotId, status: 'pending' })),
+      }));
+      for (const id of rejectedIds) await store.decide(tx, { vendorId: current.vendorId, id, expectedVersion: 1,
+        decision: 'rejected', decidedBy: current.userId, reason: 'Reject late date', now: new Date() });
+      assert.equal((await store.getRequest(tx, current.vendorId, current.householdId, rejectedRequestId)).status, 'rejected');
     });
   } finally { await cleanup(current); }
 });

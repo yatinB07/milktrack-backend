@@ -164,17 +164,21 @@ export class PrismaLeaveStore extends LeaveStore {
   async listPendingDecisions(context: TransactionContext, input: LeaveDecisionListInput): Promise<LeaveDecisionPage> {
     const limit = this.cursors.parseLimit(input.limit); const cursor = input.cursor ? this.cursors.decode(input.cursor) : undefined;
     const tx = unwrapPrismaTransaction(context);
-    const ids = await tx.$queryRaw<Array<{ id: string }>>(Prisma.sql`
-      SELECT d.id FROM leave_occurrence_decisions d
+    const rows = await tx.$queryRaw<Array<{
+      id: string; vendorId: string; leaveRequestRevisionId: string; subscriptionId: string; serviceDate: Date;
+      deliverySlotId: string; status: string; version: number; createdAt: Date;
+    }>>(Prisma.sql`
+      SELECT d.id,d.vendor_id AS "vendorId",d.leave_request_revision_id AS "leaveRequestRevisionId",
+        d.subscription_id AS "subscriptionId",d.service_date AS "serviceDate",d.delivery_slot_id AS "deliverySlotId",
+        d.status,d.version,d.created_at AS "createdAt"
+      FROM leave_occurrence_decisions d
       JOIN leave_request_revisions r ON r.vendor_id=d.vendor_id AND r.id=d.leave_request_revision_id
       JOIN leave_requests q ON q.vendor_id=r.vendor_id AND q.id=r.leave_request_id AND q.current_revision_id=r.id
       WHERE d.vendor_id=${input.vendorId}::uuid AND d.status='pending'
         ${cursor ? Prisma.sql`AND (d.service_date>${cursor.createdAt}::date OR (d.service_date=${cursor.createdAt}::date AND d.id>${cursor.id}::uuid))` : Prisma.empty}
       ORDER BY d.service_date,d.id LIMIT ${limit + 1}`);
-    const found = await tx.leaveOccurrenceDecision.findMany({ where: { id: { in: ids.map(({ id }) => id) }, vendorId: input.vendorId } });
-    const byId = new Map(found.map((row) => [row.id, row]));
-    const rows = ids.map(({ id }) => byId.get(id)).filter((row): row is LeaveOccurrenceDecision => Boolean(row));
-    const items = rows.slice(0, limit).map((row) => this.decision(row)); const last = items.at(-1);
+    const items = rows.slice(0, limit).map((row) => ({ ...row, serviceDate: dateString(row.serviceDate), status: row.status as LeaveDecisionRecord['status'] }));
+    const last = items.at(-1);
     return { items, ...(rows.length > limit && last ? { nextCursor: this.cursors.encode({ createdAt: date(last.serviceDate), id: last.id }) } : {}) };
   }
 
@@ -216,11 +220,12 @@ export class PrismaLeaveStore extends LeaveStore {
     ]);
     const pending = decisions.filter(({ status }) => status === 'pending').length;
     const selected = new Set(subscriptions.filter(({ selected }) => selected).map(({ subscriptionId }) => subscriptionId));
+    const selectedOccurrences = await this.countSelectedOccurrences(tx, input.vendorId, locked.leaveRequestRevisionId);
     const effective = Math.max(0, decisions.reduce((count, decision) => {
       const baseline = selected.has(decision.subscriptionId) ? 'skipped_by_customer' : 'scheduled';
       const resolved = decision.status === 'approved' ? decision.requestedEffectiveStatus : decision.previousEffectiveStatus;
       return count + Number(resolved === 'skipped_by_customer') - Number(baseline === 'skipped_by_customer');
-    }, selected.size));
+    }, selectedOccurrences));
     const status = pending > 0
       ? deriveLeaveStatus({ effective, pending })
       : effective > 0 ? 'accepted' : locked.action === 'cancel' ? 'cancelled' : 'rejected';
@@ -325,6 +330,29 @@ export class PrismaLeaveStore extends LeaveStore {
           AND s.selected AND s.subscription_id=ANY(${[...subscriptionIds]}::uuid[])
           ${input.previousRevisionId ? Prisma.sql`AND q.id<>${input.requestId}::uuid` : Prisma.empty}) AS overlap`);
     if (rows[0]?.overlap) throw error('LEAVE_OVERLAP', 'Leave overlaps an active request', 409);
+  }
+
+  private async countSelectedOccurrences(tx: Prisma.TransactionClient, vendorId: string, revisionId: string) {
+    const rows = await tx.$queryRaw<Array<{
+      weekdays: number[]; effectiveFrom: string; effectiveTo: string | null; startDate: string; endDate: string;
+    }>>(Prisma.sql`
+      SELECT array_agg(w.weekday ORDER BY w.weekday) AS weekdays,r.effective_from::text AS "effectiveFrom",
+        r.effective_to::text AS "effectiveTo",lr.start_date::text AS "startDate",lr.end_date::text AS "endDate"
+      FROM leave_request_revisions lr
+      JOIN leave_revision_subscriptions s ON s.vendor_id=lr.vendor_id AND s.leave_request_revision_id=lr.id AND s.selected
+      JOIN subscription_revisions r ON r.vendor_id=s.vendor_id AND r.subscription_id=s.subscription_id
+        AND r.superseded_at IS NULL AND r.status='active'
+        AND r.effective_from<=lr.end_date AND (r.effective_to IS NULL OR r.effective_to>lr.start_date)
+      JOIN subscription_revision_weekdays w ON w.vendor_id=r.vendor_id AND w.subscription_revision_id=r.id
+      WHERE lr.vendor_id=${vendorId}::uuid AND lr.id=${revisionId}::uuid
+      GROUP BY r.id,lr.start_date,lr.end_date`);
+    return rows.reduce((total, row) => {
+      const start = row.effectiveFrom > row.startDate ? row.effectiveFrom : row.startDate;
+      const endExclusive = row.effectiveTo && row.effectiveTo < dateAfter(row.endDate) ? row.effectiveTo : dateAfter(row.endDate);
+      return total + (start < endExclusive
+        ? [...new Set(row.weekdays)].reduce((count, weekday) => count + countWeekdayOccurrences(start, dateBefore(endExclusive), weekday), 0)
+        : 0);
+    }, 0);
   }
 
   private request(row: RequestRow): LeaveRequestRecord {
