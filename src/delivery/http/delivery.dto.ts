@@ -1,12 +1,51 @@
 import { Type } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsIn, IsInt, IsOptional, IsString, IsUUID, Length, Matches, Max, Min } from 'class-validator';
+import { ArrayNotEmpty, IsArray, IsDefined, IsIn, IsInt, IsNumber, IsOptional, IsString, IsUUID, Length, Matches, Max, MaxLength, Min, ValidateBy, ValidateIf, ValidateNested } from 'class-validator';
 
+import type { AgentStopResult } from '../application/agent-stop-outcome.service.js';
 import type { DeliveryDetail, DeliveryEvent, DeliveryPriceSnapshot, DeliveryRecord } from '../application/delivery.store.js';
+import { AGENT_SKIP_REASONS, MISSED_REASONS } from '../domain/delivery-rules.js';
 
 const statuses = ['scheduled', 'cancelled', 'delivered', 'skipped_by_customer', 'skipped_by_agent', 'missed'] as const;
 const correctionStatuses = ['delivered', 'skipped_by_agent', 'missed'] as const;
 const date = /^\d{4}-\d{2}-\d{2}$/;
+const quantity = /^(?:0|[1-9]\d*)(?:\.\d{1,3})?$/;
+const rfc3339 = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/;
+const IsOutcomeReason = () => ValidateBy({
+  name: 'isOutcomeReason',
+  validator: {
+    validate: (reason: unknown, args) => {
+      if (!args) return false;
+      const { outcome } = args.object as AgentStopOutcomeRequestDto;
+      if (outcome === 'delivered') return reason === undefined;
+      return typeof reason === 'string'
+        && (outcome === 'skipped_by_agent' ? AGENT_SKIP_REASONS : MISSED_REASONS).includes(reason as never);
+    },
+  },
+});
+
+export class AgentStopOutcomeItemDto {
+  @ApiProperty({ type: String, format: 'uuid' }) @IsUUID('4') scheduledDeliveryId!: string;
+  @ApiProperty({ type: Number, minimum: 1 }) @Min(1) @IsInt() @Type(() => Number) expectedVersion!: number;
+  @ApiPropertyOptional({ type: String, pattern: quantity.source }) @IsOptional() @IsString() @Matches(quantity) actualQuantity?: string;
+}
+
+export class AgentStopOutcomeRequestDto {
+  @ApiProperty({ type: String, format: 'date' }) @Matches(date) serviceDate!: string;
+  @ApiProperty({ type: String, enum: ['delivered', 'skipped_by_agent', 'missed'] }) @IsIn(['delivered', 'skipped_by_agent', 'missed']) outcome!: 'delivered' | 'skipped_by_agent' | 'missed';
+  @ApiProperty({ type: String, format: 'date-time', pattern: rfc3339.source }) @Matches(rfc3339) occurredAt!: string;
+  @ApiProperty({ type: () => AgentStopOutcomeItemDto, isArray: true }) @IsArray() @ArrayNotEmpty() @ValidateNested({ each: true }) @Type(() => AgentStopOutcomeItemDto) items!: AgentStopOutcomeItemDto[];
+  @ApiPropertyOptional({ type: String, enum: [...AGENT_SKIP_REASONS, ...MISSED_REASONS] })
+  @IsOutcomeReason()
+  reasonCode?: typeof AGENT_SKIP_REASONS[number] | typeof MISSED_REASONS[number];
+  @ApiPropertyOptional({ type: String, maxLength: 500 }) @IsOptional() @IsString() @MaxLength(500) note?: string;
+  @ApiPropertyOptional({ type: Number, minimum: -90, maximum: 90 })
+  @ValidateIf((value: AgentStopOutcomeRequestDto) => value.latitude !== undefined || value.longitude !== undefined)
+  @IsDefined() @IsNumber({ allowInfinity: false, allowNaN: false }) @Min(-90) @Max(90) latitude?: number;
+  @ApiPropertyOptional({ type: Number, minimum: -180, maximum: 180 })
+  @ValidateIf((value: AgentStopOutcomeRequestDto) => value.latitude !== undefined || value.longitude !== undefined)
+  @IsDefined() @IsNumber({ allowInfinity: false, allowNaN: false }) @Min(-180) @Max(180) longitude?: number;
+}
 
 export class DeliveryPageQueryDto {
   @IsOptional() @IsString() cursor?: string;
@@ -79,6 +118,13 @@ export class CustomerDeliveryDetailResponseDto extends DeliverySummaryResponseDt
 
 export class DeliveryListResponseDto { @ApiProperty({ type: () => DeliverySummaryResponseDto, isArray: true }) items!: DeliverySummaryResponseDto[]; @ApiPropertyOptional() nextCursor?: string; }
 
+export class AgentStopOutcomeResponseDto {
+  @ApiProperty({ type: String, format: 'uuid' }) routeStopId!: string;
+  @ApiProperty({ type: String, format: 'date' }) serviceDate!: string;
+  @ApiProperty({ type: String, enum: ['delivered', 'skipped_by_agent', 'missed'] }) outcome!: 'delivered' | 'skipped_by_agent' | 'missed';
+  @ApiProperty({ type: () => DeliverySummaryResponseDto, isArray: true }) items!: DeliverySummaryResponseDto[];
+}
+
 export const toDeliverySummaryResponse = (value: DeliveryRecord): DeliverySummaryResponseDto => ({
   id: value.id, householdId: value.householdId, subscriptionId: value.subscriptionId, serviceDate: value.serviceDate,
   plannedQuantity: value.plannedQuantity, currentStatus: value.currentStatus, version: value.version,
@@ -105,3 +151,7 @@ const toCustomerEvent = (value: DeliveryEvent): DeliveryEventResponseDto => {
   return safe;
 };
 export const toCustomerDeliveryDetailResponse = (value: DeliveryDetail): CustomerDeliveryDetailResponseDto => ({ ...toDeliverySummaryResponse(value), events: value.events.map(toCustomerEvent), ...(value.snapshot ? { snapshot: toSnapshot(value.snapshot) } : {}) });
+export const toAgentStopOutcomeResponse = (value: AgentStopResult): AgentStopOutcomeResponseDto => ({
+  routeStopId: value.routeStopId, serviceDate: value.serviceDate, outcome: value.outcome,
+  items: value.items.map(toDeliverySummaryResponse),
+});
