@@ -45,6 +45,25 @@ export type DeliveryLeaveSelection = Readonly<{
   endDate: string;
   subscriptionIds: readonly string[];
 }>;
+
+export type DeliveryLeaveCandidate = DeliveryOccurrenceKey & Readonly<{
+  id: string;
+  version: number;
+}>;
+
+export type DeliveryLeaveCandidatePage = Readonly<{
+  items: readonly DeliveryLeaveCandidate[];
+  nextCursor?: string;
+}>;
+
+export type DeliveryLeaveState = DeliveryLeaveCandidate & Readonly<{
+  effective: boolean;
+}>;
+
+export type DeliveryLeaveActor = Readonly<{
+  userId: string;
+  source: Extract<DeliveryEventSource, 'customer' | 'vendor_admin'>;
+}>;
 export type AppendFinalOutcome = Readonly<{
   id: string;
   vendorId: string;
@@ -194,6 +213,19 @@ export abstract class DeliveryStore {
     actorUserId: string,
     source?: Extract<DeliveryEventSource, 'customer' | 'vendor_admin'>,
   ): Promise<void>;
+
+  abstract listAffected(
+    tx: TransactionContext,
+    vendorId: string,
+    selections: readonly DeliveryLeaveSelection[],
+    query: Readonly<{ cursor?: string; limit?: number }>,
+  ): Promise<DeliveryLeaveCandidatePage>;
+
+  abstract synchronizeLeave(
+    tx: TransactionContext,
+    actor: DeliveryLeaveActor,
+    states: readonly DeliveryLeaveState[],
+  ): Promise<Readonly<{ agentMembershipIds: readonly string[] }>>;
 
   abstract createPriceSnapshot(
     tx: TransactionContext,

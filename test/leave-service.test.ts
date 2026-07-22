@@ -32,7 +32,12 @@ void test('preview is household-scoped and advisory while create revalidates and
     store as never,
     { getDeliveryPolicyForTransaction: () => Promise.resolve({ vendorId, skipCutoffMinutes: 60, lateLeavePolicy: 'approval', captureAgentLocationEvidence: false, version: 1 }), getSubscriptionTimezone: () => Promise.resolve({ timezone: 'Asia/Kolkata' }) } as never,
     { append: () => { calls.push('audit'); return Promise.resolve(); } },
-    { applyCustomerLeave: () => { calls.push('project'); return Promise.resolve(); }, reverseCustomerLeave: () => Promise.resolve() },
+    {
+      listAffected: () => { throw new Error('Unexpected bounded delivery lookup'); },
+      synchronize: () => { throw new Error('Unexpected bounded delivery synchronization'); },
+      applyCustomerLeave: () => { calls.push('project'); return Promise.resolve(); },
+      reverseCustomerLeave: () => Promise.resolve(),
+    },
     { append: (_tx: TransactionContext, value: unknown) => { calls.push('notification'); notifications.push(value); return Promise.resolve(); } },
     { project: () => { calls.push('routing'); return Promise.resolve([{ routeId: 'route', routeVersion: 1, deliverySlotId: slotId, stops: [{ stopId: 'stop', householdId, sequence: 1 }], assignment: { assignmentId: 'assignment', agentMembershipId } }]); }, projectRoute: () => Promise.resolve(undefined) },
     { customerMembershipHistory: () => { calls.push('membership'); return Promise.resolve([{ membershipId: agentMembershipId, userId: agentUserId }]); } } as never,

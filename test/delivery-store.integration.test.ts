@@ -21,6 +21,11 @@ type Fixture = Readonly<{
   otherHouseholdId: string;
   deliveryId: string;
   actorUserId: string;
+  subscriptionId: string;
+  revisionId: string;
+  productId: string;
+  unitId: string;
+  slotId: string;
 }>;
 
 async function fixture(label: string): Promise<Fixture> {
@@ -47,7 +52,7 @@ async function fixture(label: string): Promise<Fixture> {
     throw error;
   } finally { client.release(); }
   await owner.query(`INSERT INTO scheduled_deliveries(id,vendor_id,subscription_id,subscription_revision_id,household_id,product_id,unit_id,delivery_slot_id,service_date,planned_quantity,updated_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,'2030-01-01',1,now())`, [deliveryId, vendorId, subscriptionId, revisionId, householdId, productId, unitId, slotId]);
-  return { vendorId, householdId, otherHouseholdId, deliveryId, actorUserId };
+  return { vendorId, householdId, otherHouseholdId, deliveryId, actorUserId, subscriptionId, revisionId, productId, unitId, slotId };
 }
 
 async function cleanup(value: Fixture) {
@@ -242,4 +247,108 @@ void test('failed leave-reversal event insertion leaves the projection and origi
     const after = await transactions.run(value.vendorId, (tx) => store.getVendorDetail(tx, value.vendorId, value.deliveryId));
     assert.deepEqual(after, before);
   } finally { await cleanup(value); }
+});
+
+void test('bounded leave reconciliation pages compact selections and synchronizes only eligible tenant rows', async () => {
+  const value = await fixture('bounded-leave');
+  const foreign = await fixture('bounded-foreign');
+  const projection = new DefaultDeliveryLeaveProjection(store);
+  const agentUserId = randomUUID(); const agentMembershipId = randomUUID(); const routeId = randomUUID();
+  try {
+    await owner.query(`INSERT INTO scheduled_deliveries(
+      id,vendor_id,subscription_id,subscription_revision_id,household_id,product_id,unit_id,delivery_slot_id,
+      service_date,planned_quantity,updated_at
+    ) SELECT gen_random_uuid(),$1,$2,$3,$4,$5,$6,$7,date '2030-01-01'+series,1,now()
+      FROM generate_series(1,105) series`, [
+      value.vendorId, value.subscriptionId, value.revisionId, value.householdId,
+      value.productId, value.unitId, value.slotId,
+    ]);
+    await owner.query(`INSERT INTO scheduled_deliveries(
+      id,vendor_id,subscription_id,subscription_revision_id,household_id,product_id,unit_id,delivery_slot_id,
+      service_date,planned_quantity,updated_at
+    ) VALUES(gen_random_uuid(),$1,$2,$3,$4,$5,$6,$7,'2031-01-01',1,now())`, [
+      value.vendorId, value.subscriptionId, value.revisionId, value.householdId,
+      value.productId, value.unitId, value.slotId,
+    ]);
+
+    const selections = [
+      { startDate: '2030-01-01', endDate: '2030-02-28', subscriptionIds: [value.subscriptionId] },
+      { startDate: '2030-03-01', endDate: '2030-04-16', subscriptionIds: [value.subscriptionId, foreign.subscriptionId] },
+    ];
+    const first = await transactions.run(value.vendorId, (tx) => projection.listAffected(tx, value.vendorId, selections, { limit: 100 }));
+    assert.equal(first.items.length, 100);
+    assert.ok(first.nextCursor);
+    const second = await transactions.run(value.vendorId, (tx) => projection.listAffected(tx, value.vendorId, selections, { cursor: first.nextCursor, limit: 100 }));
+    const affected = [...first.items, ...second.items];
+    assert.equal(second.items.length, 6);
+    assert.equal(second.nextCursor, undefined);
+    assert.equal(affected.every(({ vendorId, subscriptionId }) => vendorId === value.vendorId && subscriptionId === value.subscriptionId), true);
+    assert.deepEqual(
+      affected.map(({ serviceDate, id }) => `${serviceDate}:${id}`),
+      affected.map(({ serviceDate, id }) => `${serviceDate}:${id}`).toSorted(),
+    );
+
+    const [newSkip, reverse, unchanged, finalized, alreadySkipped, secondNewSkip, stale, rollbackPeer] = affected;
+    assert(newSkip && reverse && unchanged && finalized && alreadySkipped && secondNewSkip && stale && rollbackPeer);
+    await owner.query('INSERT INTO users(id,display_name,updated_at) VALUES($1,$2,now())', [agentUserId, 'Bounded leave agent']);
+    await owner.query(`INSERT INTO vendor_memberships(id,vendor_id,user_id,role,status,joined_at,updated_at)
+      VALUES($1,$2,$3,'delivery_agent','active',now(),now())`, [agentMembershipId, value.vendorId, agentUserId]);
+    await owner.query(`INSERT INTO routes(id,vendor_id,code,name,delivery_slot_id,updated_at)
+      VALUES($1,$2,$3,'Bounded leave route',$4,now())`, [routeId, value.vendorId, `LEAVE_${routeId.slice(0, 8).toUpperCase()}`, value.slotId]);
+    for (const delivery of [newSkip, secondNewSkip, alreadySkipped]) {
+      const assignmentId = randomUUID();
+      await owner.query(`INSERT INTO route_assignments(
+        id,vendor_id,route_id,delivery_slot_id,agent_membership_id,service_date,status,created_by,updated_by,updated_at
+      ) VALUES($1,$2,$3,$4,$5,$6,'assigned',$7,$7,now())`, [
+        assignmentId, value.vendorId, routeId, value.slotId, agentMembershipId, delivery.serviceDate, value.actorUserId,
+      ]);
+      await owner.query('UPDATE scheduled_deliveries SET route_assignment_id=$1 WHERE id=$2', [assignmentId, delivery.id]);
+    }
+    await transactions.run(value.vendorId, (tx) => store.applyCustomerLeave(tx, reverse, value.actorUserId));
+    await transactions.run(value.vendorId, (tx) => store.applyCustomerLeave(tx, alreadySkipped, value.actorUserId));
+    await transactions.run(value.vendorId, (tx) => store.appendFinalOutcome(tx, {
+      id: randomUUID(), vendorId: value.vendorId, scheduledDeliveryId: finalized.id, expectedVersion: finalized.version,
+      outcome: 'missed', source: 'delivery_agent', actorUserId: value.actorUserId,
+      occurredAt: new Date(), receivedAt: new Date(), reasonCode: 'access_blocked',
+    }));
+
+    await assert.rejects(transactions.run(value.vendorId, (tx) => projection.synchronize(tx, {
+      userId: value.actorUserId, source: 'vendor_admin',
+    }, [
+      { ...rollbackPeer, effective: true },
+      { ...stale, version: stale.version + 1, effective: true },
+    ])), (error: unknown) => error instanceof ApplicationError && error.code === 'STALE_VERSION');
+
+    const result = await transactions.run(value.vendorId, (tx) => projection.synchronize(tx, {
+      userId: value.actorUserId, source: 'vendor_admin',
+    }, [
+      { ...secondNewSkip, effective: true },
+      { ...newSkip, effective: true },
+      { ...reverse, version: reverse.version + 1, effective: false },
+      { ...unchanged, effective: false },
+      { ...finalized, effective: true },
+      { ...alreadySkipped, version: alreadySkipped.version + 1, effective: true },
+      { ...foreign, id: foreign.deliveryId, version: 1, serviceDate: '2030-01-01', deliverySlotId: foreign.slotId, effective: true },
+    ]));
+    assert.deepEqual(result.agentMembershipIds, [agentMembershipId]);
+
+    const details = await Promise.all([newSkip, reverse, unchanged, finalized, alreadySkipped, secondNewSkip, stale, rollbackPeer].map(({ id }) =>
+      transactions.run(value.vendorId, (tx) => store.getVendorDetail(tx, value.vendorId, id))));
+    assert.deepEqual(details.map(({ currentStatus }) => currentStatus), [
+      'skipped_by_customer', 'scheduled', 'scheduled', 'missed', 'skipped_by_customer',
+      'skipped_by_customer', 'scheduled', 'scheduled',
+    ]);
+    assert.deepEqual(details.map(({ events }) => events.map(({ eventType }) => eventType)), [
+      ['skipped_by_customer'], ['skipped_by_customer', 'scheduled'], [], ['missed'], ['skipped_by_customer'],
+      ['skipped_by_customer'], [], [],
+    ]);
+  } finally {
+    await owner.query('UPDATE scheduled_deliveries SET route_assignment_id=NULL WHERE vendor_id=$1', [value.vendorId]);
+    await owner.query('DELETE FROM route_assignments WHERE vendor_id=$1', [value.vendorId]);
+    await owner.query('DELETE FROM routes WHERE vendor_id=$1', [value.vendorId]);
+    await owner.query('DELETE FROM vendor_memberships WHERE vendor_id=$1 AND id=$2', [value.vendorId, agentMembershipId]);
+    await cleanup(value);
+    await cleanup(foreign);
+    await owner.query('DELETE FROM users WHERE id=$1', [agentUserId]);
+  }
 });

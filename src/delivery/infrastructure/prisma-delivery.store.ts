@@ -13,9 +13,14 @@ import {
   type CustomerDeliveryQuery,
   type DeliveryDetail,
   type DeliveryEvent,
+  type DeliveryEventSource,
   type DeliveryEventType,
   type DeliveryFinalStatus,
   type DeliveryOccurrenceKey,
+  type DeliveryLeaveActor,
+  type DeliveryLeaveCandidatePage,
+  type DeliveryLeaveSelection,
+  type DeliveryLeaveState,
   type DeliveryPage,
   type DeliveryPriceSnapshot,
   type DeliveryRecord,
@@ -74,6 +79,17 @@ type SnapshotRow = Readonly<{
   sourcePriceId: string;
   sourcePriceType: DeliveryPriceSnapshot['sourcePriceType'];
   resolvedAt: Date;
+}>;
+
+type LockedLeaveRow = Readonly<{
+  id: string;
+  version: number;
+  requestedVersion: number;
+  currentStatus: DeliveryCurrentStatus;
+  finalizedAt: Date | null;
+  effective: boolean;
+  latestSource: DeliveryEventSource | null;
+  latestReasonCode: string | null;
 }>;
 
 const deliveryColumns = Prisma.sql`
@@ -261,6 +277,134 @@ export class PrismaDeliveryStore extends DeliveryStore {
         WHERE id=${row.id}::uuid AND vendor_id=${key.vendorId}::uuid AND version=${row.version}`);
       if (changed !== 1) throw failure('STALE_VERSION', 'Delivery version is stale', 409);
     }
+  }
+
+  async listAffected(
+    context: TransactionContext,
+    vendorId: string,
+    selections: readonly DeliveryLeaveSelection[],
+    query: Readonly<{ cursor?: string; limit?: number }>,
+  ): Promise<DeliveryLeaveCandidatePage> {
+    const limit = this.cursors.parseLimit(query.limit);
+    const predicates = selections.flatMap(({ startDate, endDate, subscriptionIds }) =>
+      subscriptionIds.length === 0 ? [] : [Prisma.sql`
+        (d.service_date BETWEEN ${startDate}::date AND ${endDate}::date
+          AND d.subscription_id IN (${Prisma.join(subscriptionIds.map((id) => Prisma.sql`${id}::uuid`))}))`]);
+    if (predicates.length === 0) return { items: [] };
+    const cursor = query.cursor ? this.cursors.decode(query.cursor) : undefined;
+    const rows = await unwrapPrismaTransaction(context).$queryRaw<DeliveryRow[]>(Prisma.sql`
+      SELECT ${lockedDeliveryColumns} FROM scheduled_deliveries d
+      LEFT JOIN LATERAL (
+        SELECT event_type,source,reason_code FROM delivery_events e
+        WHERE e.vendor_id=d.vendor_id AND e.scheduled_delivery_id=d.id
+        ORDER BY e.created_at DESC,e.id DESC LIMIT 1
+      ) latest ON true
+      WHERE d.vendor_id=${vendorId}::uuid
+        AND (${Prisma.join(predicates, ' OR ')})
+        AND (
+          (d.status='scheduled' AND d.finalized_at IS NULL)
+          OR (d.status='skipped_by_customer' AND (
+            latest.source IN ('customer','vendor_admin')
+            OR (latest.source='system' AND latest.reason_code='customer_on_leave')
+          ))
+        )
+        ${cursor ? Prisma.sql`AND (d.service_date>${cursor.createdAt}::date
+          OR (d.service_date=${cursor.createdAt}::date AND d.id>${cursor.id}::uuid))` : Prisma.empty}
+      ORDER BY d.service_date ASC,d.id ASC LIMIT ${limit + 1}`);
+    const visible = rows.slice(0, limit);
+    const last = visible.at(-1);
+    return {
+      items: visible.map(({ id, vendorId: rowVendorId, subscriptionId, serviceDate, deliverySlotId, version }) => ({
+        id, vendorId: rowVendorId, subscriptionId, serviceDate, deliverySlotId, version,
+      })),
+      ...(rows.length > limit && last ? {
+        nextCursor: this.cursors.encode({ createdAt: new Date(`${last.serviceDate}T00:00:00.000Z`), id: last.id }),
+      } : {}),
+    };
+  }
+
+  async synchronizeLeave(
+    context: TransactionContext,
+    actor: DeliveryLeaveActor,
+    states: readonly DeliveryLeaveState[],
+  ): Promise<Readonly<{ agentMembershipIds: readonly string[] }>> {
+    if (states.length === 0) return { agentMembershipIds: [] };
+    const tx = unwrapPrismaTransaction(context);
+    const input = JSON.stringify(states);
+    const locked = await tx.$queryRaw<LockedLeaveRow[]>(Prisma.sql`
+      WITH input AS (
+        SELECT * FROM jsonb_to_recordset(${input}::jsonb) AS i(
+          id uuid,"vendorId" uuid,"subscriptionId" uuid,"serviceDate" date,"deliverySlotId" uuid,
+          version integer,effective boolean
+        )
+      )
+      SELECT d.id,d.version,i.version AS "requestedVersion",d.status AS "currentStatus",
+        d.finalized_at AS "finalizedAt",i.effective,latest.source AS "latestSource",
+        latest.reason_code AS "latestReasonCode"
+      FROM scheduled_deliveries d JOIN input i
+        ON i.id=d.id AND i."vendorId"=d.vendor_id AND i."subscriptionId"=d.subscription_id
+        AND i."serviceDate"=d.service_date AND i."deliverySlotId"=d.delivery_slot_id
+      LEFT JOIN LATERAL (
+        SELECT event_type,source,reason_code FROM delivery_events e
+        WHERE e.vendor_id=d.vendor_id AND e.scheduled_delivery_id=d.id
+        ORDER BY e.created_at DESC,e.id DESC LIMIT 1
+      ) latest ON true
+      ORDER BY d.id FOR UPDATE OF d`);
+    const isLeaveOwnedSkip = (row: LockedLeaveRow) => row.currentStatus === 'skipped_by_customer'
+      && (row.latestSource === 'customer' || row.latestSource === 'vendor_admin'
+        || (row.latestSource === 'system' && row.latestReasonCode === 'customer_on_leave'));
+    if (locked.some((row) => ((row.effective && row.currentStatus === 'scheduled' && row.finalizedAt === null)
+      || (!row.effective && isLeaveOwnedSkip(row))) && row.requestedVersion !== row.version)) {
+      throw failure('STALE_VERSION', 'Delivery version is stale', 409);
+    }
+
+    const now = new Date();
+    const agents = await tx.$queryRaw<Readonly<{ agentMembershipId: string }>[]>(Prisma.sql`
+      WITH input AS (
+        SELECT * FROM jsonb_to_recordset(${input}::jsonb) AS i(
+          id uuid,"vendorId" uuid,"subscriptionId" uuid,"serviceDate" date,"deliverySlotId" uuid,
+          version integer,effective boolean
+        )
+      ), changes AS (
+        SELECT d.id,d.vendor_id,d.route_assignment_id,d.version,i.effective,latest.id AS "latestEventId"
+        FROM scheduled_deliveries d JOIN input i
+          ON i.id=d.id AND i."vendorId"=d.vendor_id AND i."subscriptionId"=d.subscription_id
+          AND i."serviceDate"=d.service_date AND i."deliverySlotId"=d.delivery_slot_id AND i.version=d.version
+        LEFT JOIN LATERAL (
+          SELECT id,event_type,source,reason_code FROM delivery_events e
+          WHERE e.vendor_id=d.vendor_id AND e.scheduled_delivery_id=d.id
+          ORDER BY e.created_at DESC,e.id DESC LIMIT 1
+        ) latest ON true
+        WHERE (i.effective AND d.status='scheduled' AND d.finalized_at IS NULL)
+          OR (NOT i.effective AND d.status='skipped_by_customer' AND (
+            latest.source IN ('customer','vendor_admin')
+            OR (latest.source='system' AND latest.reason_code='customer_on_leave')
+          ))
+      ), inserted AS (
+        INSERT INTO delivery_events(
+          id,vendor_id,scheduled_delivery_id,event_type,source,actor_user_id,occurred_at,received_at,
+          reason_code,replaced_event_id
+        ) SELECT gen_random_uuid(),vendor_id,id,
+          CASE WHEN effective THEN 'skipped_by_customer' ELSE 'scheduled' END,
+          ${actor.source},${actor.userId}::uuid,${now},${now},
+          CASE WHEN effective THEN NULL ELSE 'customer_leave_reversed' END,
+          CASE WHEN effective THEN NULL ELSE "latestEventId" END
+        FROM changes
+        RETURNING vendor_id,scheduled_delivery_id,event_type
+      ), updated AS (
+        UPDATE scheduled_deliveries d SET
+          status=i.event_type,
+          finalized_at=CASE WHEN i.event_type='skipped_by_customer' THEN ${now}::timestamptz ELSE NULL::timestamptz END,
+          version=d.version+1,updated_at=${now}
+        FROM inserted i
+        WHERE d.vendor_id=i.vendor_id AND d.id=i.scheduled_delivery_id
+        RETURNING d.vendor_id,d.route_assignment_id,i.event_type
+      )
+      SELECT DISTINCT a.agent_membership_id AS "agentMembershipId" FROM updated u
+      JOIN route_assignments a ON a.vendor_id=u.vendor_id AND a.id=u.route_assignment_id AND a.status='assigned'
+      WHERE u.event_type='skipped_by_customer'
+      ORDER BY a.agent_membership_id`);
+    return { agentMembershipIds: agents.map(({ agentMembershipId }) => agentMembershipId) };
   }
 
   async createPriceSnapshot(context: TransactionContext, input: CreatePriceSnapshot): Promise<void> {
