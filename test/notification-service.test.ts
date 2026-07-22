@@ -31,6 +31,22 @@ void test('notification writer appends through the caller transaction and reject
   );
 });
 
+void test('notification writer rejects a payload household override without writing', async () => {
+  let writes = 0;
+  const tx = wrapPrismaTransaction({ notification: {
+    create: () => { writes += 1; return Promise.resolve({}); },
+  } } as never);
+
+  await assert.rejects(
+    new PrismaNotificationStore().append(tx, {
+      id: randomUUID(), vendorId, householdId, recipientUserId, type: 'leave_accepted',
+      payload: { leaveRequestId: randomUUID(), householdId: randomUUID() },
+    } as never),
+    (error: unknown) => error instanceof ApplicationError && error.code === 'INVALID_NOTIFICATION_PAYLOAD',
+  );
+  assert.equal(writes, 0);
+});
+
 void test('customer notifications authorize and scope the list to the active household recipient', async () => {
   const tx = {} as TransactionContext; const calls: unknown[][] = [];
   const authorization = { execute: (input: unknown, work: (current: TransactionContext) => Promise<unknown>) => { calls.push([input]); return work(tx); } };

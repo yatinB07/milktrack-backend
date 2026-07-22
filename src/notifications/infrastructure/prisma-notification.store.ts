@@ -22,6 +22,8 @@ export class PrismaNotificationStore extends NotificationWriter implements Custo
 
   async append(tx: TransactionContext, notification: AppendNotification): Promise<void> {
     const { householdId, payload: subjectPayload, ...columns } = notification;
+    if ('householdId' in subjectPayload)
+      throw new ApplicationError('INVALID_NOTIFICATION_PAYLOAD', 'Notification payload is invalid', 400);
     const payload = { householdId, ...subjectPayload };
     this.validatePayload(notification.type, payload);
     await unwrapPrismaTransaction(tx).notification.create({
