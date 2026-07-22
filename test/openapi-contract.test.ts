@@ -839,11 +839,72 @@ void test('publishes the frozen Phase 3 online-delivery contract', async () => {
   }
 
   const events = object(object(schemas.DeliveryEventResponseDto, 'event schema').properties, 'event properties');
-  assert.deepEqual(object(events.eventType, 'event type').enum, ['delivered', 'skipped_by_customer', 'skipped_by_agent', 'missed']);
+  assert.deepEqual(object(events.eventType, 'event type').enum, ['scheduled', 'delivered', 'skipped_by_customer', 'skipped_by_agent', 'missed']);
   for (const field of ['occurredAt', 'receivedAt']) assert.equal(object(events[field], field).format, 'date-time');
   const vendorEvent = object(object(schemas.VendorDeliveryEventResponseDto, 'vendor event').properties, 'vendor event properties');
   assert.match(String(object(vendorEvent.latitude, 'latitude').description), /\[-90, 90\].*longitude/iu);
   assert.match(String(object(vendorEvent.longitude, 'longitude').description), /\[-180, 180\].*latitude/iu);
+
+  const schemaProperties = (name: string) => object(object(schemas[name], name).properties, `${name} properties`);
+  const requiredFields = (name: string) => object(schemas[name], name).required as string[];
+  const assertRequired = (name: string, fields: readonly string[]) => {
+    const required = requiredFields(name);
+    for (const field of fields) assert(required.includes(field), `${name}.${field} must be required`);
+  };
+  const assertUuid = (properties: JsonObject, field: string) => {
+    assert.deepEqual(object(properties[field], field), { type: 'string', format: 'uuid' });
+  };
+  const assertLabelFields = (name: string) => {
+    const properties = schemaProperties(name);
+    assertUuid(properties, 'productId');
+    assert.equal(object(properties.productName, `${name}.productName`).type, 'string');
+    assert.equal(object(properties.deliverySlotName, `${name}.deliverySlotName`).type, 'string');
+    assertRequired(name, ['productId', 'productName', 'deliverySlotName']);
+  };
+
+  const customerDetail = schemaProperties('CustomerLeaveDetailResponseDto');
+  assert.deepEqual(object(customerDetail.availableActions, 'customer leave actions'), {
+    type: 'array', items: { type: 'string', enum: ['amend', 'cancel'] },
+  });
+  assertRequired('CustomerLeaveDetailResponseDto', ['availableActions']);
+
+  const subscriptionLabels = schemaProperties('LeaveSubscriptionLabelResponseDto');
+  assertUuid(subscriptionLabels, 'subscriptionId');
+  assertUuid(subscriptionLabels, 'deliverySlotId');
+  assertLabelFields('LeaveSubscriptionLabelResponseDto');
+  assertRequired('LeaveSubscriptionLabelResponseDto', ['subscriptionId', 'deliverySlotId']);
+
+  for (const [revisionName, decisionName] of [
+    ['CustomerLeaveRevisionResponseDto', 'CustomerLeaveDecisionTimelineResponseDto'],
+    ['VendorLeaveRevisionResponseDto', 'VendorLeaveDecisionTimelineResponseDto'],
+  ] as const) {
+    const revision = schemaProperties(revisionName);
+    assert.deepEqual(object(revision.source, `${revisionName}.source`).enum, ['customer', 'vendor_admin', 'system']);
+    assertUuid(revision, 'createdBy');
+    assert.deepEqual(object(revision.subscriptionLabels, `${revisionName}.subscriptionLabels`), {
+      type: 'array', items: { $ref: '#/components/schemas/LeaveSubscriptionLabelResponseDto' },
+    });
+    assert.deepEqual(object(revision.decisions, `${revisionName}.decisions`), {
+      type: 'array', items: { $ref: `#/components/schemas/${decisionName}` },
+    });
+    assertRequired(revisionName, ['source', 'createdBy', 'subscriptionLabels', 'decisions']);
+  }
+
+  for (const name of ['CustomerLeaveDecisionTimelineResponseDto', 'VendorLeaveDecisionTimelineResponseDto', 'VendorLeaveDecisionResponseDto']) {
+    const decision = schemaProperties(name);
+    assertLabelFields(name);
+    assert.equal(object(decision.cutoffAt, `${name}.cutoffAt`).format, 'date-time');
+    assert.deepEqual(object(decision.source, `${name}.source`).enum, ['customer', 'vendor_admin', 'system']);
+    assertRequired(name, ['cutoffAt', 'source']);
+  }
+  assert.equal(schemaProperties('CustomerLeaveDecisionTimelineResponseDto').availableActions, undefined);
+  const vendorDecision = schemaProperties('VendorLeaveDecisionTimelineResponseDto');
+  assert.deepEqual(object(vendorDecision.availableActions, 'vendor decision actions'), {
+    type: 'array', items: { type: 'string', enum: ['approve', 'reject'] },
+  });
+  assertRequired('VendorLeaveDecisionTimelineResponseDto', ['availableActions']);
+
+  assertLabelFields('LeaveOccurrenceResponseDto');
 
   const agentOperation = object(object(paths['/v1/agent/vendors/{vendorId}/route-stops/{routeStopId}/outcomes'], 'agent outcome path').post, 'agent outcome operation');
   const outcomeReference = object(object(object(object(agentOperation.requestBody, 'agent outcome body').content, 'agent outcome content')['application/json'], 'agent outcome JSON').schema, 'agent outcome schema');

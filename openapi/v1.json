@@ -1284,8 +1284,117 @@
         ],
         "type": "object"
       },
+      "CustomerLeaveDecisionTimelineResponseDto": {
+        "properties": {
+          "createdAt": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "currentStatus": {
+            "enum": [
+              "pending",
+              "approved",
+              "rejected"
+            ],
+            "type": "string"
+          },
+          "cutoffAt": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "decidedAt": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "decidedBy": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "decisionReason": {
+            "type": "string"
+          },
+          "deliverySlotId": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "deliverySlotName": {
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "previousEffectiveStatus": {
+            "enum": [
+              "scheduled",
+              "skipped_by_customer"
+            ],
+            "type": "string"
+          },
+          "productId": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "productName": {
+            "type": "string"
+          },
+          "requestedEffectiveStatus": {
+            "enum": [
+              "scheduled",
+              "skipped_by_customer"
+            ],
+            "type": "string"
+          },
+          "serviceDate": {
+            "format": "date",
+            "type": "string"
+          },
+          "source": {
+            "enum": [
+              "customer",
+              "vendor_admin",
+              "system"
+            ],
+            "type": "string"
+          },
+          "subscriptionId": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "version": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "id",
+          "subscriptionId",
+          "deliverySlotId",
+          "serviceDate",
+          "currentStatus",
+          "previousEffectiveStatus",
+          "productId",
+          "cutoffAt",
+          "source",
+          "requestedEffectiveStatus",
+          "createdAt",
+          "productName",
+          "deliverySlotName",
+          "version"
+        ],
+        "type": "object"
+      },
       "CustomerLeaveDetailResponseDto": {
         "properties": {
+          "availableActions": {
+            "items": {
+              "enum": [
+                "amend",
+                "cancel"
+              ],
+              "type": "string"
+            },
+            "type": "array"
+          },
           "createdAt": {
             "format": "date-time",
             "type": "string"
@@ -1335,6 +1444,7 @@
           "vendorId",
           "householdId",
           "currentStatus",
+          "availableActions",
           "revisions",
           "createdAt",
           "updatedAt",
@@ -1457,6 +1567,10 @@
             "format": "date-time",
             "type": "string"
           },
+          "createdBy": {
+            "format": "uuid",
+            "type": "string"
+          },
           "currentStatus": {
             "enum": [
               "pending_approval",
@@ -1466,6 +1580,12 @@
               "cancelled"
             ],
             "type": "string"
+          },
+          "decisions": {
+            "items": {
+              "$ref": "#/components/schemas/CustomerLeaveDecisionTimelineResponseDto"
+            },
+            "type": "array"
           },
           "endDate": {
             "format": "date",
@@ -1478,6 +1598,14 @@
           "note": {
             "type": "string"
           },
+          "source": {
+            "enum": [
+              "customer",
+              "vendor_admin",
+              "system"
+            ],
+            "type": "string"
+          },
           "startDate": {
             "format": "date",
             "type": "string"
@@ -1488,6 +1616,12 @@
               "type": "string"
             },
             "type": "array"
+          },
+          "subscriptionLabels": {
+            "items": {
+              "$ref": "#/components/schemas/LeaveSubscriptionLabelResponseDto"
+            },
+            "type": "array"
           }
         },
         "required": [
@@ -1496,7 +1630,11 @@
           "startDate",
           "endDate",
           "currentStatus",
+          "source",
+          "createdBy",
           "subscriptionIds",
+          "subscriptionLabels",
+          "decisions",
           "createdAt"
         ],
         "type": "object"
@@ -1871,6 +2009,7 @@
           },
           "eventType": {
             "enum": [
+              "scheduled",
               "delivered",
               "skipped_by_customer",
               "skipped_by_agent",
@@ -2391,6 +2530,16 @@
             "format": "uuid",
             "type": "string"
           },
+          "deliverySlotName": {
+            "type": "string"
+          },
+          "productId": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "productName": {
+            "type": "string"
+          },
           "proposedBehavior": {
             "enum": [
               "accept",
@@ -2418,10 +2567,43 @@
         "required": [
           "subscriptionId",
           "deliverySlotId",
+          "productId",
           "serviceDate",
           "cutoffAt",
           "timing",
-          "proposedBehavior"
+          "proposedBehavior",
+          "productName",
+          "deliverySlotName"
+        ],
+        "type": "object"
+      },
+      "LeaveSubscriptionLabelResponseDto": {
+        "properties": {
+          "deliverySlotId": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "deliverySlotName": {
+            "type": "string"
+          },
+          "productId": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "productName": {
+            "type": "string"
+          },
+          "subscriptionId": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "subscriptionId",
+          "productId",
+          "deliverySlotId",
+          "productName",
+          "deliverySlotName"
         ],
         "type": "object"
       },
@@ -4763,6 +4945,7 @@
           },
           "eventType": {
             "enum": [
+              "scheduled",
               "delivered",
               "skipped_by_customer",
               "skipped_by_agent",
@@ -4871,8 +5054,15 @@
             ],
             "type": "string"
           },
+          "cutoffAt": {
+            "format": "date-time",
+            "type": "string"
+          },
           "deliverySlotId": {
             "format": "uuid",
+            "type": "string"
+          },
+          "deliverySlotName": {
             "type": "string"
           },
           "id": {
@@ -4883,8 +5073,23 @@
             "format": "uuid",
             "type": "string"
           },
+          "productId": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "productName": {
+            "type": "string"
+          },
           "serviceDate": {
             "format": "date",
+            "type": "string"
+          },
+          "source": {
+            "enum": [
+              "customer",
+              "vendor_admin",
+              "system"
+            ],
             "type": "string"
           },
           "subscriptionId": {
@@ -4903,7 +5108,12 @@
           "serviceDate",
           "currentStatus",
           "createdAt",
-          "version"
+          "productId",
+          "cutoffAt",
+          "source",
+          "version",
+          "productName",
+          "deliverySlotName"
         ],
         "type": "object"
       },
@@ -4921,8 +5131,15 @@
             ],
             "type": "string"
           },
+          "cutoffAt": {
+            "format": "date-time",
+            "type": "string"
+          },
           "deliverySlotId": {
             "format": "uuid",
+            "type": "string"
+          },
+          "deliverySlotName": {
             "type": "string"
           },
           "id": {
@@ -4933,11 +5150,26 @@
             "format": "uuid",
             "type": "string"
           },
+          "productId": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "productName": {
+            "type": "string"
+          },
           "request": {
             "$ref": "#/components/schemas/VendorLeaveRequestDetailResponseDto"
           },
           "serviceDate": {
             "format": "date",
+            "type": "string"
+          },
+          "source": {
+            "enum": [
+              "customer",
+              "vendor_admin",
+              "system"
+            ],
             "type": "string"
           },
           "subscriptionId": {
@@ -4956,7 +5188,122 @@
           "serviceDate",
           "currentStatus",
           "createdAt",
+          "productId",
+          "cutoffAt",
+          "source",
           "request",
+          "version",
+          "productName",
+          "deliverySlotName"
+        ],
+        "type": "object"
+      },
+      "VendorLeaveDecisionTimelineResponseDto": {
+        "properties": {
+          "availableActions": {
+            "items": {
+              "enum": [
+                "approve",
+                "reject"
+              ],
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "createdAt": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "currentStatus": {
+            "enum": [
+              "pending",
+              "approved",
+              "rejected"
+            ],
+            "type": "string"
+          },
+          "cutoffAt": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "decidedAt": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "decidedBy": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "decisionReason": {
+            "type": "string"
+          },
+          "deliverySlotId": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "deliverySlotName": {
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "previousEffectiveStatus": {
+            "enum": [
+              "scheduled",
+              "skipped_by_customer"
+            ],
+            "type": "string"
+          },
+          "productId": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "productName": {
+            "type": "string"
+          },
+          "requestedEffectiveStatus": {
+            "enum": [
+              "scheduled",
+              "skipped_by_customer"
+            ],
+            "type": "string"
+          },
+          "serviceDate": {
+            "format": "date",
+            "type": "string"
+          },
+          "source": {
+            "enum": [
+              "customer",
+              "vendor_admin",
+              "system"
+            ],
+            "type": "string"
+          },
+          "subscriptionId": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "version": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "id",
+          "subscriptionId",
+          "deliverySlotId",
+          "serviceDate",
+          "currentStatus",
+          "previousEffectiveStatus",
+          "productId",
+          "cutoffAt",
+          "source",
+          "requestedEffectiveStatus",
+          "createdAt",
+          "availableActions",
+          "productName",
+          "deliverySlotName",
           "version"
         ],
         "type": "object"
@@ -4991,7 +5338,7 @@
           },
           "revisions": {
             "items": {
-              "$ref": "#/components/schemas/CustomerLeaveRevisionResponseDto"
+              "$ref": "#/components/schemas/VendorLeaveRevisionResponseDto"
             },
             "type": "array"
           },
@@ -5016,6 +5363,92 @@
           "createdAt",
           "updatedAt",
           "version"
+        ],
+        "type": "object"
+      },
+      "VendorLeaveRevisionResponseDto": {
+        "properties": {
+          "action": {
+            "enum": [
+              "create",
+              "amend",
+              "cancel"
+            ],
+            "type": "string"
+          },
+          "createdAt": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "createdBy": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "currentStatus": {
+            "enum": [
+              "pending_approval",
+              "partially_pending",
+              "accepted",
+              "rejected",
+              "cancelled"
+            ],
+            "type": "string"
+          },
+          "decisions": {
+            "items": {
+              "$ref": "#/components/schemas/VendorLeaveDecisionTimelineResponseDto"
+            },
+            "type": "array"
+          },
+          "endDate": {
+            "format": "date",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "note": {
+            "type": "string"
+          },
+          "source": {
+            "enum": [
+              "customer",
+              "vendor_admin",
+              "system"
+            ],
+            "type": "string"
+          },
+          "startDate": {
+            "format": "date",
+            "type": "string"
+          },
+          "subscriptionIds": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "subscriptionLabels": {
+            "items": {
+              "$ref": "#/components/schemas/LeaveSubscriptionLabelResponseDto"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "action",
+          "startDate",
+          "endDate",
+          "currentStatus",
+          "source",
+          "createdBy",
+          "subscriptionIds",
+          "subscriptionLabels",
+          "decisions",
+          "createdAt"
         ],
         "type": "object"
       },
