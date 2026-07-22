@@ -46,7 +46,7 @@ export abstract class RouteService {
   abstract listAssignments(actor: Actor, vendorId: string, routeId: string, query: RouteAssignmentPageQuery): Promise<RouteAssignmentPage>;
   abstract assign(actor: Actor, vendorId: string, routeId: string, serviceDate: string, command: AssignRouteCommand): Promise<RouteAssignmentMutation>;
   abstract cancelAssignment(actor: Actor, vendorId: string, routeId: string, serviceDate: string, command: RouteVersionReason): Promise<RouteAssignmentMutation>;
-  abstract listSelfAssignments(actor: Actor, vendorId: string, query: Readonly<{ serviceDate: string; cursor?: string; limit?: number }>): Promise<RouteAssignmentPage>;
+  abstract listSelfAssignments(actor: Actor, vendorId: string, query: Readonly<{ serviceDate?: string; cursor?: string; limit?: number }>): Promise<RouteAssignmentPage & Readonly<{ serviceDate: string }>>;
 }
 
 @Injectable()
@@ -218,12 +218,14 @@ export class DefaultRouteService extends RouteService {
   listSelfAssignments(
     actor: Actor,
     vendorId: string,
-    query: Readonly<{ serviceDate: string; cursor?: string; limit?: number }>,
+    query: Readonly<{ serviceDate?: string; cursor?: string; limit?: number }>,
   ) {
-    validateRouteAssignmentDate(query.serviceDate);
     return this.execute(actor, vendorId, 'route:self', 'route.assignments-self', async (tx) => {
+      const serviceDate = query.serviceDate ?? await this.today(tx, vendorId);
+      validateRouteAssignmentDate(serviceDate);
       const agent = await this.memberships.resolveSelfRouteAgent(tx, vendorId, actor.userId);
-      return this.assignments.listSelf(tx, agent.membershipId, query.serviceDate, query);
+      const page = await this.assignments.listSelf(tx, agent.membershipId, serviceDate, query);
+      return { ...page, serviceDate };
     });
   }
   private changeStatus(actor: Actor, vendorId: string, routeId: string, command: RouteVersionReason, status: RouteStatus, operation: string, action: string) {

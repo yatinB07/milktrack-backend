@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { Inject, Injectable } from '@nestjs/common';
+import { DateTime } from 'luxon';
 
 import { AuditWriter } from '../../audit/application/audit-writer.js';
 import { TenantAuthorizationExecutor } from '../../authorization/application/tenant-authorization.executor.js';
@@ -18,6 +19,8 @@ export type CreatePriceCommand = Readonly<{ productId: string; unitId: string; a
 export type CreateOverrideCommand = CreatePriceCommand & Readonly<{ reason: string }>;
 export type ClosePriceCommand = Readonly<{ effectiveTo: string; reason: string }>;
 export type ResolvePriceCommand = Readonly<{ householdId: string; productId: string; unitId: string; deliverySlotId: string; serviceDate: string }>;
+export type ResolveCustomerPriceCommand = Readonly<Omit<ResolvePriceCommand, 'householdId' | 'serviceDate'> & { serviceDate?: string }>;
+type ResolvePriceInput = Readonly<Omit<ResolvePriceCommand, 'serviceDate'> & { serviceDate?: string }>;
 type MissingPrice = Readonly<{ status: 'missing' }>;
 type ResolvedValue = Readonly<{ status: 'resolved'; amountMinor: string; currency: string; source: 'customer_specific' | 'global' }>;
 export type VendorResolvedPrice = MissingPrice | (ResolvedValue & Readonly<{ sourcePriceId: string }>);
@@ -33,7 +36,7 @@ export abstract class PricingService {
   abstract createOverride(actor: Actor, vendorId: string, householdId: string, command: CreateOverrideCommand): Promise<OverrideRecord>;
   abstract closeOverride(actor: Actor, vendorId: string, householdId: string, id: string, command: ClosePriceCommand): Promise<OverrideRecord>;
   abstract resolveVendor(actor: Actor, vendorId: string, command: ResolvePriceCommand): Promise<VendorResolvedPrice>;
-  abstract resolveCustomer(actor: Actor, vendorId: string, householdId: string, command: Omit<ResolvePriceCommand, 'householdId'>): Promise<CustomerResolvedPrice>;
+  abstract resolveCustomer(actor: Actor, vendorId: string, householdId: string, command: ResolveCustomerPriceCommand): Promise<CustomerResolvedPrice>;
 }
 
 @Injectable()
@@ -91,24 +94,32 @@ export class DefaultPricingService extends PricingService {
       return change.after;
     });
   }
-  resolveVendor(actor: Actor, vendorId: string, command: ResolvePriceCommand) { return this.resolve(actor, vendorId, command, false); }
-  async resolveCustomer(actor: Actor, vendorId: string, householdId: string, command: Omit<ResolvePriceCommand, 'householdId'>): Promise<CustomerResolvedPrice> {
-    const result = await this.resolve(actor, vendorId, { ...command, householdId }, true);
-    if (result.status === 'missing') return { serviceDate: command.serviceDate, ...result };
-    return { serviceDate: command.serviceDate, status: result.status, amountMinor: result.amountMinor, currency: result.currency, source: result.source };
+  async resolveVendor(actor: Actor, vendorId: string, command: ResolvePriceCommand) {
+    return (await this.resolve(actor, vendorId, command, false)).result;
+  }
+  async resolveCustomer(actor: Actor, vendorId: string, householdId: string, command: ResolveCustomerPriceCommand): Promise<CustomerResolvedPrice> {
+    const { result, serviceDate } = await this.resolve(actor, vendorId, { ...command, householdId }, true);
+    if (result.status === 'missing') return { serviceDate, ...result };
+    return { serviceDate, status: result.status, amountMinor: result.amountMinor, currency: result.currency, source: result.source };
   }
 
-  private resolve(actor: Actor, vendorId: string, command: ResolvePriceCommand, customer: boolean): Promise<VendorResolvedPrice> {
+  private resolve(actor: Actor, vendorId: string, command: ResolvePriceInput, customer: boolean): Promise<Readonly<{ result: VendorResolvedPrice; serviceDate: string }>> {
     return this.execute(actor, vendorId, customer ? 'customer:self' : 'pricing:read', customer ? 'pricing.self-resolve' : 'pricing.resolve', async (tx) => {
       if (customer) await this.households.requireCustomerPricingHousehold(tx, actor, vendorId, command.householdId);
       else await this.households.requirePricingHousehold(tx, command.householdId);
       await this.catalog.requirePricingProduct(tx, command.productId, command.unitId);
       const [settings, slotStart] = await Promise.all([this.vendors.getPricingSettings(tx, vendorId), this.catalog.getPricingDeliverySlotStart(tx, command.deliverySlotId)]);
-      const at = resolveServiceInstant(settings.timezone, command.serviceDate, slotStart);
+      const serviceDate = command.serviceDate ?? this.today(settings.timezone);
+      const at = resolveServiceInstant(settings.timezone, serviceDate, slotStart);
       const price = await this.prices.resolveOverride(tx, command.householdId, command.productId, command.unitId, at) ?? await this.prices.resolveGlobal(tx, command.productId, command.unitId, at);
-      if (!price) return { status: 'missing' as const };
-      return { status: 'resolved' as const, amountMinor: price.amountMinor, currency: price.currency, source: 'householdId' in price ? 'customer_specific' as const : 'global' as const, sourcePriceId: price.id };
+      if (!price) return { serviceDate, result: { status: 'missing' as const } };
+      return { serviceDate, result: { status: 'resolved' as const, amountMinor: price.amountMinor, currency: price.currency, source: 'householdId' in price ? 'customer_specific' as const : 'global' as const, sourcePriceId: price.id } };
     });
+  }
+  private today(timezone: string) {
+    const today = DateTime.now().setZone(timezone).toISODate();
+    if (!today) throw new ApplicationError('VENDOR_TIMEZONE_INVALID', 'Vendor timezone is invalid', 503);
+    return today;
   }
   private closeInstant(value: string) { return parseEffectivePeriod('0001-01-01T00:00:00Z', value).effectiveTo!; }
   private reason(value: string) { const result = value.trim(); if (result.length < 1 || result.length > 500) throw new ApplicationError('INVALID_REASON', 'Reason must be between 1 and 500 characters', 400); return result; }

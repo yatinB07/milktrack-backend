@@ -100,12 +100,9 @@ export class AgentRouteAssignmentController {
     @Param('vendorId', ParseUUIDPipe) vendorId: string,
     @Query() query: AgentRouteAssignmentQueryDto,
   ) {
-    const page = await this.routes.listSelfAssignments(requestContextStore.requireActor(), vendorId, {
-      ...query,
-      serviceDate: query.serviceDate,
-    });
+    const page = await this.routes.listSelfAssignments(requestContextStore.requireActor(), vendorId, query);
     return {
-      serviceDate: query.serviceDate,
+      serviceDate: page.serviceDate,
       items: page.items.map(toAgentRouteAssignmentResponse),
       ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}),
     };

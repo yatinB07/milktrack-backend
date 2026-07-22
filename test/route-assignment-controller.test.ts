@@ -18,7 +18,7 @@ void test('agent assignment response adds labels and page date without uncontrac
 
   const response = await requestContextStore.run(
     { correlationId: '00000000-0000-4000-8000-000000000020', actor },
-    () => controller.list('vendor', { serviceDate: assignment.serviceDate }),
+    () => controller.list('vendor', {}),
   );
 
   assert.deepEqual(response, {

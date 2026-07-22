@@ -13,12 +13,11 @@ import { CustomerResolvedPriceController } from '../src/pricing/http/resolved-pr
 import { AgentRouteAssignmentQueryDto } from '../src/routing/http/route.dto.js';
 import { AgentScheduledDeliveryQueryDto } from '../src/scheduling/http/scheduled-delivery.dto.js';
 
-void test('customer price date is required input and required response metadata', async () => {
+void test('customer price date is optional input and required response metadata', async () => {
   const query = Object.assign(new ResolveCustomerPriceQueryDto(), {
     productId: '00000000-0000-4000-8000-000000000001',
     unitId: '00000000-0000-4000-8000-000000000002',
     deliverySlotId: '00000000-0000-4000-8000-000000000003',
-    serviceDate: '2026-07-20',
   });
 
   assert.deepEqual(await validate(query), []);
@@ -40,6 +39,7 @@ void test('customer price rejects malformed calendar-date shapes', async () => {
 
 void test('agent mobile date queries reject malformed calendar-date shapes', async () => {
   for (const Query of [AgentRouteAssignmentQueryDto, AgentScheduledDeliveryQueryDto]) {
+    assert.deepEqual(await validate(new Query()), []);
     const query = Object.assign(new Query(), { serviceDate: '2026-7-2' });
     assert.equal((await validate(query)).some(({ constraints }) => constraints?.matches !== undefined), true);
   }

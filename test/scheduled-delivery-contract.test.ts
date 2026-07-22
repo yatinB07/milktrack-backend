@@ -67,7 +67,7 @@ void test('agent scheduled-delivery controller whitelists response fields and pa
 
   const response = await requestContextStore.run(
     { correlationId: '00000000-0000-4000-8000-000000000003', actor },
-    () => controller.list('00000000-0000-4000-8000-000000000004', { serviceDate: delivery.serviceDate }),
+    () => controller.list('00000000-0000-4000-8000-000000000004', {}),
   );
 
   assert.deepEqual(response, { serviceDate: delivery.serviceDate, items: [delivery], nextCursor: 'next' });

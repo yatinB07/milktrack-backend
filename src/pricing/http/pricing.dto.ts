@@ -28,7 +28,7 @@ export class ResolveVendorPriceQueryDto {
 }
 export class ResolveCustomerPriceQueryDto {
   @IsUUID() productId!: string; @IsUUID() unitId!: string; @IsUUID() deliverySlotId!: string;
-  @ApiProperty({ type: String, format: 'date' }) @Matches(/^\d{4}-\d{2}-\d{2}$/) serviceDate!: string;
+  @ApiPropertyOptional({ type: String, format: 'date' }) @IsOptional() @Matches(/^\d{4}-\d{2}-\d{2}$/) serviceDate?: string;
 }
 export class PriceResponseDto {
   @ApiProperty({ type: String, format: 'uuid' }) id!: string; @ApiProperty({ type: String, format: 'uuid' }) vendorId!: string;

@@ -31,7 +31,7 @@ export class AgentScheduledDeliveryController {
       query,
     );
     return {
-      serviceDate: query.serviceDate,
+      serviceDate: page.serviceDate,
       items: page.items.map(toScheduledDeliveryResponse),
       ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}),
     };

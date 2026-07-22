@@ -83,7 +83,7 @@ export class RouteAssignmentPageQueryDto {
   @ApiPropertyOptional({ enum: ['assigned','cancelled'] }) @IsOptional() @IsIn(['assigned','cancelled']) status?: 'assigned'|'cancelled';
 }
 export class AgentRouteAssignmentQueryDto {
-  @ApiProperty({ type: String, format: 'date' }) @Matches(/^\d{4}-\d{2}-\d{2}$/) serviceDate!: string;
+  @ApiPropertyOptional({ type: String, format: 'date' }) @IsOptional() @Matches(/^\d{4}-\d{2}-\d{2}$/) serviceDate?: string;
   @IsOptional() @IsString() cursor?: string;
   @ApiPropertyOptional({ default: 25, minimum: 1, maximum: 100 }) @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(100) limit?: number;
 }
