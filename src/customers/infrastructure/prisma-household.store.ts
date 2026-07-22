@@ -162,6 +162,28 @@ function toRouteHouseholdSummary(row: Prisma.HouseholdGetPayload<{ select: typeo
 
 @Injectable()
 export class PrismaHouseholdStore {
+  async getNotificationRecipientUserIds(
+    context: TransactionContext,
+    vendorId: string,
+    householdIds: readonly string[],
+  ): Promise<ReadonlyMap<string, readonly string[]>> {
+    const ids = [...new Set(householdIds)].sort();
+    const recipients = new Map(ids.map((id) => [id, new Set<string>()]));
+    if (ids.length === 0) return new Map<string, readonly string[]>();
+    const rows = await unwrapPrismaTransaction(context).$queryRaw<Array<{ householdId: string; userId: string }>>(Prisma.sql`
+      SELECT m.household_id AS "householdId",v.user_id AS "userId"
+      FROM household_members m
+      JOIN vendor_memberships v ON v.vendor_id=m.vendor_id AND v.id=m.customer_membership_id
+      JOIN users u ON u.id=v.user_id
+      WHERE m.vendor_id=${vendorId}::uuid AND m.household_id IN (${Prisma.join(ids.map((id) => Prisma.sql`${id}::uuid`))})
+        AND m.status='active' AND m.ended_at IS NULL
+        AND v.role='customer' AND v.status='active' AND v.ended_at IS NULL AND v.deleted_at IS NULL
+        AND u.status='active' AND u.deleted_at IS NULL
+      ORDER BY m.household_id,v.user_id`);
+    for (const row of rows) recipients.get(row.householdId)?.add(row.userId);
+    return new Map([...recipients].map(([id, userIds]) => [id, [...userIds]]));
+  }
+
   async getRouteHouseholdSummaries(context: TransactionContext, householdIds: readonly string[]) {
     const ids = [...new Set(householdIds)].sort();
     if (ids.length === 0) return [];
