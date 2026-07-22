@@ -1,15 +1,23 @@
 import { Type } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsIn, IsInt, IsOptional, IsString, IsUUID, Matches, Max, Min } from 'class-validator';
+import { IsIn, IsInt, IsOptional, IsString, IsUUID, Length, Matches, Max, Min } from 'class-validator';
 
 import type { DeliveryDetail, DeliveryEvent, DeliveryPriceSnapshot, DeliveryRecord } from '../application/delivery.store.js';
 
 const statuses = ['scheduled', 'cancelled', 'delivered', 'skipped_by_customer', 'skipped_by_agent', 'missed'] as const;
+const correctionStatuses = ['delivered', 'skipped_by_agent', 'missed'] as const;
 const date = /^\d{4}-\d{2}-\d{2}$/;
 
 export class DeliveryPageQueryDto {
   @IsOptional() @IsString() cursor?: string;
   @ApiPropertyOptional({ default: 25, minimum: 1, maximum: 100 }) @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(100) limit?: number;
+}
+
+export class CorrectDeliveryRequestDto {
+  @Type(() => Number) @IsInt() @Min(1) expectedVersion!: number;
+  @IsIn(correctionStatuses) replacementOutcome!: typeof correctionStatuses[number];
+  @IsOptional() @IsString() @Matches(/^(?!0(?:\.0+)?$)(?:0|[1-9]\d*)(?:\.\d{1,3})?$/u) actualQuantity?: string;
+  @IsString() @Length(3, 500) @Matches(/^\S(?:.*\S)?$/u) reason!: string;
 }
 
 export class VendorDeliveryPageQueryDto extends DeliveryPageQueryDto {
@@ -89,4 +97,11 @@ const toVendorEvent = (value: DeliveryEvent): VendorDeliveryEventResponseDto => 
 });
 
 export const toVendorDeliveryDetailResponse = (value: DeliveryDetail): VendorDeliveryDetailResponseDto => ({ ...toDeliverySummaryResponse(value), events: value.events.map(toVendorEvent), ...(value.snapshot ? { snapshot: toSnapshot(value.snapshot) } : {}) });
-export const toCustomerDeliveryDetailResponse = (value: DeliveryDetail): CustomerDeliveryDetailResponseDto => ({ ...toDeliverySummaryResponse(value), events: value.events.map(toEvent), ...(value.snapshot ? { snapshot: toSnapshot(value.snapshot) } : {}) });
+const toCustomerEvent = (value: DeliveryEvent): DeliveryEventResponseDto => {
+  const event = toEvent(value);
+  if (value.source !== 'vendor_admin') return event;
+  const { reasonCode, ...safe } = event;
+  void reasonCode;
+  return safe;
+};
+export const toCustomerDeliveryDetailResponse = (value: DeliveryDetail): CustomerDeliveryDetailResponseDto => ({ ...toDeliverySummaryResponse(value), events: value.events.map(toCustomerEvent), ...(value.snapshot ? { snapshot: toSnapshot(value.snapshot) } : {}) });

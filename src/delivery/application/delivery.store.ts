@@ -121,6 +121,8 @@ export type DeliveryRecord = DeliveryOccurrenceKey & Readonly<{
 export type DeliveryDetail = DeliveryRecord & Readonly<{
   events: readonly DeliveryEvent[];
   snapshot?: DeliveryPriceSnapshot;
+  /** Internal notification recipients; never mapped to an HTTP response. */
+  customerUserIds?: readonly string[];
 }>;
 
 export type VendorDeliveryQuery = Readonly<{

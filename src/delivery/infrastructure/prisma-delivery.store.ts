@@ -300,7 +300,7 @@ export class PrismaDeliveryStore extends DeliveryStore {
       ${latestDeliveryQuantityJoin}
       WHERE d.vendor_id=${vendorId}::uuid AND d.id=${id}::uuid`);
     if (!rows[0]) throw failure('DELIVERY_NOT_FOUND', 'Delivery was not found', 404);
-    const [events, snapshots] = await Promise.all([
+    const [events, snapshots, customers] = await Promise.all([
       tx.$queryRaw<EventRow[]>(Prisma.sql`
         SELECT id,event_type AS "eventType",source,actor_user_id AS "actorUserId",occurred_at AS "occurredAt",
           received_at AS "receivedAt",actual_quantity::text AS "actualQuantity",reason_code AS "reasonCode",note,
@@ -311,8 +311,14 @@ export class PrismaDeliveryStore extends DeliveryStore {
         SELECT amount_minor AS "amountMinor",currency,pricing_level AS "pricingLevel",source_price_id AS "sourcePriceId",
           source_price_type AS "sourcePriceType",resolved_at AS "resolvedAt"
         FROM delivery_price_snapshots WHERE vendor_id=${vendorId}::uuid AND scheduled_delivery_id=${id}::uuid`),
+      tx.$queryRaw<Readonly<{ userId: string }>[]>(Prisma.sql`
+        SELECT m.user_id AS "userId" FROM household_members h
+        JOIN vendor_memberships m ON m.vendor_id=h.vendor_id AND m.id=h.customer_membership_id
+        WHERE h.vendor_id=${vendorId}::uuid AND h.household_id=${rows[0].householdId}::uuid
+          AND h.status='active' AND m.role='customer' AND m.status='active' AND m.ended_at IS NULL AND m.deleted_at IS NULL
+        ORDER BY m.user_id`),
     ]);
-    return { ...this.record(rows[0]), events: events.map((event) => this.event(event)), ...(snapshots[0] ? { snapshot: this.snapshot(snapshots[0]) } : {}) };
+    return { ...this.record(rows[0]), events: events.map((event) => this.event(event)), ...(snapshots[0] ? { snapshot: this.snapshot(snapshots[0]) } : {}), ...(customers.length ? { customerUserIds: customers.map(({ userId }) => userId) } : {}) };
   }
 
   private async lockDelivery(tx: ReturnType<typeof unwrapPrismaTransaction>, vendorId: string, id: string): Promise<DeliveryRow> {
