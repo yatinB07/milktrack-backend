@@ -196,6 +196,50 @@ void test('leave store scopes active household subscriptions, persists append-on
   } finally { await cleanup(current); }
 });
 
+void test('overlap follows current decision effective status when selected baseline is false', async () => {
+  const cases = [
+    { label: 'rejected-removal', status: 'rejected', previous: 'skipped_by_customer', requested: 'scheduled', overlaps: true },
+    { label: 'pending-removal', status: 'pending', previous: 'skipped_by_customer', requested: 'scheduled', overlaps: true },
+    { label: 'approved-addition', status: 'approved', previous: 'scheduled', requested: 'skipped_by_customer', overlaps: true },
+    { label: 'pending-addition', status: 'pending', previous: 'scheduled', requested: 'skipped_by_customer', overlaps: false },
+    { label: 'rejected-addition', status: 'rejected', previous: 'scheduled', requested: 'skipped_by_customer', overlaps: false },
+    { label: 'approved-removal', status: 'approved', previous: 'skipped_by_customer', requested: 'scheduled', overlaps: false },
+  ] as const;
+
+  for (const value of cases) {
+    const current = await fixture(`overlap-${value.label}`);
+    const requestId = randomUUID(); const revisionId = randomUUID(); const decisionId = randomUUID();
+    try {
+      await transactions.run(current.vendorId, (tx) => store.createRevision(tx, revision(current, {
+        requestId, revisionId, action: 'cancel', status: value.status === 'pending' ? 'pending_approval' : 'accepted',
+        subscriptions: [{ subscriptionId: current.subscriptionId, selected: false }],
+        decisions: [{ id: decisionId, subscriptionId: current.subscriptionId, serviceDate: '2030-01-01', deliverySlotId: current.slotId,
+          status: value.status === 'approved' ? 'pending' : value.status,
+          previousEffectiveStatus: value.previous, requestedEffectiveStatus: value.requested }],
+      })));
+      if (value.status === 'approved') {
+        await owner.query(`UPDATE leave_occurrence_decisions SET status='approved',decided_by=$1,decided_at=now(),decision_reason='Approved',version=2
+          WHERE vendor_id=$2 AND id=$3`, [current.userId, current.vendorId, decisionId]);
+      }
+      const input = {
+        vendorId: current.vendorId, householdId: current.householdId, subscriptionIds: [current.subscriptionId],
+        startDate: '2030-01-01', endDate: '2030-01-01', timezone: 'Asia/Kolkata', skipCutoffMinutes: 60,
+        lateLeavePolicy: 'approval' as const, now: new Date('2029-12-31T00:00:00.000Z'),
+      };
+      const before = await owner.query<{ revisions: number; decisions: number }>(`SELECT
+        (SELECT count(*)::int FROM leave_request_revisions WHERE vendor_id=$1) AS revisions,
+        (SELECT count(*)::int FROM leave_occurrence_decisions WHERE vendor_id=$1) AS decisions`, [current.vendorId]);
+      await transactions.run(current.vendorId, async (tx) => {
+        if (value.overlaps) await rejectsWithCode(() => store.assertNoOverlap(tx, input), 'LEAVE_OVERLAP');
+        else await store.assertNoOverlap(tx, input);
+      });
+      assert.deepEqual((await owner.query<{ revisions: number; decisions: number }>(`SELECT
+        (SELECT count(*)::int FROM leave_request_revisions WHERE vendor_id=$1) AS revisions,
+        (SELECT count(*)::int FROM leave_occurrence_decisions WHERE vendor_id=$1) AS decisions`, [current.vendorId])).rows, before.rows);
+    } finally { await cleanup(current); }
+  }
+});
+
 void test('approved late amendment becomes effective and cancelled requests reject further lifecycle changes', async () => {
   const current = await fixture('amend-lifecycle'); const requestId = randomUUID(); const createdRevisionId = randomUUID();
   const cutoffAt = new Date('2029-12-31T22:34:56.123Z');

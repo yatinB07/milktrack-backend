@@ -329,9 +329,22 @@ export class PrismaLeaveStore extends LeaveStore {
       SELECT EXISTS(SELECT 1 FROM leave_requests q JOIN leave_request_revisions r ON r.vendor_id=q.vendor_id AND r.id=q.current_revision_id
         JOIN leave_revision_subscriptions s ON s.vendor_id=r.vendor_id AND s.leave_request_revision_id=r.id
         WHERE q.vendor_id=${input.vendorId}::uuid AND q.household_id=${input.householdId}::uuid
-          AND q.status IN ('pending_approval','partially_pending','accepted') AND r.action<>'cancel'
-          AND daterange(r.start_date,r.end_date,'[]') && daterange(${input.startDate}::date,${input.endDate}::date,'[]')
-          AND s.selected AND s.subscription_id=ANY(${[...subscriptionIds]}::uuid[])
+          AND q.status IN ('pending_approval','partially_pending','accepted')
+          AND s.subscription_id=ANY(${[...subscriptionIds]}::uuid[])
+          AND (
+            (r.action<>'cancel' AND s.selected
+              AND daterange(r.start_date,r.end_date,'[]') && daterange(${input.startDate}::date,${input.endDate}::date,'[]'))
+            OR EXISTS(
+              SELECT 1 FROM leave_occurrence_decisions d
+              WHERE d.vendor_id=r.vendor_id AND d.leave_request_revision_id=r.id
+                AND d.subscription_id=s.subscription_id
+                AND d.service_date BETWEEN ${input.startDate}::date AND ${input.endDate}::date
+                AND (
+                  (d.status='approved' AND d.requested_effective_status='skipped_by_customer')
+                  OR (d.status IN ('pending','rejected') AND d.previous_effective_status='skipped_by_customer')
+                )
+            )
+          )
           ${input.previousRevisionId ? Prisma.sql`AND q.id<>${input.requestId}::uuid` : Prisma.empty}) AS overlap`);
     if (rows[0]?.overlap) throw error('LEAVE_OVERLAP', 'Leave overlaps an active request', 409);
   }
