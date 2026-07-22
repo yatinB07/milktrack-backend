@@ -69,7 +69,7 @@ function api(path: string, token: string, options: { method?: string; body?: unk
 async function json<T>(response: Response, status: number): Promise<T> { assert.equal(response.status, status); return response.json() as Promise<T>; }
 async function error(response: Response, status: number, code?: string) { const body = await json<{ code: string }>(response, status); if (code) assert.equal(body.code, code); }
 type Price = Readonly<{ id: string; vendorId: string; productId: string; unitId: string; amountMinor: string; currency: string; effectiveFrom: string; effectiveTo: string | null; createdAt: string; updatedAt: string }>;
-type Resolved = Readonly<{ status: 'resolved'; amountMinor: string; currency: string; source: 'customer_specific' | 'global'; sourcePriceId?: string } | { status: 'missing' }>;
+type Resolved = Readonly<{ status: 'resolved'; amountMinor: string; currency: string; source: 'customer_specific' | 'global'; sourcePriceId?: string; serviceDate?: string } | { status: 'missing'; serviceDate?: string }>;
 
 before(async () => {
   const { createApp } = await import('../src/bootstrap/create-app.js'); app = await createApp({ logger: false }); await app.listen(0, '127.0.0.1');
@@ -121,7 +121,7 @@ void test('effective pricing HTTP contract enforces history, precedence, privacy
   assert.deepEqual(await json<Resolved>(await api(vendorResolvedPath, current.ownerToken), 200), { status: 'resolved', amountMinor: '900', currency: 'INR', source: 'customer_specific', sourcePriceId: override.id });
   const customerPath = `/v1/customer/vendors/${current.vendorId}/households/${current.householdId}/prices/resolved?productId=${current.productId}&unitId=${current.unitId}&deliverySlotId=${current.slotId}&serviceDate=2026-07-20`;
   const customerResolved = await json<Resolved>(await api(customerPath, current.customerToken), 200);
-  assert.deepEqual(customerResolved, { status: 'resolved', amountMinor: '900', currency: 'INR', source: 'customer_specific' });
+  assert.deepEqual(customerResolved, { serviceDate: '2026-07-20', status: 'resolved', amountMinor: '900', currency: 'INR', source: 'customer_specific' });
   assert.equal('sourcePriceId' in customerResolved, false);
   const unrelatedActive = randomUUID(); const unrelatedInactive = randomUUID(); const nonexistent = randomUUID();
   await owner.query(
