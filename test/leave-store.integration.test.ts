@@ -57,11 +57,12 @@ async function cleanup(value: Fixture) {
   await owner.query('DELETE FROM users WHERE id=$1', [value.userId]);
 }
 
-function revision(current: Fixture, values: Readonly<{ requestId: string; revisionId: string; action?: 'create' | 'amend' | 'cancel'; previousRevisionId?: string; status?: 'accepted' | 'pending_approval' | 'cancelled'; decisions?: readonly Readonly<{ id: string; serviceDate: string; deliverySlotId: string; status: 'pending' | 'rejected'; subscriptionId?: string }>[] }>) {
+function revision(current: Fixture, values: Readonly<{ requestId: string; revisionId: string; action?: 'create' | 'amend' | 'cancel'; previousRevisionId?: string; status?: 'accepted' | 'pending_approval' | 'cancelled'; subscriptions?: readonly Readonly<{ subscriptionId: string; selected: boolean }>[]; decisions?: readonly Readonly<{ id: string; serviceDate: string; deliverySlotId: string; status: 'pending' | 'rejected'; subscriptionId?: string }>[] }>) {
   return {
     vendorId: current.vendorId, householdId: current.householdId, requestId: values.requestId, revisionId: values.revisionId,
     action: values.action ?? 'create', previousRevisionId: values.previousRevisionId, source: 'customer' as const,
-    createdBy: current.userId, startDate: '2030-01-01', endDate: '2030-01-31', subscriptionIds: [current.subscriptionId],
+    createdBy: current.userId, startDate: '2030-01-01', endDate: '2030-01-31',
+    subscriptions: values.subscriptions ?? [{ subscriptionId: current.subscriptionId, selected: true }],
     status: values.status ?? 'accepted', expectedVersion: values.previousRevisionId ? 1 : undefined,
     decisions: values.decisions ?? [],
   };
@@ -84,8 +85,9 @@ function rejectsWithCodeAndStatus(work: () => Promise<unknown>, code: string, st
 }
 
 void test('leave store scopes active household subscriptions, persists append-only revisions, and rejects overlap', async () => {
-  const current = await fixture('store'); const requestId = randomUUID(); const firstRevisionId = randomUUID();
+  const current = await fixture('store'); const requestId = randomUUID(); const firstRevisionId = randomUUID(); const retainedSubscriptionId = randomUUID();
   try {
+    await owner.query('INSERT INTO subscriptions(id,vendor_id,household_id,updated_at) VALUES($1,$2,$3,now())', [retainedSubscriptionId, current.vendorId, current.householdId]);
     await transactions.run(current.vendorId, async (tx) => {
       await rejectsWithCode(() => store.lockSubscriptions(tx, current.vendorId, []), 'LEAVE_SUBSCRIPTION_SELECTION');
       await rejectsWithCode(() => store.lockSubscriptions(tx, current.vendorId, [current.subscriptionId, current.subscriptionId]), 'LEAVE_SUBSCRIPTION_SELECTION');
@@ -104,12 +106,23 @@ void test('leave store scopes active household subscriptions, persists append-on
       });
       assert.deepEqual(next.items.map((item) => item.serviceDate), ['2030-01-08']);
       assert.deepEqual({ onTimeCount: next.onTimeCount, lateCount: next.lateCount }, { onTimeCount: 4, lateCount: 1 });
-      const created = await store.createRevision(tx, revision(current, { requestId, revisionId: firstRevisionId }));
+      const created = await store.createRevision(tx, revision(current, { requestId, revisionId: firstRevisionId, subscriptions: [
+        { subscriptionId: current.subscriptionId, selected: true },
+        { subscriptionId: retainedSubscriptionId, selected: false },
+      ] }));
       assert.equal(created.status, 'accepted');
       assert.equal(created.revisions.length, 1);
+      assert.deepEqual(created.revisions[0]?.subscriptions, [
+        { subscriptionId: current.subscriptionId, selected: true },
+        { subscriptionId: retainedSubscriptionId, selected: false },
+      ].sort((left, right) => left.subscriptionId.localeCompare(right.subscriptionId)));
+      assert.deepEqual(created.revisions[0]?.subscriptionIds, [current.subscriptionId]);
       assert.equal(await store.isEffectivelyOnLeave(tx, {
         vendorId: current.vendorId, subscriptionId: current.subscriptionId, deliverySlotId: current.slotId, serviceDate: '2030-01-01',
       }), true);
+      assert.equal(await store.isEffectivelyOnLeave(tx, {
+        vendorId: current.vendorId, subscriptionId: retainedSubscriptionId, deliverySlotId: current.slotId, serviceDate: '2030-01-01',
+      }), false);
     });
     await transactions.run(current.vendorId, async (tx) => {
       await store.lockSubscriptions(tx, current.vendorId, [current.subscriptionId]);
@@ -215,7 +228,10 @@ void test('late decisions are explicit, versioned, cursor-stable, and tenant-neu
           { id: firstDecisionId, serviceDate: '2030-01-01', deliverySlotId: current.slotId, status: 'pending', subscriptionId: current.subscriptionId },
           { id: secondDecisionId, serviceDate: '2030-01-01', deliverySlotId: current.slotId, status: 'pending', subscriptionId: secondSubscriptionId },
         ],
-      }), subscriptionIds: [current.subscriptionId, secondSubscriptionId] });
+      }), subscriptions: [
+        { subscriptionId: current.subscriptionId, selected: true },
+        { subscriptionId: secondSubscriptionId, selected: true },
+      ] });
       const pending = await store.listPendingDecisions(tx, { vendorId: current.vendorId, limit: 1 });
       assert.equal(pending.items[0]?.id, firstDecisionId);
       const next = await store.listPendingDecisions(tx, { vendorId: current.vendorId, limit: 1, cursor: pending.nextCursor });
@@ -229,6 +245,24 @@ void test('late decisions are explicit, versioned, cursor-stable, and tenant-neu
       await rejectsWithCode(() => store.getRequest(tx, other.vendorId, other.householdId, requestId), 'LEAVE_REQUEST_NOT_FOUND');
     });
   } finally { await cleanup(current); await cleanup(other); }
+});
+
+void test('unselected revision associations retain the strong tenant subscription foreign key', async () => {
+  const current = await fixture('unselected-fk');
+  const foreign = await fixture('unselected-foreign');
+  try {
+    for (const invalidSubscriptionId of [randomUUID(), foreign.subscriptionId]) {
+      await assert.rejects(
+        transactions.run(current.vendorId, (tx) => store.createRevision(tx, revision(current, {
+          requestId: randomUUID(), revisionId: randomUUID(), subscriptions: [
+            { subscriptionId: current.subscriptionId, selected: true },
+            { subscriptionId: invalidSubscriptionId, selected: false },
+          ],
+        }))),
+        /leave_revision_subscriptions_subscription_fkey|Foreign key constraint/u,
+      );
+    }
+  } finally { await cleanup(current); await cleanup(foreign); }
 });
 
 void test('leave decision rejects a finalized matching delivery before mutating the decision', async () => {

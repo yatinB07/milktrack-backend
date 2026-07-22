@@ -8,19 +8,10 @@ export type LeaveRevisionSubscription = Readonly<{
   subscriptionId: string;
   selected: boolean;
 }>;
-export type LeaveOccurrenceTransition = Readonly<{
-  subscriptionId: string;
-  deliverySlotId: string;
-  serviceDate: string;
-  previousEffectiveStatus: 'scheduled' | 'skipped_by_customer';
-  requestedEffectiveStatus: 'scheduled' | 'skipped_by_customer';
-  timing: 'on_time' | 'late';
-  proposedBehavior: 'accept' | 'pending_approval' | 'reject';
-}>;
-
 export type LeaveRevisionRecord = Readonly<{
   id: string; action: LeaveAction; startDate: string; endDate: string; source: LeaveSource; createdBy: string;
-  status: LeaveRequestStatus; note?: string; previousRevisionId?: string; createdAt: Date; subscriptionIds: readonly string[];
+  status: LeaveRequestStatus; note?: string; previousRevisionId?: string; createdAt: Date;
+  subscriptions: readonly LeaveRevisionSubscription[]; subscriptionIds: readonly string[];
 }>;
 export type LeaveRequestRecord = Readonly<{
   id: string; vendorId: string; householdId: string; status: LeaveRequestStatus; currentRevisionId?: string;
@@ -37,7 +28,7 @@ export type LeavePreviewPage = Readonly<{
 export type PersistLeaveRevision = Readonly<{
   vendorId: string; householdId: string; requestId: string; revisionId: string; action: LeaveAction;
   previousRevisionId?: string; source: LeaveSource; createdBy: string; startDate: string; endDate: string;
-  subscriptionIds: readonly string[]; status: LeaveRequestStatus; expectedVersion?: number; note?: string;
+  subscriptions: readonly LeaveRevisionSubscription[]; status: LeaveRequestStatus; expectedVersion?: number; note?: string;
   decisions: readonly Readonly<{
     id: string; subscriptionId?: string; serviceDate: string; deliverySlotId: string; status: 'pending' | 'rejected';
     previousEffectiveStatus?: 'scheduled' | 'skipped_by_customer'; requestedEffectiveStatus?: 'scheduled' | 'skipped_by_customer';

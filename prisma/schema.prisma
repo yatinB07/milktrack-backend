@@ -794,10 +794,11 @@ model DeliveryEvent {
   vendor              Vendor    @relation(fields: [vendorId], references: [id], onDelete: NoAction, onUpdate: NoAction)
   scheduledDelivery   ScheduledDelivery @relation(fields: [vendorId, scheduledDeliveryId], references: [vendorId, id], onDelete: NoAction, onUpdate: NoAction, map: "delivery_events_scheduled_delivery_fkey")
   actor               User?     @relation("DeliveryEventActor", fields: [actorUserId], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "delivery_events_actor_user_fkey")
-  replacedEvent       DeliveryEvent? @relation("DeliveryEventCorrection", fields: [vendorId, replacedEventId], references: [vendorId, id], onDelete: NoAction, onUpdate: NoAction, map: "delivery_events_replaced_event_fkey")
+  replacedEvent       DeliveryEvent? @relation("DeliveryEventCorrection", fields: [vendorId, scheduledDeliveryId, replacedEventId], references: [vendorId, scheduledDeliveryId, id], onDelete: NoAction, onUpdate: NoAction, map: "delivery_events_replaced_event_fkey")
   replacementEvents   DeliveryEvent[] @relation("DeliveryEventCorrection")
 
   @@unique([vendorId, id])
+  @@unique([vendorId, scheduledDeliveryId, id], map: "delivery_events_vendor_delivery_id_key")
   @@index([vendorId, scheduledDeliveryId, createdAt(sort: Desc), id(sort: Desc)], map: "delivery_events_vendor_delivery_created_at_id_idx")
   @@index([vendorId, createdAt(sort: Desc), id(sort: Desc)], map: "delivery_events_vendor_created_at_id_idx")
   @@map("delivery_events")

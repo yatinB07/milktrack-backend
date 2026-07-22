@@ -166,7 +166,7 @@ void test('rejected leave decision notifies only the requesting customer', async
   try {
     await transactions.run(value.vendorId, (tx) => leaves.createRevision(tx, {
       vendorId: value.vendorId, householdId: value.householdId, requestId, revisionId, action: 'create', source: 'customer',
-      createdBy: value.customerUserId, startDate: '2030-01-15', endDate: '2030-01-15', subscriptionIds: [value.subscriptionId],
+      createdBy: value.customerUserId, startDate: '2030-01-15', endDate: '2030-01-15', subscriptions: [{ subscriptionId: value.subscriptionId, selected: true }],
       status: 'pending_approval', decisions: [{ id: decisionId, subscriptionId: value.subscriptionId, serviceDate: '2030-01-15', deliverySlotId: value.slotId, status: 'pending' }],
     }));
     await requestContextStore.run({ correlationId: randomUUID() }, () => service().decideOccurrence({ ...actor(value), memberships: [] }, value.vendorId, decisionId, {

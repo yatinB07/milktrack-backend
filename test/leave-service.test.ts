@@ -53,6 +53,6 @@ function request() {
   return {
     id: '00000000-0000-4000-8000-000000000020', vendorId, householdId, status: 'accepted' as const, version: 1,
     createdAt: new Date('2030-01-01T00:00:00.000Z'), updatedAt: new Date('2030-01-01T00:00:00.000Z'),
-    revisions: [{ id: '00000000-0000-4000-8000-000000000021', action: 'create' as const, startDate: '2030-01-02', endDate: '2030-01-03', source: 'customer' as const, createdBy: actor.userId, status: 'accepted' as const, createdAt: new Date('2030-01-01T00:00:00.000Z'), subscriptionIds: [subscriptionId] }],
+    revisions: [{ id: '00000000-0000-4000-8000-000000000021', action: 'create' as const, startDate: '2030-01-02', endDate: '2030-01-03', source: 'customer' as const, createdBy: actor.userId, status: 'accepted' as const, createdAt: new Date('2030-01-01T00:00:00.000Z'), subscriptions: [{ subscriptionId, selected: true }], subscriptionIds: [subscriptionId] }],
   };
 }

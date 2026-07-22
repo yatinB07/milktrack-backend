@@ -13,6 +13,7 @@ import {
   type CustomerDeliveryQuery,
   type DeliveryDetail,
   type DeliveryEvent,
+  type DeliveryEventType,
   type DeliveryFinalStatus,
   type DeliveryOccurrenceKey,
   type DeliveryPage,
@@ -52,7 +53,7 @@ type DeliveryRow = Readonly<{
 
 type EventRow = Readonly<{
   id: string;
-  eventType: DeliveryFinalStatus;
+  eventType: DeliveryEventType;
   source: DeliveryEvent['source'];
   actorUserId: string | null;
   occurredAt: Date;

@@ -31,15 +31,25 @@ void test('Phase 3 corrections migrate strict leave, delivery, and notification 
     'utf8',
   );
   for (const fragment of [
+    'BEGIN;',
     'ADD COLUMN selected BOOLEAN NOT NULL DEFAULT true',
+    'LOCK TABLE delivery_events, leave_requests, notifications, scheduled_deliveries',
+    'IN ACCESS EXCLUSIVE MODE',
+    'ALTER TABLE notifications NO FORCE ROW LEVEL SECURITY',
+    'ALTER TABLE notifications FORCE ROW LEVEL SECURITY',
     "event_type IN ('scheduled','delivered','skipped_by_customer','skipped_by_agent','missed')",
     'ADD CONSTRAINT delivery_events_reversal_check',
+    'ADD CONSTRAINT delivery_events_vendor_delivery_id_key',
+    'FOREIGN KEY (vendor_id, scheduled_delivery_id, replaced_event_id)',
     'latitude IS NOT NULL AND longitude IS NOT NULL',
     "jsonb_set(n.payload, '{householdId}'",
     'notifications_household_payload_check',
     'notifications_vendor_recipient_household_cursor_idx',
     "(payload->>'householdId')",
+    'COMMIT;',
   ]) assert.ok(sql.includes(fragment), `correction migration must contain ${fragment}`);
+  assert.equal(sql.trimStart().startsWith('BEGIN;'), true);
+  assert.equal(sql.trimEnd().endsWith('COMMIT;'), true);
   assert.match(sql, /\(latitude IS NULL\) <> \(longitude IS NULL\)/u);
   assert.match(sql, /RAISE EXCEPTION[^;]+coordinate/isu);
   assert.match(sql, /FROM leave_requests/u);

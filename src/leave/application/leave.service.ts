@@ -75,7 +75,9 @@ export class DefaultLeaveService extends LeaveService {
       const status = await this.statusFor(tx, vendorId, householdId, command, context);
       const result = await this.leaves.createRevision(tx, {
         vendorId, householdId, requestId: randomUUID(), revisionId: randomUUID(), action: 'create', source: 'customer', createdBy: actor.userId,
-        ...command, status: status.status, decisions: status.decisions,
+        startDate: command.startDate, endDate: command.endDate, ...(command.note ? { note: command.note } : {}),
+        subscriptions: command.subscriptionIds.map((subscriptionId) => ({ subscriptionId, selected: true })),
+        status: status.status, decisions: status.decisions,
       });
       const agentUserIds = await this.synchronize(tx, vendorId, householdId, [command], context, actor.userId);
       await this.audit(tx, actor, vendorId, result, 'leave.created');
@@ -100,7 +102,10 @@ export class DefaultLeaveService extends LeaveService {
       const status = await this.statusFor(tx, vendorId, householdId, command, context);
       const result = await this.leaves.createRevision(tx, {
         vendorId, householdId, requestId: leaveRequestId, revisionId: randomUUID(), action: 'amend', previousRevisionId: current.currentRevisionId,
-        source: 'customer', createdBy: actor.userId, ...command, status: status.status, decisions: status.decisions,
+        source: 'customer', createdBy: actor.userId, startDate: command.startDate, endDate: command.endDate,
+        ...(command.note ? { note: command.note } : {}),
+        subscriptions: command.subscriptionIds.map((subscriptionId) => ({ subscriptionId, selected: true })),
+        expectedVersion: command.expectedVersion, status: status.status, decisions: status.decisions,
       });
       const previous = { startDate: current.revisions.find(({ id }) => id === current.currentRevisionId)?.startDate ?? command.startDate,
         endDate: current.revisions.find(({ id }) => id === current.currentRevisionId)?.endDate ?? command.endDate,
@@ -120,7 +125,8 @@ export class DefaultLeaveService extends LeaveService {
       await this.leaves.lockSubscriptions(tx, vendorId, revision.subscriptionIds);
       const result = await this.leaves.createRevision(tx, {
         vendorId, householdId, requestId: leaveRequestId, revisionId: randomUUID(), action: 'cancel', previousRevisionId: revision.id,
-        source: 'customer', createdBy: actor.userId, startDate: revision.startDate, endDate: revision.endDate, subscriptionIds: revision.subscriptionIds,
+        source: 'customer', createdBy: actor.userId, startDate: revision.startDate, endDate: revision.endDate,
+        subscriptions: revision.subscriptionIds.map((subscriptionId) => ({ subscriptionId, selected: true })),
         expectedVersion: command.expectedVersion, ...(command.note ? { note: command.note } : {}), status: 'cancelled', decisions: [],
       });
       const context = await this.context(tx, vendorId);

@@ -84,7 +84,7 @@ async function createLeave(value: Fixture, status: 'accepted' | 'pending_approva
   await transactions.run(value.vendorId, (tx) => leaves.createRevision(tx, {
     vendorId: value.vendorId, householdId: value.householdId, requestId: randomUUID(), revisionId: randomUUID(),
     action: 'create', source: 'customer', createdBy: value.userId, startDate: '2030-01-01', endDate: '2030-01-01',
-    subscriptionIds: [value.subscriptionId], status,
+    subscriptions: [{ subscriptionId: value.subscriptionId, selected: true }], status,
     decisions: status === 'accepted' ? [] : [{
       id: randomUUID(), subscriptionId: value.subscriptionId, serviceDate: '2030-01-01', deliverySlotId: value.slotId,
       status: status === 'pending_approval' ? 'pending' : 'rejected',

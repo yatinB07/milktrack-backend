@@ -12,6 +12,7 @@ type Fixture = Readonly<{
   userId: string;
   householdId: string;
   deliveryId: string;
+  secondDeliveryId: string;
 }>;
 
 async function asTenant(vendorId: string, work: (client: pg.PoolClient) => Promise<void>) {
@@ -50,6 +51,7 @@ async function fixture(label: string): Promise<Fixture> {
   const subscriptionId = randomUUID();
   const revisionId = randomUUID();
   const deliveryId = randomUUID();
+  const secondDeliveryId = randomUUID();
   await owner.query(`INSERT INTO users (id, display_name, updated_at) VALUES ($1, $2, now())`, [userId, `${label} user`]);
   await owner.query(`INSERT INTO vendors (id, code, legal_name, display_name, status, timezone, currency, skip_cutoff_minutes, billing_day, updated_at) VALUES ($1, $2, $2, $2, 'active', 'Asia/Kolkata', 'INR', 0, 1, now())`, [vendorId, `phase3-${label}-${vendorId.slice(0, 8)}`]);
   await owner.query(`INSERT INTO households (id, vendor_id, account_number, name, address_line_1, city, region, postal_code, country_code, updated_at) VALUES ($1, $2, $3, $3, 'Road', 'Pune', 'MH', '411001', 'IN', now())`, [householdId, vendorId, label]);
@@ -70,7 +72,8 @@ async function fixture(label: string): Promise<Fixture> {
     client.release();
   }
   await owner.query(`INSERT INTO scheduled_deliveries (id, vendor_id, subscription_id, subscription_revision_id, household_id, product_id, unit_id, delivery_slot_id, service_date, planned_quantity, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, '2030-01-01', 1, now())`, [deliveryId, vendorId, subscriptionId, revisionId, householdId, productId, unitId, slotId]);
-  return { vendorId, userId, householdId, deliveryId };
+  await owner.query(`INSERT INTO scheduled_deliveries (id, vendor_id, subscription_id, subscription_revision_id, household_id, product_id, unit_id, delivery_slot_id, service_date, planned_quantity, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, '2030-01-02', 1, now())`, [secondDeliveryId, vendorId, subscriptionId, revisionId, householdId, productId, unitId, slotId]);
+  return { vendorId, userId, householdId, deliveryId, secondDeliveryId };
 }
 
 async function cleanup(values: readonly Fixture[]) {
@@ -114,7 +117,7 @@ void test('Phase 3 tables enforce tenant isolation, immutable history, and deliv
       assert.equal((await client.query('SELECT id FROM leave_requests WHERE id=$1', [leaveId])).rowCount, 1);
       assert.equal((await client.query('SELECT id FROM leave_requests WHERE vendor_id=$1', [b.vendorId])).rowCount, 0);
       await rejects(client, `INSERT INTO leave_requests (id, vendor_id, household_id, status, updated_at) VALUES ($1, $2, $3, 'accepted', now())`, [randomUUID(), a.vendorId, b.householdId], /foreign key|violates row-level security/u);
-      await client.query(`INSERT INTO delivery_events (id, vendor_id, scheduled_delivery_id, event_type, source, occurred_at, received_at) VALUES ($1, $2, $3, 'skipped_by_agent', 'delivery_agent', now(), now())`, [eventId, a.vendorId, a.deliveryId]);
+      await client.query(`INSERT INTO delivery_events (id, vendor_id, scheduled_delivery_id, event_type, source, actor_user_id, occurred_at, received_at) VALUES ($1, $2, $3, 'skipped_by_customer', 'customer', $4, now(), now())`, [eventId, a.vendorId, a.deliveryId, a.userId]);
       await rejects(client, 'UPDATE delivery_events SET source=$1 WHERE id=$2', ['system', eventId], /permission denied/u);
       await rejects(client, 'DELETE FROM delivery_events WHERE id=$1', [eventId], /permission denied/u);
       await client.query(`INSERT INTO delivery_price_snapshots (vendor_id, scheduled_delivery_id, amount_minor, currency, pricing_level, source_price_id, source_price_type, resolved_at) VALUES ($1, $2, 1000, 'INR', 'global', $3, 'global_price', now())`, [a.vendorId, a.deliveryId, randomUUID()]);
@@ -125,6 +128,9 @@ void test('Phase 3 tables enforce tenant isolation, immutable history, and deliv
       await client.query(`INSERT INTO delivery_events (id, vendor_id, scheduled_delivery_id, event_type, source, occurred_at, received_at) VALUES ($1, $2, $3, 'missed', 'delivery_agent', now(), now())`, [randomUUID(), a.vendorId, a.deliveryId]);
       await client.query(`INSERT INTO delivery_events (id, vendor_id, scheduled_delivery_id, event_type, source, occurred_at, received_at, latitude, longitude) VALUES ($1, $2, $3, 'missed', 'delivery_agent', now(), now(), 18.52, 73.85)`, [randomUUID(), a.vendorId, a.deliveryId]);
       await client.query(`INSERT INTO delivery_events (id, vendor_id, scheduled_delivery_id, event_type, source, actor_user_id, occurred_at, received_at, reason_code, replaced_event_id) VALUES ($1, $2, $3, 'scheduled', 'customer', $4, now(), now(), 'customer_leave_reversed', $5)`, [randomUUID(), a.vendorId, a.deliveryId, a.userId, eventId]);
+      const otherDeliveryEventId = randomUUID();
+      await client.query(`INSERT INTO delivery_events (id, vendor_id, scheduled_delivery_id, event_type, source, actor_user_id, occurred_at, received_at) VALUES ($1, $2, $3, 'skipped_by_customer', 'customer', $4, now(), now())`, [otherDeliveryEventId, a.vendorId, a.secondDeliveryId, a.userId]);
+      await rejects(client, `INSERT INTO delivery_events (id, vendor_id, scheduled_delivery_id, event_type, source, actor_user_id, occurred_at, received_at, reason_code, replaced_event_id) VALUES ($1, $2, $3, 'scheduled', 'customer', $4, now(), now(), 'customer_leave_reversed', $5)`, [randomUUID(), a.vendorId, a.deliveryId, a.userId, otherDeliveryEventId], /delivery_events_replaced_event_fkey/u);
       await rejects(client, `INSERT INTO delivery_events (id, vendor_id, scheduled_delivery_id, event_type, source, actor_user_id, occurred_at, received_at, reason_code) VALUES ($1, $2, $3, 'scheduled', 'customer', $4, now(), now(), 'customer_leave_reversed')`, [randomUUID(), a.vendorId, a.deliveryId, a.userId], /delivery_events_reversal_check/u);
       await rejects(client, `INSERT INTO notifications (id, vendor_id, recipient_user_id, type, payload) VALUES ($1, $2, $3, 'agent_skip', $4::jsonb)`, [randomUUID(), a.vendorId, a.userId, JSON.stringify({ scheduledDeliveryId: a.deliveryId })], /notifications_household_payload_check/u);
       await rejects(client, "UPDATE scheduled_deliveries SET status='delivered' WHERE id=$1", [a.deliveryId], /scheduled_deliveries_status_consistency_check/u);

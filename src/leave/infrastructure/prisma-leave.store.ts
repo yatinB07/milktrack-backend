@@ -32,7 +32,7 @@ import {
 
 const requestInclude = {
   revisions: {
-    include: { subscriptions: { select: { subscriptionId: true }, orderBy: { subscriptionId: 'asc' as const } } },
+    include: { subscriptions: { select: { subscriptionId: true, selected: true }, orderBy: { subscriptionId: 'asc' as const } } },
     orderBy: [{ createdAt: 'desc' as const }, { id: 'desc' as const }],
   },
 } satisfies Prisma.LeaveRequestInclude;
@@ -95,6 +95,9 @@ export class PrismaLeaveStore extends LeaveStore {
 
   async createRevision(context: TransactionContext, input: PersistLeaveRevision): Promise<LeaveRequestRecord> {
     const tx = unwrapPrismaTransaction(context);
+    const subscriptionIds = input.subscriptions.map(({ subscriptionId }) => subscriptionId);
+    const selectedSubscriptionIds = input.subscriptions.filter(({ selected }) => selected).map(({ subscriptionId }) => subscriptionId);
+    this.requireSelection(subscriptionIds);
     if (input.previousRevisionId) {
       const current = await tx.$queryRaw<Array<{ id: string; status: string; version: number; currentRevisionId: string | null }>>(Prisma.sql`
         SELECT id,status,version,current_revision_id AS "currentRevisionId" FROM leave_requests
@@ -106,8 +109,10 @@ export class PrismaLeaveStore extends LeaveStore {
       if (row.status === 'cancelled')
         throw error('LEAVE_REQUEST_STATE_CONFLICT', 'Cancelled leave requests cannot be changed', 409);
     }
-    await this.requireApplicableSelection(context, input, true);
-    if (input.action !== 'cancel') await this.requireNoOverlap(tx, input);
+    if (selectedSubscriptionIds.length > 0) {
+      await this.requireApplicableSelection(context, { ...input, subscriptionIds: selectedSubscriptionIds }, true);
+    }
+    if (input.action !== 'cancel') await this.requireNoOverlap(tx, input, selectedSubscriptionIds);
     if (!input.previousRevisionId) {
       await tx.leaveRequest.create({ data: { id: input.requestId, vendorId: input.vendorId, householdId: input.householdId, status: input.status } });
     }
@@ -116,12 +121,12 @@ export class PrismaLeaveStore extends LeaveStore {
       startDate: date(input.startDate), endDate: date(input.endDate), source: input.source, createdBy: input.createdBy,
       status: input.status, ...(input.note ? { note: input.note } : {}), ...(input.previousRevisionId ? { previousRevisionId: input.previousRevisionId } : {}),
     } });
-    await tx.leaveRevisionSubscription.createMany({ data: input.subscriptionIds.map((subscriptionId) => ({
-      vendorId: input.vendorId, leaveRequestRevisionId: input.revisionId, subscriptionId,
+    await tx.leaveRevisionSubscription.createMany({ data: input.subscriptions.map(({ subscriptionId, selected }) => ({
+      vendorId: input.vendorId, leaveRequestRevisionId: input.revisionId, subscriptionId, selected,
     })) });
     if (input.decisions.length > 0) await tx.leaveOccurrenceDecision.createMany({ data: input.decisions.map((decision) => ({
       id: decision.id, vendorId: input.vendorId, leaveRequestRevisionId: input.revisionId,
-      subscriptionId: decision.subscriptionId ?? input.subscriptionIds[0], serviceDate: date(decision.serviceDate), deliverySlotId: decision.deliverySlotId,
+      subscriptionId: decision.subscriptionId ?? selectedSubscriptionIds[0] ?? subscriptionIds[0], serviceDate: date(decision.serviceDate), deliverySlotId: decision.deliverySlotId,
       previousEffectiveStatus: decision.previousEffectiveStatus ?? 'scheduled',
       requestedEffectiveStatus: decision.requestedEffectiveStatus ?? requestedEffectiveStatus(input.action),
       status: decision.status,
@@ -194,8 +199,8 @@ export class PrismaLeaveStore extends LeaveStore {
   }
 
   async isEffectivelyOnLeave(context: TransactionContext, input: LeaveOccurrenceKey): Promise<boolean> {
-    const rows = await unwrapPrismaTransaction(context).$queryRaw<Array<{ action: string; status: string; decisionStatus: string | null; requestedStatus: string | null; previousStatus: string | null }>>(Prisma.sql`
-      SELECT r.action,q.status,d.status AS "decisionStatus",d.requested_effective_status AS "requestedStatus",d.previous_effective_status AS "previousStatus"
+    const rows = await unwrapPrismaTransaction(context).$queryRaw<Array<{ action: string; status: string; selected: boolean; decisionStatus: string | null; requestedStatus: string | null; previousStatus: string | null }>>(Prisma.sql`
+      SELECT r.action,q.status,s.selected,d.status AS "decisionStatus",d.requested_effective_status AS "requestedStatus",d.previous_effective_status AS "previousStatus"
       FROM leave_requests q JOIN leave_request_revisions r ON r.vendor_id=q.vendor_id AND r.id=q.current_revision_id
       JOIN leave_revision_subscriptions s ON s.vendor_id=r.vendor_id AND s.leave_request_revision_id=r.id
       LEFT JOIN leave_occurrence_decisions d ON d.vendor_id=r.vendor_id AND d.leave_request_revision_id=r.id AND d.subscription_id=s.subscription_id
@@ -207,7 +212,7 @@ export class PrismaLeaveStore extends LeaveStore {
     if (!row || row.status === 'cancelled') return false;
     if (row.decisionStatus === 'approved') return row.requestedStatus === 'skipped_by_customer';
     if (row.decisionStatus === 'pending' || row.decisionStatus === 'rejected') return row.previousStatus === 'skipped_by_customer';
-    return row.action !== 'cancel' && (row.status === 'accepted' || row.status === 'partially_pending');
+    return row.selected && row.action !== 'cancel' && (row.status === 'accepted' || row.status === 'partially_pending');
   }
 
   private async requireApplicableSelection(context: TransactionContext, input: Readonly<{
@@ -256,14 +261,14 @@ export class PrismaLeaveStore extends LeaveStore {
     if (ids.length === 0 || new Set(ids).size !== ids.length) throw error('LEAVE_SUBSCRIPTION_SELECTION', 'Leave selection requires unique subscriptions', 400);
   }
 
-  private async requireNoOverlap(tx: Prisma.TransactionClient, input: PersistLeaveRevision) {
+  private async requireNoOverlap(tx: Prisma.TransactionClient, input: PersistLeaveRevision, subscriptionIds: readonly string[]) {
     const rows = await tx.$queryRaw<Array<{ overlap: boolean }>>(Prisma.sql`
       SELECT EXISTS(SELECT 1 FROM leave_requests q JOIN leave_request_revisions r ON r.vendor_id=q.vendor_id AND r.id=q.current_revision_id
         JOIN leave_revision_subscriptions s ON s.vendor_id=r.vendor_id AND s.leave_request_revision_id=r.id
         WHERE q.vendor_id=${input.vendorId}::uuid AND q.household_id=${input.householdId}::uuid
           AND q.status IN ('pending_approval','partially_pending','accepted') AND r.action<>'cancel'
           AND daterange(r.start_date,r.end_date,'[]') && daterange(${input.startDate}::date,${input.endDate}::date,'[]')
-          AND s.subscription_id=ANY(${[...input.subscriptionIds]}::uuid[])
+          AND s.selected AND s.subscription_id=ANY(${[...subscriptionIds]}::uuid[])
           ${input.previousRevisionId ? Prisma.sql`AND q.id<>${input.requestId}::uuid` : Prisma.empty}) AS overlap`);
     if (rows[0]?.overlap) throw error('LEAVE_OVERLAP', 'Leave overlaps an active request', 409);
   }
@@ -275,7 +280,8 @@ export class PrismaLeaveStore extends LeaveStore {
         startDate: dateString(revision.startDate), endDate: dateString(revision.endDate), source: revision.source as LeaveRequestRecord['revisions'][number]['source'],
         createdBy: revision.createdBy, status: revision.status as LeaveRequestRecord['status'], ...(revision.note ? { note: revision.note } : {}),
         ...(revision.previousRevisionId ? { previousRevisionId: revision.previousRevisionId } : {}), createdAt: revision.createdAt,
-        subscriptionIds: revision.subscriptions.map(({ subscriptionId }) => subscriptionId),
+        subscriptions: revision.subscriptions,
+        subscriptionIds: revision.subscriptions.filter(({ selected }) => selected).map(({ subscriptionId }) => subscriptionId),
       })), };
   }
 

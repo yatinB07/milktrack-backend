@@ -1,3 +1,13 @@
+BEGIN;
+
+LOCK TABLE delivery_events, leave_requests, notifications, scheduled_deliveries
+  IN ACCESS EXCLUSIVE MODE;
+
+ALTER TABLE delivery_events NO FORCE ROW LEVEL SECURITY;
+ALTER TABLE leave_requests NO FORCE ROW LEVEL SECURITY;
+ALTER TABLE notifications NO FORCE ROW LEVEL SECURITY;
+ALTER TABLE scheduled_deliveries NO FORCE ROW LEVEL SECURITY;
+
 ALTER TABLE leave_revision_subscriptions
   ADD COLUMN selected BOOLEAN NOT NULL DEFAULT true;
 
@@ -12,8 +22,14 @@ BEGIN
 END $$;
 
 ALTER TABLE delivery_events
+  DROP CONSTRAINT delivery_events_replaced_event_fkey,
   DROP CONSTRAINT delivery_events_event_type_check,
   DROP CONSTRAINT delivery_events_coordinates_check,
+  ADD CONSTRAINT delivery_events_vendor_delivery_id_key
+    UNIQUE (vendor_id, scheduled_delivery_id, id),
+  ADD CONSTRAINT delivery_events_replaced_event_fkey
+    FOREIGN KEY (vendor_id, scheduled_delivery_id, replaced_event_id)
+    REFERENCES delivery_events(vendor_id, scheduled_delivery_id, id),
   ADD CONSTRAINT delivery_events_event_type_check
     CHECK (event_type IN ('scheduled','delivered','skipped_by_customer','skipped_by_agent','missed')),
   ADD CONSTRAINT delivery_events_coordinates_check CHECK (
@@ -66,3 +82,10 @@ ALTER TABLE notifications ADD CONSTRAINT notifications_household_payload_check C
 
 CREATE INDEX notifications_vendor_recipient_household_cursor_idx
   ON notifications (vendor_id, recipient_user_id, (payload->>'householdId'), created_at DESC, id DESC);
+
+ALTER TABLE delivery_events FORCE ROW LEVEL SECURITY;
+ALTER TABLE leave_requests FORCE ROW LEVEL SECURITY;
+ALTER TABLE notifications FORCE ROW LEVEL SECURITY;
+ALTER TABLE scheduled_deliveries FORCE ROW LEVEL SECURITY;
+
+COMMIT;

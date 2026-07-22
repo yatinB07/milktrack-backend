@@ -10,6 +10,128 @@ const ownerPool = new pg.Pool({
 });
 test.after(() => Promise.all([pool.end(), ownerPool.end()]));
 
+async function createCorrectionSchema(
+  client: pg.PoolClient,
+  role: string,
+  schema: string,
+  defect: 'half_coordinates' | 'unresolved_notification',
+) {
+  const vendorId = randomUUID();
+  const householdId = randomUUID();
+  const leaveRequestId = randomUUID();
+  await client.query(`CREATE ROLE "${role}" NOLOGIN NOBYPASSRLS`);
+  await client.query(`CREATE SCHEMA "${schema}" AUTHORIZATION "${role}"`);
+  await client.query(`SET ROLE "${role}"`);
+  await client.query(`SET search_path TO "${schema}"`);
+  await client.query(`
+    CREATE TABLE leave_revision_subscriptions (
+      vendor_id uuid NOT NULL, leave_request_revision_id uuid NOT NULL, subscription_id uuid NOT NULL
+    );
+    CREATE TABLE leave_requests (id uuid PRIMARY KEY, vendor_id uuid NOT NULL, household_id uuid NOT NULL);
+    CREATE TABLE scheduled_deliveries (
+      id uuid PRIMARY KEY, vendor_id uuid NOT NULL, household_id uuid NOT NULL,
+      UNIQUE (vendor_id, id)
+    );
+    CREATE TABLE delivery_events (
+      id uuid PRIMARY KEY, vendor_id uuid NOT NULL, scheduled_delivery_id uuid NOT NULL,
+      event_type text NOT NULL, source text NOT NULL, actor_user_id uuid,
+      occurred_at timestamptz NOT NULL, received_at timestamptz NOT NULL,
+      actual_quantity numeric(18,3), reason_code text, note text,
+      latitude numeric(8,6), longitude numeric(9,6), replaced_event_id uuid,
+      created_at timestamptz NOT NULL DEFAULT now(),
+      CONSTRAINT delivery_events_vendor_id_id_key UNIQUE (vendor_id, id),
+      CONSTRAINT delivery_events_replaced_event_fkey
+        FOREIGN KEY (vendor_id, replaced_event_id) REFERENCES delivery_events(vendor_id, id),
+      CONSTRAINT delivery_events_event_type_check
+        CHECK (event_type IN ('delivered','skipped_by_customer','skipped_by_agent','missed')),
+      CONSTRAINT delivery_events_coordinates_check CHECK (
+        (latitude IS NULL AND longitude IS NULL)
+        OR (latitude BETWEEN -90 AND 90 AND longitude BETWEEN -180 AND 180)
+      )
+    );
+    CREATE TABLE notifications (
+      id uuid PRIMARY KEY, vendor_id uuid NOT NULL, recipient_user_id uuid NOT NULL,
+      type text NOT NULL, payload jsonb NOT NULL, created_at timestamptz NOT NULL DEFAULT now()
+    );
+  `);
+  if (defect !== 'unresolved_notification') {
+    await client.query('INSERT INTO leave_requests(id,vendor_id,household_id) VALUES($1,$2,$3)', [leaveRequestId, vendorId, householdId]);
+  }
+  await client.query(
+    `INSERT INTO notifications(id,vendor_id,recipient_user_id,type,payload)
+     VALUES($1,$2,$3,'leave_accepted',$4::jsonb)`,
+    [randomUUID(), vendorId, randomUUID(), JSON.stringify({ leaveRequestId })],
+  );
+  if (defect === 'half_coordinates') {
+    await client.query(
+      `INSERT INTO delivery_events(id,vendor_id,scheduled_delivery_id,event_type,source,occurred_at,received_at,latitude)
+       VALUES($1,$2,$3,'missed','delivery_agent',now(),now(),18.52)`,
+      [randomUUID(), vendorId, randomUUID()],
+    );
+  }
+  await client.query(`
+    ALTER TABLE leave_requests ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE leave_requests FORCE ROW LEVEL SECURITY;
+    ALTER TABLE scheduled_deliveries ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE scheduled_deliveries FORCE ROW LEVEL SECURITY;
+    ALTER TABLE delivery_events ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE delivery_events FORCE ROW LEVEL SECURITY;
+    ALTER TABLE notifications ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE notifications FORCE ROW LEVEL SECURITY;
+  `);
+  return { vendorId, householdId, leaveRequestId };
+}
+
+void test('Phase 3 correction migration rolls back defects and retries as a non-bypass table owner', async () => {
+  const sql = await readFile(new URL('../prisma/migrations/202607230001_phase_3_final_corrections/migration.sql', import.meta.url), 'utf8');
+  for (const defect of ['half_coordinates', 'unresolved_notification'] as const) {
+    const suffix = randomUUID().replaceAll('-', '');
+    const role = `correction_owner_${suffix}`;
+    const schema = `correction_${suffix}`;
+    const client = await ownerPool.connect();
+    try {
+      const fixture = await createCorrectionSchema(client, role, schema, defect);
+      assert.deepEqual((await client.query<{ rolbypassrls: boolean }>('SELECT rolbypassrls FROM pg_roles WHERE rolname=$1', [role])).rows, [{ rolbypassrls: false }]);
+      await assert.rejects(client.query(sql), defect === 'half_coordinates' ? /coordinate evidence exists/u : /notification cannot be resolved/u);
+      await client.query('ROLLBACK');
+      assert.equal((await client.query(
+        `SELECT 1 FROM information_schema.columns WHERE table_schema=$1
+         AND table_name='leave_revision_subscriptions' AND column_name='selected'`,
+        [schema],
+      )).rowCount, 0);
+      assert.deepEqual((await client.query<{ relforcerowsecurity: boolean }>(
+        `SELECT relforcerowsecurity FROM pg_class WHERE oid='"${schema}".notifications'::regclass`,
+      )).rows, [{ relforcerowsecurity: true }]);
+
+      await client.query('RESET ROLE');
+      if (defect === 'half_coordinates') {
+        await client.query(`UPDATE "${schema}".delivery_events SET longitude=73.85 WHERE longitude IS NULL`);
+      } else {
+        await client.query(
+          `INSERT INTO "${schema}".leave_requests(id,vendor_id,household_id) VALUES($1,$2,$3)`,
+          [fixture.leaveRequestId, fixture.vendorId, fixture.householdId],
+        );
+      }
+      await client.query(`SET ROLE "${role}"`);
+      await client.query(`SET search_path TO "${schema}"`);
+      await client.query(sql);
+      await client.query('RESET ROLE');
+      assert.deepEqual((await client.query<{ household_id: string }>(
+        `SELECT payload->>'householdId' AS household_id FROM "${schema}".notifications`,
+      )).rows, [{ household_id: fixture.householdId }]);
+      assert.deepEqual((await client.query<{ relforcerowsecurity: boolean }>(
+        `SELECT relforcerowsecurity FROM pg_class WHERE oid='"${schema}".notifications'::regclass`,
+      )).rows, [{ relforcerowsecurity: true }]);
+    } finally {
+      await client.query('RESET ROLE');
+      await client.query('RESET search_path');
+      await client.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);
+      await client.query(`DROP ROLE IF EXISTS "${role}"`);
+      client.release();
+    }
+  }
+});
+
 void test('migrations safely upgrade legacy data without resetting it', async () => {
   const schema = `migration_${randomUUID().replaceAll('-', '')}`;
   const migrationDirectories = [
@@ -169,7 +291,11 @@ void test('migrations safely upgrade legacy data without resetting it', async ()
        VALUES ($1,$2,$3,'leave_accepted',$4::jsonb)`,
       [legacyNotificationId, legacyVendorId, userId, JSON.stringify({ leaveRequestId: legacyLeaveRequestId })],
     );
+    await client.query('COMMIT');
+    await client.query(`SET search_path TO "${schema}"`);
     await client.query(migrations[22]);
+    await client.query('BEGIN');
+    await client.query(`SET LOCAL search_path TO "${schema}"`);
 
     const session = await client.query<{
       authentication_method: string;
@@ -306,6 +432,8 @@ void test('migrations safely upgrade legacy data without resetting it', async ()
     }
   } finally {
     await client.query('ROLLBACK');
+    await client.query('RESET search_path');
+    await client.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);
     client.release();
   }
 });
