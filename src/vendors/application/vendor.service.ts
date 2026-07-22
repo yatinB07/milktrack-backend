@@ -58,6 +58,7 @@ export type VendorResult = Readonly<{
 
 export abstract class VendorService {
   abstract getDeliveryPolicy(actor: Actor, vendorId: string): Promise<DeliveryPolicy>;
+  abstract getDeliveryPolicyForTransaction(tx: TransactionContext, vendorId: string): Promise<DeliveryPolicy>;
   abstract updateDeliveryPolicy(actor: Actor, vendorId: string, command: UpdateDeliveryPolicyCommand): Promise<DeliveryPolicy>;
   abstract getSubscriptionTimezone(tx: TransactionContext, vendorId: string): Promise<Readonly<{ timezone: string }>>;
   abstract getPricingSettings(tx: TransactionContext, vendorId: string): Promise<Readonly<{ timezone: string; currency: string }>>;
@@ -101,6 +102,10 @@ export class PrismaVendorService extends VendorService {
 
   getSubscriptionTimezone(tx: TransactionContext, vendorId: string) {
     return this.vendors.getSubscriptionTimezone(tx, vendorId);
+  }
+
+  getDeliveryPolicyForTransaction(tx: TransactionContext, vendorId: string) {
+    return this.vendors.getDeliveryPolicy(tx, vendorId);
   }
 
   getDeliveryPolicy(actor: Actor, vendorId: string): Promise<DeliveryPolicy> {

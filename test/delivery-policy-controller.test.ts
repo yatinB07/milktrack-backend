@@ -92,6 +92,16 @@ void test('delivery policy update uses expected version and audits safe values',
   });
 });
 
+void test('transaction-bound policy read delegates without a second authorization transaction', async () => {
+  const transaction = {} as TransactionContext;
+  const service = new PrismaVendorService(
+    {} as never, {} as never, {} as never,
+    { getDeliveryPolicy: (current: TransactionContext, currentVendorId: string) => { assert.equal(current, transaction); assert.equal(currentVendorId, vendorId); return Promise.resolve(policy); } } as never,
+    {} as never, {} as never,
+  );
+  assert.deepEqual(await service.getDeliveryPolicyForTransaction(transaction, vendorId), policy);
+});
+
 void test('delivery policy audit uses the exact state locked by the update', async () => {
   const tx = {} as TransactionContext;
   const events: Parameters<AuditWriter['append']>[1][] = [];
