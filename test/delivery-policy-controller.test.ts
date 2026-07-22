@@ -102,6 +102,32 @@ void test('transaction-bound policy read delegates without a second authorizatio
   assert.deepEqual(await service.getDeliveryPolicyForTransaction(transaction, vendorId), policy);
 });
 
+void test('delivery policy read uses its Phase 3 authorization operation', async () => {
+  let authorizationInput: unknown;
+  const transaction = {} as TransactionContext;
+  const service = new PrismaVendorService(
+    {} as never,
+    {} as never,
+    {
+      execute: (input: unknown, operation: (current: TransactionContext) => Promise<unknown>) => {
+        authorizationInput = input;
+        return operation(transaction);
+      },
+    } as never,
+    { getDeliveryPolicy: () => Promise.resolve(policy) } as never,
+    {} as never,
+    {} as never,
+  );
+
+  assert.deepEqual(await service.getDeliveryPolicy(actor, vendorId), policy);
+  assert.deepEqual(authorizationInput, {
+    actor,
+    vendorId,
+    permission: 'vendor:profile:read',
+    operation: 'vendor.delivery-policy.read',
+  });
+});
+
 void test('delivery policy audit uses the exact state locked by the update', async () => {
   const tx = {} as TransactionContext;
   const events: Parameters<AuditWriter['append']>[1][] = [];

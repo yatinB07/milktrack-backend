@@ -86,6 +86,7 @@ const vendorPermissions: Readonly<Record<VendorRole, ReadonlySet<VendorPermissio
 
 const activeVendorOperations: Readonly<Record<string, VendorPermission>> = {
   'vendor.profile.read': 'vendor:profile:read',
+  'vendor.delivery-policy.read': 'vendor:profile:read',
   'membership.list': 'membership:read',
   'membership.get': 'membership:read',
   'membership.deleted-list': 'membership:manage',
@@ -192,6 +193,36 @@ const activeVendorOperations: Readonly<Record<string, VendorPermission>> = {
   'delivery.self-get': 'customer:self',
 };
 
+// Support grants do not expand automatically when the vendor API gains operations.
+const supportOperations: Readonly<Record<string, VendorPermission>> = {
+  'vendor.profile.read': 'vendor:profile:read',
+  'membership.list': 'membership:read',
+  'membership.get': 'membership:read',
+  'audit.list': 'audit:read',
+  'household.list': 'household:read',
+  'household.get': 'household:read',
+  'household.member-list': 'household:read',
+  'catalog.unit-list': 'catalog:read',
+  'catalog.unit-get': 'catalog:read',
+  'catalog.product-list': 'catalog:read',
+  'catalog.product-get': 'catalog:read',
+  'catalog.delivery-slot-list': 'catalog:read',
+  'catalog.delivery-slot-get': 'catalog:read',
+  'pricing.global-list': 'pricing:read',
+  'pricing.global-get': 'pricing:read',
+  'pricing.override-list': 'pricing:read',
+  'pricing.override-get': 'pricing:read',
+  'pricing.resolve': 'pricing:read',
+  'subscription.list': 'subscription:read',
+  'subscription.get': 'subscription:read',
+  'subscription.history': 'subscription:read',
+  'route.list': 'route:read',
+  'route.get': 'route:read',
+  'route.stops-list': 'route:read',
+  'route.assignments-list': 'route:read',
+  'schedule.run-list': 'schedule:read',
+};
+
 export const hasPlatformPermission = (
   role: PlatformRole,
   permission: PlatformPermission,
@@ -229,6 +260,13 @@ export function requireVendorOperation(
   permission: VendorPermission,
 ): void {
   if (activeVendorOperations[operation] !== permission) forbid();
+}
+
+export function requireSupportOperation(
+  operation: string,
+  permission: VendorPermission,
+): void {
+  if (supportOperations[operation] !== permission) forbid();
 }
 
 export abstract class AuthorizationPolicy {

@@ -7,6 +7,7 @@ import type {
 } from '../src/authorization/application/authorization.policy.js';
 import {
   requirePlatformPermission,
+  requireSupportOperation,
   requireVendorOperation,
   requireVendorPermission,
 } from '../src/authorization/application/authorization.policy.js';
@@ -268,6 +269,65 @@ void test('schedule run operations map only to explicit read and manage permissi
   assert.doesNotThrow(() => requireVendorPermission('vendor_administrator', 'schedule:read'));
   assert.throws(() => requireVendorPermission('delivery_agent', 'schedule:read'), forbidden);
   assert.throws(() => requireVendorPermission('customer', 'schedule:manage'), forbidden);
+});
+
+void test('support fallback allows only reviewed pre-Phase-3 read operations', () => {
+  for (const [operation, permission] of [
+    ['vendor.profile.read', 'vendor:profile:read'],
+    ['membership.list', 'membership:read'],
+    ['membership.get', 'membership:read'],
+    ['audit.list', 'audit:read'],
+    ['household.list', 'household:read'],
+    ['household.get', 'household:read'],
+    ['household.member-list', 'household:read'],
+    ['catalog.unit-list', 'catalog:read'],
+    ['catalog.unit-get', 'catalog:read'],
+    ['catalog.product-list', 'catalog:read'],
+    ['catalog.product-get', 'catalog:read'],
+    ['catalog.delivery-slot-list', 'catalog:read'],
+    ['catalog.delivery-slot-get', 'catalog:read'],
+    ['pricing.global-list', 'pricing:read'],
+    ['pricing.global-get', 'pricing:read'],
+    ['pricing.override-list', 'pricing:read'],
+    ['pricing.override-get', 'pricing:read'],
+    ['pricing.resolve', 'pricing:read'],
+    ['subscription.list', 'subscription:read'],
+    ['subscription.get', 'subscription:read'],
+    ['subscription.history', 'subscription:read'],
+    ['route.list', 'route:read'],
+    ['route.get', 'route:read'],
+    ['route.stops-list', 'route:read'],
+    ['route.assignments-list', 'route:read'],
+    ['schedule.run-list', 'schedule:read'],
+  ] as const) {
+    assert.doesNotThrow(() => requireSupportOperation(operation, permission));
+  }
+
+  for (const [operation, permission] of [
+    ['vendor.delivery-policy.read', 'vendor:profile:read'],
+    ['vendor.delivery-policy.update', 'schedule:manage'],
+    ['leave.decision-list', 'schedule:read'],
+    ['leave.vendor-get', 'schedule:read'],
+    ['leave.decision', 'schedule:manage'],
+    ['leave.preview', 'customer:self'],
+    ['leave.create', 'customer:self'],
+    ['leave.list', 'customer:self'],
+    ['leave.get', 'customer:self'],
+    ['leave.amend', 'customer:self'],
+    ['leave.cancel', 'customer:self'],
+    ['notification.self-list', 'customer:self'],
+    ['delivery.list', 'schedule:read'],
+    ['delivery.get', 'schedule:read'],
+    ['delivery.correct', 'schedule:manage'],
+    ['delivery.stop-outcome', 'delivery:record'],
+    ['delivery.self-list', 'customer:self'],
+    ['delivery.self-get', 'customer:self'],
+  ] as const) {
+    assert.throws(
+      () => requireSupportOperation(operation, permission),
+      forbidden,
+    );
+  }
 });
 
 void test('catalog vendor operations accept onboarding, trial, and active vendors', async () => {

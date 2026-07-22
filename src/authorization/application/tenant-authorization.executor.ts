@@ -9,7 +9,7 @@ import {
 import { ApplicationError } from '../../common/errors/application.error.js';
 import {
   AuthorizationPolicy,
-  requireVendorOperation,
+  requireSupportOperation,
   type VendorPermission,
 } from './authorization.policy.js';
 import { PrismaSecurityDenialRecorder } from '../infrastructure/security-denial.recorder.js';
@@ -63,7 +63,7 @@ export class PrismaTenantAuthorizationExecutor extends TenantAuthorizationExecut
           ) {
             throw error;
           }
-          requireVendorOperation(input.operation, input.permission);
+          requireSupportOperation(input.operation, input.permission);
           await this.policy.requireSupport(
             tx,
             input.actor,

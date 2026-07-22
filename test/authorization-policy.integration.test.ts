@@ -680,6 +680,88 @@ void test('executor permits exact route reads to scoped support and denies route
   } finally { await prisma.$disconnect(); await cleanup({ vendorIds: [vendorId], userIds }); }
 });
 
+void test('support fallback excludes Phase 3 reads while normal vendor authorization stays first', async () => {
+  const vendorId = randomUUID();
+  const supportUserId = randomUUID();
+  const memberUserId = randomUUID();
+  const prisma = new PrismaService();
+  const executor = new PrismaTenantAuthorizationExecutor(
+    new PrismaTenantTransactionRunner(prisma),
+    new PrismaAuthorizationPolicy(new PrismaAuditWriter()),
+    new PrismaSecurityDenialRecorder(prisma),
+  );
+  await Promise.all([insertUser(supportUserId), insertUser(memberUserId)]);
+  await insertVendor(vendorId);
+  await insertGrant({
+    vendorId,
+    userId: supportUserId,
+    scope: ['schedule:read', 'vendor:profile:read'],
+  });
+  await insertMembership({ vendorId, userId: memberUserId, role: 'vendor_owner' });
+
+  const execute = (
+    currentActor: Actor,
+    permission: 'schedule:read' | 'vendor:profile:read',
+    operation: string,
+  ) => requestContextStore.run(
+    { correlationId: randomUUID(), actor: currentActor },
+    () => executor.execute(
+      { actor: currentActor, vendorId, permission, operation },
+      () => Promise.resolve(operation),
+    ),
+  );
+
+  try {
+    const support = actor(supportUserId, ['support_operations']);
+    assert.equal(
+      await execute(support, 'schedule:read', 'schedule.run-list'),
+      'schedule.run-list',
+    );
+    for (const [operation, permission] of [
+      ['vendor.delivery-policy.read', 'vendor:profile:read'],
+      ['leave.decision-list', 'schedule:read'],
+      ['leave.vendor-get', 'schedule:read'],
+      ['delivery.list', 'schedule:read'],
+      ['delivery.get', 'schedule:read'],
+    ] as const) {
+      await assert.rejects(execute(support, permission, operation), forbidden);
+    }
+
+    const member = actor(memberUserId, ['support_operations']);
+    assert.equal(
+      await execute(member, 'schedule:read', 'delivery.list'),
+      'delivery.list',
+    );
+
+    const denials = await ownerPool.query<{ operation: string }>(
+      `SELECT new_value->>'operation' AS operation
+       FROM audit_events
+       WHERE actor_user_id = $1 AND action = 'security.tenant_access_denied'
+       ORDER BY created_at, id`,
+      [supportUserId],
+    );
+    assert.deepEqual(
+      denials.rows.map(({ operation }) => operation).sort(),
+      [
+        'vendor.delivery-policy.read',
+        'leave.decision-list',
+        'leave.vendor-get',
+        'delivery.list',
+        'delivery.get',
+      ].sort(),
+    );
+    const memberSupportAudits = await ownerPool.query<{ count: string }>(
+      `SELECT count(*) FROM audit_events
+       WHERE actor_user_id = $1 AND action = 'support.accessed'`,
+      [memberUserId],
+    );
+    assert.equal(memberSupportAudits.rows[0]?.count, '0');
+  } finally {
+    await prisma.$disconnect();
+    await cleanup({ vendorIds: [vendorId], userIds: [supportUserId, memberUserId] });
+  }
+});
+
 void test('every tenant denial rolls back and leaves exactly one minimal global denial audit', async () => {
   const vendorIds = [randomUUID(), randomUUID(), randomUUID(), randomUUID()];
   const missingVendorId = randomUUID();

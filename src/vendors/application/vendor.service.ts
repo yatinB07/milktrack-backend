@@ -109,7 +109,7 @@ export class PrismaVendorService extends VendorService {
   }
 
   getDeliveryPolicy(actor: Actor, vendorId: string): Promise<DeliveryPolicy> {
-    return this.tenantAuthorization.execute({ actor, vendorId, permission: 'vendor:profile:read', operation: 'vendor.profile.read' }, (tx) => this.vendors.getDeliveryPolicy(tx, vendorId));
+    return this.tenantAuthorization.execute({ actor, vendorId, permission: 'vendor:profile:read', operation: 'vendor.delivery-policy.read' }, (tx) => this.vendors.getDeliveryPolicy(tx, vendorId));
   }
 
   updateDeliveryPolicy(actor: Actor, vendorId: string, command: UpdateDeliveryPolicyCommand): Promise<DeliveryPolicy> {
