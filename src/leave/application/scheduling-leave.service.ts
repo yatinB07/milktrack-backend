@@ -25,9 +25,13 @@ export class DefaultSchedulingLeaveService extends SchedulingLeaveService {
     candidates: readonly Readonly<{ subscriptionId: string; deliverySlotId: string }>[],
   ) {
     const unique = new Map(candidates.map((candidate) => [key(candidate), candidate]));
-    const effective = await Promise.all([...unique].map(async ([occurrence, candidate]) =>
-      [occurrence, await this.leaves.isEffectivelyOnLeave(tx, { vendorId, serviceDate, ...candidate })] as const));
-    return new Set(effective.filter(([, applies]) => applies).map(([occurrence]) => occurrence));
+    if (unique.size === 0) return new Set<string>();
+    const effective = await this.leaves.effectiveOccurrenceKeys(tx, {
+      vendorId,
+      candidates: [...unique.values()].map((candidate) => ({ ...candidate, serviceDate })),
+    });
+    return new Set([...unique].filter(([, candidate]) =>
+      effective.has(`${serviceDate}:${key(candidate)}`)).map(([occurrence]) => occurrence));
   }
 }
 

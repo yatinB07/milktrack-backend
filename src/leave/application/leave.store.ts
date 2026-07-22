@@ -18,6 +18,7 @@ export type LeaveRequestRecord = Readonly<{
   version: number; createdAt: Date; updatedAt: Date; revisions: readonly LeaveRevisionRecord[];
 }>;
 export type LeaveOccurrenceKey = Readonly<{ vendorId: string; subscriptionId: string; deliverySlotId: string; serviceDate: string }>;
+export type LeaveOccurrenceCandidate = Readonly<{ subscriptionId: string; deliverySlotId: string; serviceDate: string }>;
 export type LeavePreviewInput = Readonly<{
   vendorId: string; householdId: string; subscriptionIds: readonly string[]; startDate: string; endDate: string;
   timezone: string; skipCutoffMinutes: number; lateLeavePolicy: LateLeavePolicy; now: Date; cursor?: string; limit?: number;
@@ -57,5 +58,9 @@ export abstract class LeaveStore {
   abstract listRequests(tx: TransactionContext, input: LeaveListInput): Promise<LeaveRequestPage>;
   abstract listPendingDecisions(tx: TransactionContext, input: LeaveDecisionListInput): Promise<LeaveDecisionPage>;
   abstract decide(tx: TransactionContext, input: DecideLeaveOccurrence): Promise<LeaveDecisionResult>;
+  abstract effectiveOccurrenceKeys(tx: TransactionContext, input: Readonly<{
+    vendorId: string;
+    candidates: readonly LeaveOccurrenceCandidate[];
+  }>): Promise<ReadonlySet<string>>;
   abstract isEffectivelyOnLeave(tx: TransactionContext, input: LeaveOccurrenceKey): Promise<boolean>;
 }

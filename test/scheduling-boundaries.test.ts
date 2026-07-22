@@ -5,7 +5,8 @@ import test from 'node:test';
 import { requireVendorOperation, requireVendorPermission } from '../src/authorization/application/authorization.policy.js';
 import type { TransactionContext } from '../src/common/application/transaction-context.js';
 import { ApplicationError } from '../src/common/errors/application.error.js';
-import { SchedulingLeaveService } from '../src/leave/application/scheduling-leave.service.js';
+import { LeaveStore } from '../src/leave/application/leave.store.js';
+import { DefaultSchedulingLeaveService, SchedulingLeaveService } from '../src/leave/application/scheduling-leave.service.js';
 import { ScheduleDateLock } from '../src/schedule-coordination/application/schedule-date-lock.js';
 import { SchedulingPriceService } from '../src/pricing/application/scheduling-price.service.js';
 import { RoutingScheduleService } from '../src/routing/application/routing-schedule.service.js';
@@ -48,6 +49,33 @@ void test('schedule generation resolves effective leave before reconciling targe
   assert.deepEqual(calls, ['lock', 'leave:1', 'reconcile:subscription:slot']);
 });
 
+void test('scheduling leave resolution collapses duplicates, short-circuits empty input, and batches once', async () => {
+  const tx = {} as TransactionContext;
+  const calls: unknown[] = [];
+  const store = {
+    effectiveOccurrenceKeys: (_tx: TransactionContext, input: unknown) => {
+      calls.push(input);
+      return Promise.resolve(new Set(['2030-01-01:subscription:slot']));
+    },
+  } as unknown as LeaveStore;
+  const leave = new DefaultSchedulingLeaveService(store);
+
+  assert.deepEqual(await leave.effectiveOccurrences(tx, 'vendor', '2030-01-01', []), new Set());
+  assert.equal(calls.length, 0);
+  assert.deepEqual(await leave.effectiveOccurrences(tx, 'vendor', '2030-01-01', [
+    { subscriptionId: 'subscription', deliverySlotId: 'slot' },
+    { subscriptionId: 'subscription', deliverySlotId: 'slot' },
+    { subscriptionId: 'other', deliverySlotId: 'slot' },
+  ]), new Set(['subscription:slot']));
+  assert.deepEqual(calls, [{
+    vendorId: 'vendor',
+    candidates: [
+      { subscriptionId: 'subscription', deliverySlotId: 'slot', serviceDate: '2030-01-01' },
+      { subscriptionId: 'other', deliverySlotId: 'slot', serviceDate: '2030-01-01' },
+    ],
+  }]);
+});
+
 void test('leave and delivery-policy operations use only existing reviewed permissions', () => {
   for (const operation of ['leave.preview', 'leave.create', 'leave.list', 'leave.get', 'leave.amend', 'leave.cancel', 'notification.self-list']) {
     assert.doesNotThrow(() => requireVendorOperation(operation, 'customer:self'));
@@ -78,14 +106,18 @@ void test('leave and delivery-policy operations use only existing reviewed permi
 });
 
 void test('schedule generation composes leave without forwardRef or a module cycle', async () => {
-  const [generation, scheduling, leave] = await Promise.all([
+  const [generation, scheduling, leave, leaveScheduling, worker] = await Promise.all([
     readFile(new URL('../src/scheduling/schedule-generation.module.ts', import.meta.url), 'utf8'),
     readFile(new URL('../src/scheduling/scheduling.module.ts', import.meta.url), 'utf8'),
     readFile(new URL('../src/leave/leave.module.ts', import.meta.url), 'utf8'),
+    readFile(new URL('../src/leave/leave-scheduling.module.ts', import.meta.url), 'utf8'),
+    readFile(new URL('../src/schedule-worker.module.ts', import.meta.url), 'utf8'),
   ]);
-  assert.match(generation, /SchedulingLeaveService/u);
+  assert.match(generation, /LeaveSchedulingModule/u);
+  assert.doesNotMatch(generation, /leave\/infrastructure/u);
   assert.doesNotMatch(generation, /LeaveModule/u);
   assert.match(scheduling, /LeaveModule/u);
-  assert.doesNotMatch(generation + scheduling + leave, /forwardRef/u);
+  assert.doesNotMatch(generation + scheduling + leave + leaveScheduling + worker, /forwardRef/u);
   assert.doesNotMatch(leave, /ScheduleGenerationModule/u);
+  assert.doesNotMatch(leaveScheduling + worker, /IdentityModule|Controller/u);
 });

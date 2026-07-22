@@ -199,20 +199,42 @@ export class PrismaLeaveStore extends LeaveStore {
   }
 
   async isEffectivelyOnLeave(context: TransactionContext, input: LeaveOccurrenceKey): Promise<boolean> {
-    const rows = await unwrapPrismaTransaction(context).$queryRaw<Array<{ action: string; status: string; selected: boolean; decisionStatus: string | null; requestedStatus: string | null; previousStatus: string | null }>>(Prisma.sql`
-      SELECT r.action,q.status,s.selected,d.status AS "decisionStatus",d.requested_effective_status AS "requestedStatus",d.previous_effective_status AS "previousStatus"
-      FROM leave_requests q JOIN leave_request_revisions r ON r.vendor_id=q.vendor_id AND r.id=q.current_revision_id
-      JOIN leave_revision_subscriptions s ON s.vendor_id=r.vendor_id AND s.leave_request_revision_id=r.id
-      LEFT JOIN leave_occurrence_decisions d ON d.vendor_id=r.vendor_id AND d.leave_request_revision_id=r.id AND d.subscription_id=s.subscription_id
-        AND d.service_date=${input.serviceDate}::date AND d.delivery_slot_id=${input.deliverySlotId}::uuid
-      WHERE q.vendor_id=${input.vendorId}::uuid AND s.subscription_id=${input.subscriptionId}::uuid
-        AND r.start_date<=${input.serviceDate}::date AND r.end_date>=${input.serviceDate}::date
-      ORDER BY r.created_at DESC,r.id DESC LIMIT 1`);
-    const row = rows[0];
-    if (!row || row.status === 'cancelled') return false;
-    if (row.decisionStatus === 'approved') return row.requestedStatus === 'skipped_by_customer';
-    if (row.decisionStatus === 'pending' || row.decisionStatus === 'rejected') return row.previousStatus === 'skipped_by_customer';
-    return row.selected && row.action !== 'cancel' && (row.status === 'accepted' || row.status === 'partially_pending');
+    return (await this.effectiveOccurrenceKeys(context, {
+      vendorId: input.vendorId,
+      candidates: [{ subscriptionId: input.subscriptionId, deliverySlotId: input.deliverySlotId, serviceDate: input.serviceDate }],
+    })).has(occurrenceKey(input));
+  }
+
+  async effectiveOccurrenceKeys(context: TransactionContext, input: Readonly<{
+    vendorId: string;
+    candidates: readonly Readonly<{ subscriptionId: string; deliverySlotId: string; serviceDate: string }>[];
+  }>): Promise<ReadonlySet<string>> {
+    if (input.candidates.length === 0) return new Set();
+    const rows = await unwrapPrismaTransaction(context).$queryRaw<Array<{ key: string }>>(Prisma.sql`
+      WITH candidates AS (
+        SELECT DISTINCT c."subscriptionId",c."deliverySlotId",c."serviceDate"
+        FROM jsonb_to_recordset(${JSON.stringify(input.candidates)}::jsonb)
+          AS c("subscriptionId" uuid,"deliverySlotId" uuid,"serviceDate" date)
+      ), ranked AS (
+        SELECT c."subscriptionId",c."deliverySlotId",c."serviceDate",r.action,q.status,s.selected,
+          d.status AS "decisionStatus",d.requested_effective_status AS "requestedStatus",d.previous_effective_status AS "previousStatus",
+          row_number() OVER (PARTITION BY c."serviceDate",c."subscriptionId",c."deliverySlotId" ORDER BY r.created_at DESC,r.id DESC) AS precedence
+        FROM candidates c
+        JOIN leave_revision_subscriptions s ON s.vendor_id=${input.vendorId}::uuid AND s.subscription_id=c."subscriptionId"
+        JOIN leave_request_revisions r ON r.vendor_id=s.vendor_id AND r.id=s.leave_request_revision_id
+          AND r.start_date<=c."serviceDate" AND r.end_date>=c."serviceDate"
+        JOIN leave_requests q ON q.vendor_id=r.vendor_id AND q.id=r.leave_request_id AND q.current_revision_id=r.id
+        LEFT JOIN leave_occurrence_decisions d ON d.vendor_id=r.vendor_id AND d.leave_request_revision_id=r.id
+          AND d.subscription_id=c."subscriptionId" AND d.service_date=c."serviceDate" AND d.delivery_slot_id=c."deliverySlotId"
+      )
+      SELECT "serviceDate"::text || ':' || "subscriptionId"::text || ':' || "deliverySlotId"::text AS key
+      FROM ranked
+      WHERE precedence=1 AND (
+        ("decisionStatus"='approved' AND "requestedStatus"='skipped_by_customer')
+        OR ("decisionStatus" IN ('pending','rejected') AND "previousStatus"='skipped_by_customer')
+        OR ("decisionStatus" IS NULL AND selected AND action<>'cancel' AND status IN ('accepted','partially_pending'))
+      )`);
+    return new Set(rows.map(({ key }) => key));
   }
 
   private async requireApplicableSelection(context: TransactionContext, input: Readonly<{
@@ -290,6 +312,9 @@ export class PrismaLeaveStore extends LeaveStore {
       serviceDate: dateString(row.serviceDate), deliverySlotId: row.deliverySlotId, status: row.status as LeaveDecisionRecord['status'], version: row.version, createdAt: row.createdAt };
   }
 }
+
+const occurrenceKey = (input: Readonly<{ serviceDate: string; subscriptionId: string; deliverySlotId: string }>) =>
+  `${input.serviceDate}:${input.subscriptionId}:${input.deliverySlotId}`;
 
 function dateAfter(value: string) { const result = date(value); result.setUTCDate(result.getUTCDate() + 1); return dateString(result); }
 function dateBefore(value: string) { const result = new Date(`${value}T00:00:00.000Z`); result.setUTCDate(result.getUTCDate() - 1); return dateString(result); }

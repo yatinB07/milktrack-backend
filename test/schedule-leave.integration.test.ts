@@ -80,6 +80,54 @@ function target(value: Fixture) {
   };
 }
 
+async function addTarget(value: Fixture) {
+  const subscriptionId = randomUUID();
+  const revisionId = randomUUID();
+  const client = await owner.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query('INSERT INTO subscriptions(id,vendor_id,household_id,updated_at) VALUES($1,$2,$3,now())', [subscriptionId, value.vendorId, value.householdId]);
+    await client.query(`INSERT INTO subscription_revisions(id,vendor_id,subscription_id,product_id,unit_id,delivery_slot_id,quantity,status,effective_from,created_by,updated_at)
+      VALUES($1,$2,$3,$4,$5,$6,1,'active','2029-01-01',$7,now())`, [revisionId, value.vendorId, subscriptionId, value.productId, value.unitId, value.slotId, value.userId]);
+    await client.query('INSERT INTO subscription_revision_weekdays(vendor_id,subscription_revision_id,weekday) VALUES($1,$2,2)', [value.vendorId, revisionId]);
+    await client.query('COMMIT');
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+  return { ...target(value), subscriptionId, revisionId };
+}
+
+async function createBatchLeave(
+  value: Fixture,
+  candidate: ReturnType<typeof target>,
+  input: Readonly<{
+    status: 'accepted' | 'pending_approval' | 'partially_pending' | 'cancelled';
+    selected?: boolean;
+    decision?: 'pending' | 'rejected' | 'approved';
+  }>,
+) {
+  const requestId = randomUUID();
+  const revisionId = randomUUID();
+  const request = await transactions.run(value.vendorId, (tx) => leaves.createRevision(tx, {
+    vendorId: value.vendorId, householdId: value.householdId, requestId, revisionId,
+    action: input.status === 'cancelled' ? 'cancel' : 'create', source: 'customer', createdBy: value.userId,
+    startDate: '2030-01-01', endDate: '2030-01-01',
+    subscriptions: [{ subscriptionId: candidate.subscriptionId, selected: input.selected ?? true }], status: input.status,
+    decisions: input.decision ? [{
+      id: randomUUID(), subscriptionId: candidate.subscriptionId, serviceDate: '2030-01-01', deliverySlotId: candidate.deliverySlotId,
+      status: input.decision === 'rejected' ? 'rejected' : 'pending',
+      previousEffectiveStatus: 'scheduled', requestedEffectiveStatus: 'skipped_by_customer',
+    }] : [],
+  }));
+  if (input.decision === 'approved') {
+    await owner.query("UPDATE leave_occurrence_decisions SET status='approved',decided_by=$2,decided_at=now(),decision_reason='approved' WHERE vendor_id=$1 AND leave_request_revision_id=$3", [value.vendorId, value.userId, revisionId]);
+  }
+  return { requestId, revisionId, version: request.version };
+}
+
 async function createLeave(value: Fixture, status: 'accepted' | 'pending_approval' | 'rejected') {
   await transactions.run(value.vendorId, (tx) => leaves.createRevision(tx, {
     vendorId: value.vendorId, householdId: value.householdId, requestId: randomUUID(), revisionId: randomUUID(),
@@ -139,5 +187,49 @@ void test('regeneration applies accepted leave to an existing eligible row and p
     assert.equal(status.get(values[1].vendorId), 'delivered');
   } finally {
     await Promise.all(values.map(cleanup));
+  }
+});
+
+void test('batch resolution honors current decisions, selected baseline, current revision, and tenant scope', async () => {
+  const value = await fixture('batch');
+  const foreign = await fixture('batch-foreign');
+  try {
+    const accepted = target(value);
+    const pending = await addTarget(value);
+    const rejected = await addTarget(value);
+    const approved = await addTarget(value);
+    const cancelled = await addTarget(value);
+    const decisionOverBaseline = await addTarget(value);
+    const currentRevision = await addTarget(value);
+
+    await createBatchLeave(value, accepted, { status: 'accepted' });
+    await createBatchLeave(value, pending, { status: 'pending_approval', decision: 'pending' });
+    await createBatchLeave(value, rejected, { status: 'accepted', decision: 'rejected' });
+    await createBatchLeave(value, approved, { status: 'partially_pending', decision: 'approved' });
+    await createBatchLeave(value, cancelled, { status: 'cancelled' });
+    await createBatchLeave(value, decisionOverBaseline, { status: 'partially_pending', selected: false, decision: 'approved' });
+    const old = await createBatchLeave(value, currentRevision, { status: 'accepted' });
+    await transactions.run(value.vendorId, (tx) => leaves.createRevision(tx, {
+      vendorId: value.vendorId, householdId: value.householdId, requestId: old.requestId, revisionId: randomUUID(),
+      previousRevisionId: old.revisionId, expectedVersion: old.version, action: 'amend', source: 'customer', createdBy: value.userId,
+      startDate: '2030-01-01', endDate: '2030-01-01', subscriptions: [{ subscriptionId: currentRevision.subscriptionId, selected: false }],
+      status: 'accepted', decisions: [],
+    }));
+
+    const candidates = [accepted, pending, rejected, approved, cancelled, decisionOverBaseline, currentRevision, target(foreign)];
+    const effective = await transactions.run(value.vendorId, (tx) => schedulingLeave.effectiveOccurrences(
+      tx,
+      value.vendorId,
+      '2030-01-01',
+      candidates,
+    ));
+
+    assert.deepEqual(effective, new Set([
+      `${accepted.subscriptionId}:${accepted.deliverySlotId}`,
+      `${approved.subscriptionId}:${approved.deliverySlotId}`,
+      `${decisionOverBaseline.subscriptionId}:${decisionOverBaseline.deliverySlotId}`,
+    ]));
+  } finally {
+    await Promise.all([cleanup(value), cleanup(foreign)]);
   }
 });

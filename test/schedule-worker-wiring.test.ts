@@ -4,6 +4,7 @@ import test from 'node:test';
 import { NestFactory } from '@nestjs/core';
 
 import { AppModule } from '../src/app.module.js';
+import { SchedulingLeaveService } from '../src/leave/application/scheduling-leave.service.js';
 import { ScheduleWorkerModule } from '../src/schedule-worker.module.js';
 import { DefaultScheduleWorker } from '../src/scheduling/application/default-schedule-worker.js';
 import {
@@ -70,6 +71,7 @@ void test('application context resolves the worker graph with parsed options and
         shutdownTimeoutMs: 45_000,
       });
       assert(app.get(SchedulingVendorService) instanceof PrismaSchedulingVendorService);
+      assert(app.get(SchedulingLeaveService));
       assert.equal('listen' in app, false);
     } finally {
       await app.close();
