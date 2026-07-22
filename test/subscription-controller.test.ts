@@ -4,6 +4,7 @@ import test from 'node:test';
 import type { Actor } from '../src/common/context/request-context.js';
 import { requestContextStore } from '../src/common/context/request-context.js';
 import { CustomerSubscriptionController, VendorSubscriptionController } from '../src/subscriptions/http/subscription.controller.js';
+import { CustomerSubscriptionResponseDto, CustomerSubscriptionRevisionResponseDto } from '../src/subscriptions/http/subscription.dto.js';
 
 const actor: Actor = {
   userId: '00000000-0000-4000-8000-000000000001', sessionId: '00000000-0000-4000-8000-000000000002',
@@ -80,4 +81,40 @@ void test('customer controller returns household-bound safe revision history', a
   assert.equal('householdNotes' in response.items[0], false);
   assert.equal('sourcePriceId' in response.items[0], false);
   assert.deepEqual(args.slice(1, 4), [revision.vendorId, result.householdId, revision.subscriptionId]);
+});
+
+void test('customer list and detail map current revision through the safe enriched DTO', async () => {
+  const unsafeCurrentRevision = { ...revision, customerPhone: '+919999999999', householdNotes: 'private', sourcePriceId: 'private' };
+  const customerResult = { ...result, currentRevision: unsafeCurrentRevision };
+  const service = {
+    listCustomer: () => Promise.resolve({ items: [customerResult] }),
+    getCustomer: () => Promise.resolve(customerResult),
+  };
+  const controller = new CustomerSubscriptionController(service as never);
+
+  await requestContextStore.run({ correlationId: '00000000-0000-4000-8000-000000000003', actor }, async () => {
+    const list = await controller.list(revision.vendorId, result.householdId, {});
+    const detail = await controller.get(revision.vendorId, result.householdId, revision.subscriptionId, {});
+    for (const response of [list.items[0], detail]) {
+      assert.equal(response.currentRevision?.productName, 'Full cream milk');
+      assert.equal(response.currentRevision?.startDate, '2030-01-01');
+      assert.equal(response.currentRevision?.endDate, '2030-01-31');
+      assert.equal('createdBy' in (response.currentRevision ?? {}), false);
+      assert.equal('supersessionReason' in (response.currentRevision ?? {}), false);
+      assert.equal('customerPhone' in (response.currentRevision ?? {}), false);
+      assert.equal('householdNotes' in (response.currentRevision ?? {}), false);
+      assert.equal('sourcePriceId' in (response.currentRevision ?? {}), false);
+    }
+  });
+});
+
+void test('customer current revision is an optional OpenAPI reference to the enriched revision DTO', () => {
+  const metadata = Reflect.getMetadata(
+    'swagger/apiModelProperties',
+    CustomerSubscriptionResponseDto.prototype,
+    'currentRevision',
+  ) as { required?: boolean; type?: () => unknown } | undefined;
+
+  assert.equal(metadata?.required, false);
+  assert.equal(metadata?.type?.(), CustomerSubscriptionRevisionResponseDto);
 });

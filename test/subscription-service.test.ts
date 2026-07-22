@@ -108,6 +108,53 @@ void test('customer list/history stay household-scoped and remove administrative
   assert.deepEqual(listArguments.slice(1), [{ status: 'cancelled', limit: 25, lifecycle: 'current' }, listArguments[2], 'household']);
 });
 
+void test('customer list and detail expose only the unsuperseded revision effective today', async () => {
+  const makeRevision = (
+    id: string,
+    status: 'active' | 'paused' | 'cancelled',
+    effectiveFrom: string,
+    effectiveTo?: string,
+    supersededAt?: Date,
+  ) => ({
+    id, vendorId: 'vendor', subscriptionId: id, productId: 'product', unitId: 'unit', deliverySlotId: 'slot',
+    quantity: '1', weekdays: [1], status, effectiveFrom, ...(effectiveTo ? { effectiveTo } : {}),
+    createdBy: actor.userId, ...(supersededAt ? { supersededAt } : {}), createdAt: new Date(), updatedAt: new Date(),
+  });
+  const aggregate = (id: string, revisions: readonly ReturnType<typeof makeRevision>[]) => ({
+    id, vendorId: 'vendor', householdId: 'household', version: 1, createdAt: new Date(), updatedAt: new Date(), revisions,
+  });
+  const active = aggregate('active', [makeRevision('active-revision', 'active', '0001-01-01')]);
+  const paused = aggregate('paused', [makeRevision('paused-revision', 'paused', '0001-01-01')]);
+  const multiple = aggregate('multiple', [
+    makeRevision('future-revision', 'active', '9999-01-01'),
+    makeRevision('past-revision', 'active', '0001-01-01', '2000-01-01'),
+    makeRevision('current-revision', 'paused', '2000-01-01', '9999-01-01'),
+  ]);
+  const future = aggregate('future', [makeRevision('future-only', 'active', '9999-01-01')]);
+  const completed = aggregate('completed', [makeRevision('completed-only', 'active', '0001-01-01', '2000-01-01')]);
+  const superseded = aggregate('superseded', [
+    makeRevision('superseded-revision', 'active', '0001-01-01', undefined, new Date()),
+    makeRevision('replacement-revision', 'paused', '0001-01-01'),
+  ]);
+  const items = [active, paused, multiple, future, completed, superseded];
+  const store = {
+    list: () => Promise.resolve({ items }),
+    get: () => Promise.resolve(multiple),
+  };
+  const households = { requireCustomerSubscriptionHousehold: () => Promise.resolve({ householdId: 'household' }) };
+  const service = new DefaultSubscriptionService(authorization as never, store as never, {} as never, households as never, vendors as never, audits, scheduleDates, regeneration, routing);
+  const customer = { ...actor, authenticationMethod: 'phone_otp' as const };
+
+  await requestContextStore.run({ correlationId: '00000000-0000-4000-8000-000000000003' }, async () => {
+    const page = await service.listCustomer(customer, 'vendor', 'household', {});
+    assert.deepEqual(page.items.map(({ currentRevision }) => currentRevision?.id), [
+      'active-revision', 'paused-revision', 'current-revision', undefined, undefined, 'replacement-revision',
+    ]);
+    assert.deepEqual(page.items.map(({ status }) => status), ['active', 'paused', 'paused', 'future', 'completed', 'paused']);
+    assert.equal((await service.getCustomer(customer, 'vendor', 'household', 'multiple')).currentRevision?.id, 'current-revision');
+  });
+});
+
 void test('subscription roots pass lifecycle while customer views stay current-only and omit deletion metadata', async () => {
   const calls: unknown[][] = [];
   const aggregate = { id: 'subscription', vendorId: 'vendor', householdId: 'household', version: 2, deletedAt: new Date('2026-07-20T00:00:00Z'), createdAt: new Date(), updatedAt: new Date(), revisions: [] };

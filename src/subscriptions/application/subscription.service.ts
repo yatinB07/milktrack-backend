@@ -48,6 +48,7 @@ export type SubscriptionResult = Omit<SubscriptionAggregateRecord, 'deletedAt' |
 }>;
 export type CustomerSubscriptionResult = Omit<SubscriptionResult, 'deletedAt' | 'deletedBy' | 'deletionReason' | 'lifecycle' | 'revisions'> & Readonly<{
   revisions: readonly CustomerSubscriptionRevision[];
+  currentRevision?: CustomerSubscriptionRevision;
 }>;
 
 export abstract class SubscriptionService {
@@ -248,9 +249,18 @@ export class DefaultSubscriptionService extends SubscriptionService {
   private projectCustomer(value: SubscriptionAggregateRecord, today: string): CustomerSubscriptionResult {
     const { lifecycle, revisions, ...root } = this.project(value, today);
     void lifecycle;
-    return { ...root, revisions: revisions.map(({ createdBy, supersessionReason, ...revision }) => {
+    const toCustomerRevision = ({ createdBy, supersessionReason, ...revision }: typeof revisions[number]) => {
       void createdBy; void supersessionReason; return revision;
-    }) };
+    };
+    const currentRevision = [...revisions]
+      .filter(({ supersededAt }) => !supersededAt)
+      .sort((left, right) => left.effectiveFrom.localeCompare(right.effectiveFrom))
+      .find(({ effectiveFrom, effectiveTo }) => effectiveFrom <= today && (effectiveTo === undefined || today < effectiveTo));
+    return {
+      ...root,
+      revisions: revisions.map(toCustomerRevision),
+      ...(currentRevision ? { currentRevision: toCustomerRevision(currentRevision) } : {}),
+    };
   }
   private async today(tx: TransactionContext, vendorId: string) {
     const { timezone } = await this.vendors.getSubscriptionTimezone(tx, vendorId);

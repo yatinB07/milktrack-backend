@@ -89,6 +89,7 @@ export class SubscriptionResponseDto {
 export class CustomerSubscriptionResponseDto {
   @ApiProperty({ type: String, format: 'uuid' }) id!: string; @ApiProperty({ type: String, format: 'uuid' }) vendorId!: string; @ApiProperty({ type: String, format: 'uuid' }) householdId!: string;
   version!: number; @ApiProperty({ type: String, enum: statuses }) status!: string;
+  @ApiPropertyOptional({ type: () => CustomerSubscriptionRevisionResponseDto }) currentRevision?: CustomerSubscriptionRevisionResponseDto;
   @ApiProperty({ type: () => CustomerSubscriptionRevisionResponseDto, isArray: true }) revisions!: CustomerSubscriptionRevisionResponseDto[];
   @ApiProperty({ type: String, format: 'date-time' }) createdAt!: string; @ApiProperty({ type: String, format: 'date-time' }) updatedAt!: string;
 }
@@ -140,6 +141,7 @@ export function toSubscriptionResponse(value: SubscriptionResult): SubscriptionR
 }
 export function toCustomerSubscriptionResponse(value: CustomerSubscriptionResult): CustomerSubscriptionResponseDto {
   return { id: value.id, vendorId: value.vendorId, householdId: value.householdId, version: value.version, status: value.status,
+    ...(value.currentRevision ? { currentRevision: toCustomerSubscriptionRevisionResponse(value.currentRevision) } : {}),
     revisions: value.revisions.map(toCustomerSubscriptionRevisionResponse), createdAt: value.createdAt.toISOString(), updatedAt: value.updatedAt.toISOString() };
 }
 
