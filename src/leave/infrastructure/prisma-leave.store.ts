@@ -156,14 +156,21 @@ export class PrismaLeaveStore extends LeaveStore {
 
   async decide(context: TransactionContext, input: DecideLeaveOccurrence): Promise<LeaveDecisionResult> {
     const tx = unwrapPrismaTransaction(context);
-    const rows = await tx.$queryRaw<Array<{ id: string; leaveRequestRevisionId: string; version: number; requestId: string; householdId: string; requestStatus: string }>>(Prisma.sql`
-      SELECT d.id,d.leave_request_revision_id AS "leaveRequestRevisionId",d.version,r.leave_request_id AS "requestId",q.household_id AS "householdId",q.status AS "requestStatus"
+    const rows = await tx.$queryRaw<Array<{ id: string; leaveRequestRevisionId: string; subscriptionId: string; serviceDate: Date; deliverySlotId: string; version: number; requestId: string; householdId: string; requestStatus: string }>>(Prisma.sql`
+      SELECT d.id,d.leave_request_revision_id AS "leaveRequestRevisionId",d.subscription_id AS "subscriptionId",d.service_date AS "serviceDate",d.delivery_slot_id AS "deliverySlotId",d.version,r.leave_request_id AS "requestId",q.household_id AS "householdId",q.status AS "requestStatus"
       FROM leave_occurrence_decisions d JOIN leave_request_revisions r ON r.vendor_id=d.vendor_id AND r.id=d.leave_request_revision_id
       JOIN leave_requests q ON q.vendor_id=r.vendor_id AND q.id=r.leave_request_id
       WHERE d.vendor_id=${input.vendorId}::uuid AND d.id=${input.id}::uuid FOR UPDATE OF d`);
     const locked = rows[0];
     if (!locked) throw error('LEAVE_DECISION_NOT_FOUND', 'Leave decision was not found', 404);
     if (locked.version !== input.expectedVersion) throw error('LEAVE_DECISION_VERSION_CONFLICT', 'Leave decision was changed by another request', 409);
+    const deliveries = await tx.$queryRaw<Array<{ id: string; status: string; finalizedAt: Date | null }>>(Prisma.sql`
+      SELECT id,status,finalized_at AS "finalizedAt" FROM scheduled_deliveries
+      WHERE vendor_id=${input.vendorId}::uuid AND subscription_id=${locked.subscriptionId}::uuid
+        AND service_date=${locked.serviceDate}::date AND delivery_slot_id=${locked.deliverySlotId}::uuid
+      FOR UPDATE`);
+    if (deliveries.some(({ status, finalizedAt }) => finalizedAt || ['delivered', 'skipped_by_customer', 'skipped_by_agent', 'missed'].includes(status)))
+      throw error('LEAVE_OCCURRENCE_FINALIZED', 'Leave occurrence already has a final delivery outcome', 409);
     const changed = await tx.leaveOccurrenceDecision.updateMany({ where: { id: input.id, vendorId: input.vendorId, status: 'pending', version: input.expectedVersion }, data: {
       status: input.decision, decidedBy: input.decidedBy, decidedAt: input.now, decisionReason: input.reason, version: { increment: 1 },
     } });

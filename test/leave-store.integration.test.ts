@@ -40,6 +40,7 @@ async function fixture(label: string): Promise<Fixture> {
 }
 
 async function cleanup(value: Fixture) {
+  await owner.query('DELETE FROM scheduled_deliveries WHERE vendor_id=$1', [value.vendorId]);
   await owner.query('UPDATE leave_requests SET current_revision_id=NULL WHERE vendor_id=$1', [value.vendorId]);
   for (const table of ['leave_occurrence_decisions', 'leave_revision_subscriptions', 'leave_request_revisions', 'leave_requests'])
     await owner.query(`DELETE FROM ${table} WHERE vendor_id=$1`, [value.vendorId]);
@@ -169,4 +170,28 @@ void test('late decisions are explicit, versioned, cursor-stable, and tenant-neu
       await rejectsWithCode(() => store.getRequest(tx, other.vendorId, other.householdId, requestId), 'LEAVE_REQUEST_NOT_FOUND');
     });
   } finally { await cleanup(current); await cleanup(other); }
+});
+
+void test('leave decision rejects a finalized matching delivery before mutating the decision', async () => {
+  const current = await fixture('finalized'); const requestId = randomUUID(); const decisionId = randomUUID();
+  try {
+    await transactions.run(current.vendorId, async (tx) => {
+      await store.createRevision(tx, revision(current, {
+        requestId, revisionId: randomUUID(), status: 'pending_approval', decisions: [
+          { id: decisionId, serviceDate: '2030-01-01', deliverySlotId: current.slotId, status: 'pending' },
+        ],
+      }));
+    });
+    await owner.query(`INSERT INTO scheduled_deliveries(
+      id,vendor_id,subscription_id,subscription_revision_id,household_id,product_id,unit_id,delivery_slot_id,
+      service_date,planned_quantity,status,finalized_at,updated_at
+    ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,'2030-01-01',1,'delivered',now(),now())`, [
+      randomUUID(), current.vendorId, current.subscriptionId, current.subscriptionRevisionId, current.householdId,
+      current.productId, current.unitId, current.slotId,
+    ]);
+    await transactions.run(current.vendorId, (tx) => rejectsWithCode(() => store.decide(tx, {
+      vendorId: current.vendorId, id: decisionId, expectedVersion: 1, decision: 'approved',
+      decidedBy: current.userId, reason: 'Customer emergency approved', now: new Date('2030-01-01T00:00:00.000Z'),
+    }), 'LEAVE_OCCURRENCE_FINALIZED'));
+  } finally { await cleanup(current); }
 });
