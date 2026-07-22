@@ -133,6 +133,27 @@ void test('delivery store appends before final projection, fences stale versions
   } finally { await cleanup(value); }
 });
 
+void test('correction to delivered requires an existing price snapshot', async () => {
+  const value = await fixture('correction-snapshot');
+  const now = new Date('2030-01-01T06:30:00.000Z');
+  try {
+    await transactions.run(value.vendorId, (tx) => store.appendFinalOutcome(tx, {
+      id: randomUUID(), vendorId: value.vendorId, scheduledDeliveryId: value.deliveryId, expectedVersion: 1,
+      outcome: 'missed', source: 'delivery_agent', actorUserId: value.actorUserId,
+      occurredAt: now, receivedAt: now, reasonCode: 'other', note: 'Road closed',
+    }));
+    await assert.rejects(
+      transactions.run(value.vendorId, (tx) => store.appendCorrection(tx, {
+        id: randomUUID(), vendorId: value.vendorId, scheduledDeliveryId: value.deliveryId,
+        expectedVersion: 2, replacementOutcome: 'delivered', actualQuantity: '1',
+        actorUserId: value.actorUserId, occurredAt: now, receivedAt: now, reason: 'Confirmed delivery',
+      })),
+      (error: unknown) => error instanceof ApplicationError
+        && error.code === 'DELIVERY_PRICE_SNAPSHOT_REQUIRED',
+    );
+  } finally { await cleanup(value); }
+});
+
 void test('leave projection changes only its own final outcome and rolls all writes back with its transaction', async () => {
   const value = await fixture('leave');
   try {

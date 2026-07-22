@@ -129,14 +129,7 @@ export class PrismaDeliveryStore extends DeliveryStore {
     const actualQuantity = requireAgentOutcomeQuantity(input.outcome, input.actualQuantity);
     if (input.outcome !== 'delivered') requireOutcomeReason(input.outcome, input.reasonCode, input.note);
     if (input.outcome === 'delivered') {
-      const snapshots = await tx.$queryRaw<Readonly<{ present: boolean }>[]>(Prisma.sql`
-        SELECT EXISTS(
-          SELECT 1 FROM delivery_price_snapshots
-          WHERE vendor_id=${input.vendorId}::uuid AND scheduled_delivery_id=${input.scheduledDeliveryId}::uuid
-        ) AS present`);
-      if (!snapshots[0]?.present) {
-        throw failure('DELIVERY_PRICE_SNAPSHOT_REQUIRED', 'Delivered outcome requires a price snapshot', 409);
-      }
+      await this.requirePriceSnapshot(tx, input.vendorId, input.scheduledDeliveryId);
     }
     await tx.$executeRaw(Prisma.sql`
       INSERT INTO delivery_events (
@@ -156,6 +149,9 @@ export class PrismaDeliveryStore extends DeliveryStore {
     this.requireVersion(current, input.expectedVersion);
     requireCorrectionTransition(current.currentStatus, input.replacementOutcome, input.actualQuantity);
     requireCorrectionReason(input.reason);
+    if (input.replacementOutcome === 'delivered') {
+      await this.requirePriceSnapshot(tx, input.vendorId, input.scheduledDeliveryId);
+    }
     const previous = await tx.$queryRaw<Readonly<{ id: string }>[]>(Prisma.sql`
       SELECT id FROM delivery_events WHERE vendor_id=${input.vendorId}::uuid
         AND scheduled_delivery_id=${input.scheduledDeliveryId}::uuid
@@ -303,6 +299,19 @@ export class PrismaDeliveryStore extends DeliveryStore {
       WHERE vendor_id=${vendorId}::uuid AND id=${id}::uuid FOR UPDATE`);
     if (!rows[0]) throw failure('DELIVERY_NOT_FOUND', 'Delivery was not found', 404);
     return rows[0];
+  }
+
+  private async requirePriceSnapshot(
+    tx: ReturnType<typeof unwrapPrismaTransaction>, vendorId: string, scheduledDeliveryId: string,
+  ): Promise<void> {
+    const snapshots = await tx.$queryRaw<Readonly<{ present: boolean }>[]>(Prisma.sql`
+      SELECT EXISTS(
+        SELECT 1 FROM delivery_price_snapshots
+        WHERE vendor_id=${vendorId}::uuid AND scheduled_delivery_id=${scheduledDeliveryId}::uuid
+      ) AS present`);
+    if (!snapshots[0]?.present) {
+      throw failure('DELIVERY_PRICE_SNAPSHOT_REQUIRED', 'Delivered outcome requires a price snapshot', 409);
+    }
   }
 
   private async updateProjection(
