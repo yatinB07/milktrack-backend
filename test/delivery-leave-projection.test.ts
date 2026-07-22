@@ -24,8 +24,11 @@ void test('leave projection delegates apply and reversal through the caller tran
   const projection = new DefaultDeliveryLeaveProjection(store);
   const transaction = {} as TransactionContext;
 
-  await projection.applyCustomerLeave(transaction, key, 'actor');
-  await projection.reverseCustomerLeave(transaction, key, 'actor');
+  await projection.applyCustomerLeave(transaction, key, 'actor', 'vendor_admin');
+  await projection.reverseCustomerLeave(transaction, key, 'actor', 'vendor_admin');
 
-  assert.deepEqual(calls, [[transaction, key, 'actor'], [transaction, key, 'actor']]);
+  assert.deepEqual(calls, [
+    [transaction, key, 'actor', 'vendor_admin'],
+    [transaction, key, 'actor', 'vendor_admin'],
+  ]);
 });

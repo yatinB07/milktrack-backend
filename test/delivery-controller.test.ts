@@ -39,6 +39,32 @@ void test('delivery controllers use explicit safe response mappings and retain G
   });
 });
 
+void test('delivery detail safely maps a scheduled leave-reversal event', async () => {
+  const reversal = {
+    ...record,
+    currentStatus: 'scheduled' as const,
+    actualQuantity: undefined,
+    finalizedAt: undefined,
+    events: [{
+      ...record.events[0],
+      eventType: 'scheduled' as const,
+      source: 'customer' as const,
+      actualQuantity: undefined,
+      reasonCode: 'customer_leave_reversed',
+      note: undefined,
+      latitude: undefined,
+      longitude: undefined,
+    }],
+  };
+  const service = { getVendorDetail: () => Promise.resolve(reversal), getCustomerDetail: () => Promise.resolve(reversal) };
+  const vendor = new VendorDeliveryController(service as never);
+  const customer = new CustomerDeliveryController(service as never);
+  await requestContextStore.run({ correlationId: '00000000-0000-4000-8000-000000000016', actor }, async () => {
+    assert.equal((await vendor.get(record.vendorId, record.id)).events[0]?.eventType, 'scheduled');
+    assert.equal((await customer.get(record.vendorId, record.householdId, record.id)).events[0]?.eventType, 'scheduled');
+  });
+});
+
 void test('delivery pagination DTO transforms and bounds the limit', async () => {
   const query = plainToInstance(VendorDeliveryPageQueryDto, { limit: '101' });
   const errors = await validate(query);

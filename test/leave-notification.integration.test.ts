@@ -154,7 +154,19 @@ void test('accepted leave updates schedules, reverses eligible amendments/cancel
     await requestContextStore.run({ correlationId: randomUUID() }, () => leave.cancel(actor(value), value.vendorId, value.householdId, created.id, { expectedVersion: amended.version }));
     const afterCancel = await owner.query<{ status: string }>('SELECT status FROM scheduled_deliveries WHERE vendor_id=$1 ORDER BY service_date', [value.vendorId]);
     assert.deepEqual(afterCancel.rows, [{ status: 'scheduled' }, { status: 'scheduled' }]);
-    assert.equal((await owner.query<{ count: number }>('SELECT count(*)::int AS count FROM delivery_events WHERE vendor_id=$1', [value.vendorId])).rows[0]?.count, 2);
+    const events = (await owner.query<{
+      id: string; eventType: string; replacedEventId: string | null; reasonCode: string | null;
+    }>(`SELECT e.id,e.event_type AS "eventType",e.replaced_event_id AS "replacedEventId",e.reason_code AS "reasonCode"
+      FROM delivery_events e JOIN scheduled_deliveries d
+        ON d.vendor_id=e.vendor_id AND d.id=e.scheduled_delivery_id
+      WHERE e.vendor_id=$1 ORDER BY d.service_date,e.created_at,e.id`, [value.vendorId])).rows;
+    assert.deepEqual(events.map(({ eventType }) => eventType), [
+      'skipped_by_customer', 'scheduled', 'skipped_by_customer', 'scheduled',
+    ]);
+    for (const index of [0, 2]) {
+      assert.equal(events[index + 1]?.replacedEventId, events[index]?.id);
+      assert.equal(events[index + 1]?.reasonCode, 'customer_leave_reversed');
+    }
   } finally {
     await cleanup(value);
   }

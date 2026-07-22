@@ -161,7 +161,7 @@ export class DeliveryPriceSnapshotResponseDto {
 
 export class DeliveryEventResponseDto {
   @ApiProperty({ type: String, format: 'uuid' }) id!: string;
-  @ApiProperty({ type: String, enum: ['delivered', 'skipped_by_customer', 'skipped_by_agent', 'missed'] }) eventType!: string;
+  @ApiProperty({ type: String, enum: ['scheduled', 'delivered', 'skipped_by_customer', 'skipped_by_agent', 'missed'] }) eventType!: DeliveryEvent['eventType'];
   @ApiProperty({ type: String, enum: ['system', 'customer', 'delivery_agent', 'vendor_admin'] }) source!: string;
   @ApiProperty({ type: String, format: 'date-time' }) occurredAt!: string;
   @ApiProperty({ type: String, format: 'date-time' }) receivedAt!: string;

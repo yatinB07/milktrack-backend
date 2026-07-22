@@ -155,7 +155,7 @@ void test('correction to delivered requires an existing price snapshot', async (
   } finally { await cleanup(value); }
 });
 
-void test('leave projection changes only its own final outcome and rolls all writes back with its transaction', async () => {
+void test('leave reversal appends an immutable event that references the latest leave-owned customer skip', async () => {
   const value = await fixture('leave');
   try {
     const key = await transactions.run(value.vendorId, async (tx) => {
@@ -164,25 +164,82 @@ void test('leave projection changes only its own final outcome and rolls all wri
     });
     const projection = new DefaultDeliveryLeaveProjection(store);
     await transactions.run(value.vendorId, (tx) => projection.applyCustomerLeave(tx, key, value.actorUserId));
-    assert.equal((await transactions.run(value.vendorId, (tx) => store.getVendorDetail(tx, value.vendorId, value.deliveryId))).currentStatus, 'skipped_by_customer');
+    const before = await transactions.run(value.vendorId, (tx) => store.getVendorDetail(tx, value.vendorId, value.deliveryId));
+    const originalSkipEventId = before.events[0]?.id;
+    await transactions.run(value.vendorId, (tx) => projection.reverseCustomerLeave(tx, key, value.actorUserId));
+    const after = await transactions.run(value.vendorId, (tx) => store.getVendorDetail(tx, value.vendorId, value.deliveryId));
+    assert.equal(after.currentStatus, 'scheduled');
+    assert.equal(after.finalizedAt, undefined);
+    assert.equal(after.version, before.version + 1);
+    assert.deepEqual(after.events.map(({ eventType }) => eventType), ['skipped_by_customer', 'scheduled']);
+    assert.equal(after.events.at(-1)?.source, 'customer');
+    assert.equal(after.events.at(-1)?.actorUserId, value.actorUserId);
+    assert.equal(after.events.at(-1)?.reasonCode, 'customer_leave_reversed');
+    assert.equal(after.events.at(-1)?.replacedEventId, originalSkipEventId);
+
+    await transactions.run(value.vendorId, (tx) => projection.reverseCustomerLeave(tx, key, value.actorUserId));
+    const repeated = await transactions.run(value.vendorId, (tx) => store.getVendorDetail(tx, value.vendorId, value.deliveryId));
+    assert.equal(repeated.version, after.version);
+    assert.equal(repeated.events.length, after.events.length);
+
+    await transactions.run(value.vendorId, (tx) => projection.applyCustomerLeave(tx, key, value.actorUserId, 'vendor_admin'));
     await transactions.run(value.vendorId, (tx) => projection.reverseCustomerLeave(tx, key, value.actorUserId));
     assert.equal((await transactions.run(value.vendorId, (tx) => store.getVendorDetail(tx, value.vendorId, value.deliveryId))).currentStatus, 'scheduled');
-    assert.equal((await owner.query<{ count: number }>('SELECT count(*)::int AS count FROM delivery_events WHERE vendor_id=$1', [value.vendorId])).rows[0]?.count, 1);
-    await assert.rejects(transactions.run(value.vendorId, async (tx) => {
-      await store.appendFinalOutcome(tx, {
-        id: randomUUID(), vendorId: value.vendorId, scheduledDeliveryId: value.deliveryId, expectedVersion: 3,
-        outcome: 'missed', source: 'delivery_agent', actorUserId: value.actorUserId,
-        occurredAt: new Date(), receivedAt: new Date(), reasonCode: 'other', note: 'Road closed',
-      });
-      throw new Error('rollback');
-    }), /rollback/u);
-    assert.equal((await owner.query<{ count: number }>('SELECT count(*)::int AS count FROM delivery_events WHERE vendor_id=$1', [value.vendorId])).rows[0]?.count, 1);
+
     await transactions.run(value.vendorId, (tx) => projection.applyCustomerLeave(tx, key, value.actorUserId));
     await owner.query(`INSERT INTO delivery_events(
       id,vendor_id,scheduled_delivery_id,event_type,source,occurred_at,received_at
     ) VALUES($1,$2,$3,'skipped_by_customer','system',now(),now())`, [randomUUID(), value.vendorId, value.deliveryId]);
     await transactions.run(value.vendorId, (tx) => projection.reverseCustomerLeave(tx, key, value.actorUserId));
     assert.equal((await transactions.run(value.vendorId, (tx) => store.getVendorDetail(tx, value.vendorId, value.deliveryId))).currentStatus, 'skipped_by_customer');
-    assert.equal((await owner.query<{ count: number }>('SELECT count(*)::int AS count FROM delivery_events WHERE vendor_id=$1', [value.vendorId])).rows[0]?.count, 3);
+    assert.equal((await owner.query<{ count: number }>('SELECT count(*)::int AS count FROM delivery_events WHERE vendor_id=$1', [value.vendorId])).rows[0]?.count, 6);
+  } finally { await cleanup(value); }
+});
+
+void test('leave reversal accepts a generated customer-leave skip and preserves final agent outcomes', async () => {
+  const generated = await fixture('generated-leave');
+  const final = await fixture('final-outcome');
+  const now = new Date();
+  try {
+    const generatedRecord = await transactions.run(generated.vendorId, (tx) => store.getVendorDetail(tx, generated.vendorId, generated.deliveryId));
+    await owner.query(`INSERT INTO delivery_events(id,vendor_id,scheduled_delivery_id,event_type,source,occurred_at,received_at,reason_code)
+      VALUES($1,$2,$3,'skipped_by_customer','system',$4,$4,'customer_on_leave')`, [randomUUID(), generated.vendorId, generated.deliveryId, now]);
+    await owner.query(`UPDATE scheduled_deliveries SET status='skipped_by_customer',finalized_at=$2,version=2,updated_at=$2 WHERE id=$1`, [generated.deliveryId, now]);
+    const generatedKey = { vendorId: generated.vendorId, subscriptionId: generatedRecord.subscriptionId, serviceDate: generatedRecord.serviceDate, deliverySlotId: generatedRecord.deliverySlotId };
+    await transactions.run(generated.vendorId, (tx) => store.reverseCustomerLeave(tx, generatedKey, generated.actorUserId, 'vendor_admin'));
+    const reversed = await transactions.run(generated.vendorId, (tx) => store.getVendorDetail(tx, generated.vendorId, generated.deliveryId));
+    assert.equal(reversed.currentStatus, 'scheduled');
+    assert.equal(reversed.events.at(-1)?.source, 'vendor_admin');
+
+    await transactions.run(final.vendorId, (tx) => store.appendFinalOutcome(tx, {
+      id: randomUUID(), vendorId: final.vendorId, scheduledDeliveryId: final.deliveryId, expectedVersion: 1,
+      outcome: 'missed', source: 'delivery_agent', actorUserId: final.actorUserId,
+      occurredAt: now, receivedAt: now, reasonCode: 'other', note: 'Road closed',
+    }));
+    const finalRecord = await transactions.run(final.vendorId, (tx) => store.getVendorDetail(tx, final.vendorId, final.deliveryId));
+    const finalKey = { vendorId: final.vendorId, subscriptionId: finalRecord.subscriptionId, serviceDate: finalRecord.serviceDate, deliverySlotId: finalRecord.deliverySlotId };
+    await transactions.run(final.vendorId, (tx) => store.reverseCustomerLeave(tx, finalKey, final.actorUserId));
+    assert.deepEqual(await transactions.run(final.vendorId, (tx) => store.getVendorDetail(tx, final.vendorId, final.deliveryId)), finalRecord);
+  } finally {
+    await cleanup(generated);
+    await cleanup(final);
+  }
+});
+
+void test('failed leave-reversal event insertion leaves the projection and original skip unchanged', async () => {
+  const value = await fixture('leave-rollback');
+  try {
+    const record = await transactions.run(value.vendorId, (tx) => store.getVendorDetail(tx, value.vendorId, value.deliveryId));
+    const key = { vendorId: value.vendorId, subscriptionId: record.subscriptionId, serviceDate: record.serviceDate, deliverySlotId: record.deliverySlotId };
+    await transactions.run(value.vendorId, (tx) => store.applyCustomerLeave(tx, key, value.actorUserId));
+    const before = await transactions.run(value.vendorId, (tx) => store.getVendorDetail(tx, value.vendorId, value.deliveryId));
+
+    await assert.rejects(
+      transactions.run(value.vendorId, (tx) => store.reverseCustomerLeave(tx, key, randomUUID())),
+      /foreign key|delivery_events_actor_user_fkey/iu,
+    );
+
+    const after = await transactions.run(value.vendorId, (tx) => store.getVendorDetail(tx, value.vendorId, value.deliveryId));
+    assert.deepEqual(after, before);
   } finally { await cleanup(value); }
 });

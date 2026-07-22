@@ -185,12 +185,14 @@ export abstract class DeliveryStore {
     tx: TransactionContext,
     key: DeliveryOccurrenceKey,
     actorUserId: string,
+    source?: Extract<DeliveryEventSource, 'customer' | 'vendor_admin'>,
   ): Promise<void>;
 
   abstract reverseCustomerLeave(
     tx: TransactionContext,
     key: DeliveryOccurrenceKey,
     actorUserId: string,
+    source?: Extract<DeliveryEventSource, 'customer' | 'vendor_admin'>,
   ): Promise<void>;
 
   abstract createPriceSnapshot(
