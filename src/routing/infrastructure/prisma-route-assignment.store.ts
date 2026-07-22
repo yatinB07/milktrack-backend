@@ -7,6 +7,7 @@ import { unwrapPrismaTransaction } from '../../database/infrastructure/prisma-tr
 import { Prisma } from '../../generated/prisma/client.js';
 import {
   RouteAssignmentStore,
+  type AgentRouteAssignmentRecord,
   type RouteAssignmentPageQuery,
   type RouteAssignmentRecord,
   type RouteAssignmentStatus,
@@ -26,6 +27,13 @@ type Row = {
   status: string;
   createdAt: Date;
   updatedAt: Date;
+};
+type AgentRow = Row & {
+  routeCode: string;
+  routeName: string;
+  deliverySlotName: string;
+  deliverySlotStartLocalTime: string;
+  deliverySlotEndLocalTime: string;
 };
 type ScheduleRow = {
   routeId: string;
@@ -60,13 +68,19 @@ export class PrismaRouteAssignmentStore extends RouteAssignmentStore {
     const tx = unwrapPrismaTransaction(context);
     const limit = this.limit(query.limit);
     const cursor = query.cursor ? this.decode(query.cursor) : undefined;
-    const rows = await tx.$queryRaw<Row[]>(Prisma.sql`
-      SELECT id,route_id AS "routeId",delivery_slot_id AS "deliverySlotId",agent_membership_id AS "agentMembershipId",
-        service_date::text AS "serviceDate",status,created_at AS "createdAt",updated_at AS "updatedAt"
-      FROM route_assignments WHERE agent_membership_id=${agentMembershipId}::uuid AND service_date=${serviceDate}::date AND status='assigned'
-        ${cursor ? Prisma.sql`AND (service_date < ${cursor.serviceDate}::date OR (service_date=${cursor.serviceDate}::date AND id < ${cursor.id}::uuid))` : Prisma.empty}
-      ORDER BY service_date DESC,id DESC LIMIT ${limit + 1}`);
-    return this.page(rows, limit);
+    const rows = await tx.$queryRaw<AgentRow[]>(Prisma.sql`
+      SELECT a.id,a.route_id AS "routeId",a.delivery_slot_id AS "deliverySlotId",a.agent_membership_id AS "agentMembershipId",
+        a.service_date::text AS "serviceDate",a.status,a.created_at AS "createdAt",a.updated_at AS "updatedAt",
+        r.code AS "routeCode",r.name AS "routeName",d.name AS "deliverySlotName",
+        to_char(d.start_local_time,'HH24:MI') AS "deliverySlotStartLocalTime",
+        to_char(d.end_local_time,'HH24:MI') AS "deliverySlotEndLocalTime"
+      FROM route_assignments a
+      JOIN routes r ON r.id=a.route_id AND r.vendor_id=a.vendor_id AND r.delivery_slot_id=a.delivery_slot_id
+      JOIN delivery_slots d ON d.id=a.delivery_slot_id AND d.vendor_id=a.vendor_id
+      WHERE a.agent_membership_id=${agentMembershipId}::uuid AND a.service_date=${serviceDate}::date AND a.status='assigned'
+        ${cursor ? Prisma.sql`AND (a.service_date < ${cursor.serviceDate}::date OR (a.service_date=${cursor.serviceDate}::date AND a.id < ${cursor.id}::uuid))` : Prisma.empty}
+      ORDER BY a.service_date DESC,a.id DESC LIMIT ${limit + 1}`);
+    return this.agentPage(rows, limit);
   }
 
   async assign(
@@ -268,6 +282,21 @@ export class PrismaRouteAssignmentStore extends RouteAssignmentStore {
         ? { nextCursor: this.encode({ serviceDate: last.serviceDate, id: last.id }) }
         : {}),
     };
+  }
+
+  private agentPage(rows: AgentRow[], limit: number) {
+    const items = rows.slice(0, limit).map((row) => this.agentRow(row));
+    const last = items.at(-1);
+    return {
+      items,
+      ...(rows.length > limit && last
+        ? { nextCursor: this.encode({ serviceDate: last.serviceDate, id: last.id }) }
+        : {}),
+    };
+  }
+
+  private agentRow(row: AgentRow): AgentRouteAssignmentRecord {
+    return { ...row, status: row.status as RouteAssignmentStatus };
   }
 
   private limit(value?: number) {
