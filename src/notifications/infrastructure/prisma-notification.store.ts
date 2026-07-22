@@ -3,19 +3,10 @@ import type { Prisma } from '../../generated/prisma/client.js';
 
 import { CursorCodec } from '../../common/cursor/cursor.js';
 import type { TransactionContext } from '../../common/application/transaction-context.js';
-import type { PageQuery } from '../../customers/application/household.service.js';
 import { ApplicationError } from '../../common/errors/application.error.js';
 import { unwrapPrismaTransaction } from '../../database/infrastructure/prisma-transaction-context.js';
+import { CustomerNotificationReader, type NotificationPage, type NotificationRecord } from '../application/customer-notification-reader.js';
 import { NotificationWriter, type AppendNotification, type NotificationType } from '../application/notification-writer.js';
-
-export type NotificationRecord = Readonly<{
-  id: string;
-  type: NotificationType;
-  payload: Readonly<Record<string, string>>;
-  readAt: Date | null;
-  createdAt: Date;
-}>;
-export type NotificationPage = Readonly<{ items: readonly NotificationRecord[]; nextCursor?: string }>;
 
 const allowedPayloadKeys: Readonly<Record<NotificationType, readonly string[]>> = {
   leave_accepted: ['householdId', 'leaveRequestId'],
@@ -26,7 +17,7 @@ const allowedPayloadKeys: Readonly<Record<NotificationType, readonly string[]>> 
 const prohibitedPayloadKey = /password|otp|token|secret|phone|address|latitude|longitude|note/i;
 
 @Injectable()
-export class PrismaNotificationStore extends NotificationWriter {
+export class PrismaNotificationStore extends NotificationWriter implements CustomerNotificationReader {
   private readonly cursors = new CursorCodec();
 
   async append(tx: TransactionContext, notification: AppendNotification): Promise<void> {
@@ -38,12 +29,14 @@ export class PrismaNotificationStore extends NotificationWriter {
     });
   }
 
-  async list(tx: TransactionContext, vendorId: string, recipientUserId: string, query: PageQuery): Promise<NotificationPage> {
-    const limit = this.cursors.parseLimit(query.limit);
-    const cursor = query.cursor === undefined ? undefined : this.cursors.decode(query.cursor);
+  async list(tx: TransactionContext, input: Readonly<{ vendorId: string; householdId: string; recipientUserId: string; cursor?: string; limit?: number }>): Promise<NotificationPage> {
+    const limit = this.cursors.parseLimit(input.limit);
+    const cursor = input.cursor === undefined ? undefined : this.cursors.decode(input.cursor);
     const rows = await unwrapPrismaTransaction(tx).notification.findMany({
       where: {
-        vendorId, recipientUserId,
+        vendorId: input.vendorId,
+        recipientUserId: input.recipientUserId,
+        payload: { path: ['householdId'], equals: input.householdId },
         ...(cursor === undefined ? {} : { OR: [{ createdAt: { lt: cursor.createdAt } }, { createdAt: cursor.createdAt, id: { lt: cursor.id } }] }),
       },
       orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], take: limit + 1,

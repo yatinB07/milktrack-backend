@@ -39,16 +39,53 @@ void test('customer notifications authorize and scope the list to the active hou
   const service = new DefaultNotificationService(authorization as never, households as never, store as never);
   const page = await service.listCustomer(actor, vendorId, householdId, { limit: 2 });
   assert.equal(page.items[0]?.type, 'leave_accepted'); assert.equal(page.nextCursor, 'cursor');
-  assert.deepEqual(calls.slice(1), [[tx, actor, vendorId, householdId], [tx, vendorId, recipientUserId, { limit: 2 }]]);
+  assert.deepEqual(calls.slice(1), [[tx, actor, vendorId, householdId], [tx, {
+    vendorId, householdId, recipientUserId, limit: 2,
+  }]]);
   assert.equal((calls[0]?.[0] as { permission: string }).permission, 'customer:self');
 });
 
 void test('notification store uses descending created-at and id cursor pagination', async () => {
   const id = randomUUID(); const olderId = randomUUID(); const createdAt = new Date('2026-07-22T00:00:00.000Z'); let query: unknown;
   const tx = wrapPrismaTransaction({ notification: { findMany: (input: unknown) => { query = input; return Promise.resolve([{ id, type: 'leave_accepted', payload: { householdId, leaveRequestId: 'request' }, readAt: null, createdAt }, { id: olderId, type: 'leave_accepted', payload: { householdId, leaveRequestId: 'request' }, readAt: null, createdAt }]); } } } as never);
-  const page = await new PrismaNotificationStore().list(tx, vendorId, recipientUserId, { limit: 1 });
+  const page = await new PrismaNotificationStore().list(tx, { vendorId, householdId, recipientUserId, limit: 1 });
   assert.deepEqual((query as { orderBy: unknown }).orderBy, [{ createdAt: 'desc' }, { id: 'desc' }]);
   assert.equal(page.items.length, 1); assert.ok(page.nextCursor);
+});
+
+void test('notification store filters the recipient cursor by household payload', async () => {
+  let query: unknown;
+  const tx = wrapPrismaTransaction({ notification: {
+    findMany: (input: unknown) => { query = input; return Promise.resolve([]); },
+  } } as never);
+
+  await new PrismaNotificationStore().list(tx, {
+    vendorId, householdId, recipientUserId, limit: 25,
+  });
+
+  assert.deepEqual((query as { where: unknown }).where, {
+    vendorId,
+    recipientUserId,
+    payload: { path: ['householdId'], equals: householdId },
+  });
+});
+
+void test('notification payload requires the exact typed keys', async () => {
+  const tx = wrapPrismaTransaction({ notification: { create: () => Promise.resolve({}) } } as never);
+  const store = new PrismaNotificationStore();
+  const base = { id: randomUUID(), vendorId, householdId, recipientUserId, type: 'leave_accepted' as const };
+  const invalid = [
+    {},
+    { leaveRequestId: randomUUID(), extra: 'unexpected' },
+    { scheduledDeliveryId: randomUUID() },
+    { leaveRequestId: 1 },
+  ];
+  for (const payload of invalid) {
+    await assert.rejects(
+      store.append(tx, { ...base, payload } as never),
+      (error: unknown) => error instanceof ApplicationError && error.code === 'INVALID_NOTIFICATION_PAYLOAD',
+    );
+  }
 });
 
 void test('agent-reported skip uses the schema spelling only at the persistence boundary', async () => {
@@ -59,7 +96,7 @@ void test('agent-reported skip uses the schema spelling only at the persistence 
   } } as never);
   const store = new PrismaNotificationStore();
   await store.append(tx, { id, vendorId, householdId, recipientUserId, type: 'agent_reported_skip', payload: { scheduledDeliveryId } });
-  const page = await store.list(tx, vendorId, recipientUserId, {});
+  const page = await store.list(tx, { vendorId, householdId, recipientUserId });
   assert.equal(persistedType, 'agent_skip');
   assert.equal(page.items[0]?.type, 'agent_reported_skip');
 });

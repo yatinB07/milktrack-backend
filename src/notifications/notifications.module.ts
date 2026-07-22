@@ -4,6 +4,7 @@ import { AuthorizationModule } from '../authorization/authorization.module.js';
 import { CustomersModule } from '../customers/customers.module.js';
 import { DatabaseModule } from '../database/database.module.js';
 import { IdentityModule } from '../identity/identity.module.js';
+import { CustomerNotificationReader } from './application/customer-notification-reader.js';
 import { DefaultNotificationService, NotificationService } from './application/notification.service.js';
 import { NotificationWriter } from './application/notification-writer.js';
 import { CustomerNotificationController } from './http/customer-notification.controller.js';
@@ -12,7 +13,7 @@ import { PrismaNotificationStore } from './infrastructure/prisma-notification.st
 @Module({
   imports: [AuthorizationModule, CustomersModule, DatabaseModule, IdentityModule],
   controllers: [CustomerNotificationController],
-  providers: [PrismaNotificationStore, { provide: NotificationWriter, useExisting: PrismaNotificationStore }, DefaultNotificationService, { provide: NotificationService, useExisting: DefaultNotificationService }],
+  providers: [PrismaNotificationStore, { provide: NotificationWriter, useExisting: PrismaNotificationStore }, { provide: CustomerNotificationReader, useExisting: PrismaNotificationStore }, DefaultNotificationService, { provide: NotificationService, useExisting: DefaultNotificationService }],
   exports: [NotificationWriter],
 })
 export class NotificationsModule {}

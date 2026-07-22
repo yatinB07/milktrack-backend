@@ -2,7 +2,7 @@ import { Type } from 'class-transformer';
 import { IsInt, IsOptional, IsString, Max, Min } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
-import type { NotificationRecord } from '../infrastructure/prisma-notification.store.js';
+import type { NotificationRecord } from '../application/customer-notification-reader.js';
 import { notificationTypes } from '../application/notification-writer.js';
 
 export class CustomerNotificationPageQueryDto {
