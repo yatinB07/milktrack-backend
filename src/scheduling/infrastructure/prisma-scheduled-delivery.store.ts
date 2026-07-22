@@ -9,6 +9,10 @@ import { ScheduledDeliveryStore, type AgentScheduledDelivery } from '../applicat
 import { planScheduleReconciliation, type ScheduledDeliveryState, type ScheduleTarget } from '../domain/schedule-reconciliation.js';
 
 type DeliveryRow = Omit<ScheduledDeliveryState, 'finalized'> & { finalized: boolean };
+type AgentScheduledDeliveryRow = Omit<AgentScheduledDelivery, 'addressLine2' | 'locality'> & Readonly<{
+  addressLine2: string | null;
+  locality: string | null;
+}>;
 type AgentCursor = Readonly<{ sequence: number; id: string }>;
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
 
@@ -71,15 +75,25 @@ export class PrismaScheduledDeliveryStore extends ScheduledDeliveryStore {
     const tx = unwrapPrismaTransaction(context);
     const limit = this.limit(query.limit);
     const cursor = query.cursor ? this.decode(query.cursor) : undefined;
-    const rows = await tx.$queryRaw<AgentScheduledDelivery[]>(Prisma.sql`
+    const rows = await tx.$queryRaw<AgentScheduledDeliveryRow[]>(Prisma.sql`
       SELECT d.id,d.subscription_id AS "subscriptionId",d.household_id AS "householdId",
         d.product_id AS "productId",d.unit_id AS "unitId",d.delivery_slot_id AS "deliverySlotId",
         d.route_assignment_id AS "routeAssignmentId",s.id AS "routeStopId",
-        d.service_date::text AS "serviceDate",d.planned_quantity::text AS "plannedQuantity",s.sequence
+        d.service_date::text AS "serviceDate",d.planned_quantity::text AS "plannedQuantity",s.sequence,
+        r.id AS "routeId",r.code AS "routeCode",r.name AS "routeName",
+        h.account_number AS "householdAccountNumber",h.name AS "householdName",
+        h.address_line_1 AS "addressLine1",h.address_line_2 AS "addressLine2",h.locality,
+        h.city,h.region,h.postal_code AS "postalCode",h.country_code AS "countryCode",
+        product.code AS "productCode",product.name AS "productName",
+        unit.code AS "unitCode",unit.name AS "unitName",slot.name AS "deliverySlotName",
+        to_char(slot.start_local_time,'HH24:MI') AS "deliverySlotStartLocalTime",
+        to_char(slot.end_local_time,'HH24:MI') AS "deliverySlotEndLocalTime"
       FROM scheduled_deliveries d
       JOIN route_assignments a ON a.vendor_id=d.vendor_id AND a.id=d.route_assignment_id
         AND a.service_date=d.service_date AND a.delivery_slot_id=d.delivery_slot_id
         AND a.agent_membership_id=${agentMembershipId}::uuid AND a.status='assigned'
+      JOIN routes r ON r.vendor_id=d.vendor_id AND r.id=a.route_id
+        AND r.delivery_slot_id=d.delivery_slot_id
       JOIN LATERAL (
         SELECT p.id FROM route_stop_plans p
         WHERE p.vendor_id=d.vendor_id AND p.route_id=a.route_id AND p.delivery_slot_id=d.delivery_slot_id
@@ -91,10 +105,19 @@ export class PrismaScheduledDeliveryStore extends ScheduledDeliveryStore {
         AND s.household_id=d.household_id AND s.delivery_slot_id=d.delivery_slot_id
         AND s.superseded_at IS NULL AND s.effective_from<=d.service_date
         AND (s.effective_to IS NULL OR s.effective_to>d.service_date)
+      JOIN households h ON h.vendor_id=d.vendor_id AND h.id=d.household_id
+      JOIN products product ON product.vendor_id=d.vendor_id AND product.id=d.product_id
+        AND product.default_unit_id=d.unit_id
+      JOIN units unit ON unit.vendor_id=d.vendor_id AND unit.id=d.unit_id
+      JOIN delivery_slots slot ON slot.vendor_id=d.vendor_id AND slot.id=d.delivery_slot_id
       WHERE d.vendor_id=${vendorId}::uuid AND d.service_date=${serviceDate}::date AND d.status='scheduled'
         ${cursor ? Prisma.sql`AND (s.sequence>${cursor.sequence} OR (s.sequence=${cursor.sequence} AND d.id>${cursor.id}::uuid))` : Prisma.empty}
       ORDER BY s.sequence,d.id LIMIT ${limit + 1}`);
-    const items = rows.slice(0, limit);
+    const items = rows.slice(0, limit).map(({ addressLine2, locality, ...row }): AgentScheduledDelivery => ({
+      ...row,
+      ...(addressLine2 === null ? {} : { addressLine2 }),
+      ...(locality === null ? {} : { locality }),
+    }));
     const last = items.at(-1);
     return { items, ...(rows.length > limit && last ? { nextCursor: this.encode(last) } : {}) };
   }

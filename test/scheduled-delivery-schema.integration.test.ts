@@ -206,6 +206,51 @@ void test('agent self read paginates tied cross-route sequences and cancelled as
     const second = await transactions.run(value.vendorId, (tx) => scheduledDeliveries.listSelf(tx, value.vendorId, value.membershipId, '2030-01-01', { limit: 1, cursor: first.nextCursor }));
     assert.equal(second.items.length, 1); assert.notEqual(second.items[0]?.id, first.items[0]?.id);
     assert.deepEqual([...first.items, ...second.items].map(({ sequence }) => sequence), [1, 1]);
+    const projected = [...first.items, ...second.items];
+    for (const item of projected) {
+      const primaryRoute = item.routeAssignmentId === value.assignmentId;
+      assert.deepEqual({
+        routeId: item.routeId,
+        routeCode: item.routeCode,
+        routeName: item.routeName,
+        householdAccountNumber: item.householdAccountNumber,
+        householdName: item.householdName,
+        addressLine1: item.addressLine1,
+        city: item.city,
+        region: item.region,
+        postalCode: item.postalCode,
+        countryCode: item.countryCode,
+        productCode: item.productCode,
+        productName: item.productName,
+        unitCode: item.unitCode,
+        unitName: item.unitName,
+        deliverySlotName: item.deliverySlotName,
+        deliverySlotStartLocalTime: item.deliverySlotStartLocalTime,
+        deliverySlotEndLocalTime: item.deliverySlotEndLocalTime,
+      }, {
+        routeId: primaryRoute ? value.routeId : value.otherRouteId,
+        routeCode: `ROUTE_${(primaryRoute ? value.routeId : value.otherRouteId).slice(0, 8).toUpperCase()}`,
+        routeName: primaryRoute ? 'Route agent-cursor' : 'Other route agent-cursor',
+        householdAccountNumber: 'S-agent-cursor',
+        householdName: 'S-agent-cursor',
+        addressLine1: 'Road',
+        city: 'Pune',
+        region: 'MH',
+        postalCode: '411001',
+        countryCode: 'IN',
+        productCode: `PRODUCT_${value.productId.slice(0, 8).toUpperCase()}`,
+        productName: 'Product agent-cursor',
+        unitCode: `UNIT_${value.unitId.slice(0, 8).toUpperCase()}`,
+        unitName: 'Unit agent-cursor',
+        deliverySlotName: primaryRoute ? 'Slot agent-cursor' : 'Other agent-cursor',
+        deliverySlotStartLocalTime: primaryRoute ? '06:00' : '10:00',
+        deliverySlotEndLocalTime: primaryRoute ? '09:00' : '12:00',
+      });
+      assert.equal('addressLine2' in item, false);
+      assert.equal('locality' in item, false);
+    }
+    const sameTenantOtherMembership = await transactions.run(value.vendorId, (tx) => scheduledDeliveries.listSelf(tx, value.vendorId, value.ownerMembershipId, '2030-01-01', {}));
+    assert.deepEqual(sameTenantOtherMembership.items, []);
     await owner.query("UPDATE route_assignments SET status='cancelled',cancelled_at=now(),cancellation_reason='Agent unavailable',updated_at=now() WHERE id=$1", [value.otherAssignmentId]);
     const afterCancellation = await transactions.run(value.vendorId, (tx) => scheduledDeliveries.listSelf(tx, value.vendorId, value.membershipId, '2030-01-01', {}));
     assert.equal(afterCancellation.items.length, 1);
@@ -218,12 +263,23 @@ void test('agent self read paginates tied cross-route sequences and cancelled as
 void test('agent HTTP is exact-self scoped and returns only the safe scheduled-stop DTO', async () => {
   const own = await fixture('agent-http'); const other = await fixture('agent-other');
   try {
+    await owner.query("UPDATE households SET address_line_2='Floor 2',locality='Camp',updated_at=now() WHERE vendor_id=$1 AND id=$2", [own.vendorId, own.householdId]);
     const inserted = (await insert(own)).rows[0].id;
     const path = `/v1/agent/vendors/${own.vendorId}/scheduled-deliveries?serviceDate=2030-01-01`;
     const response = await fetch(`${baseUrl}${path}`, { headers: { authorization: `Bearer ${own.agentToken}` } });
-    assert.equal(response.status, 200); const body = await response.json() as { items: Array<Record<string, unknown>> };
+    assert.equal(response.status, 200); const body = await response.json() as { serviceDate: string; items: Array<Record<string, unknown>> };
+    assert.equal(body.serviceDate, '2030-01-01');
     assert.equal(body.items[0]?.id, inserted);
-    assert.deepEqual(Object.keys(body.items[0]).sort(), ['deliverySlotId','householdId','id','plannedQuantity','productId','routeAssignmentId','routeStopId','sequence','serviceDate','subscriptionId','unitId']);
+    assert.deepEqual(Object.keys(body.items[0]).sort(), [
+      'addressLine1','addressLine2','city','countryCode','deliverySlotEndLocalTime','deliverySlotId',
+      'deliverySlotName','deliverySlotStartLocalTime','householdAccountNumber','householdId','householdName',
+      'id','locality','plannedQuantity','postalCode','productCode','productId','productName','region',
+      'routeAssignmentId','routeCode','routeId','routeName','routeStopId','sequence','serviceDate',
+      'subscriptionId','unitCode','unitId','unitName',
+    ]);
+    assert.equal(body.items[0]?.addressLine2, 'Floor 2');
+    assert.equal(body.items[0]?.locality, 'Camp');
+    for (const forbidden of ['customerPhone','householdNotes','billingDetails','sourcePriceId']) assert.equal(forbidden in body.items[0], false);
     const foreign = await fetch(`${baseUrl}/v1/agent/vendors/${other.vendorId}/scheduled-deliveries?serviceDate=2030-01-01`, { headers: { authorization: `Bearer ${own.agentToken}` } });
     assert.equal(foreign.status, 403);
     const ownerDenied = await fetch(`${baseUrl}${path}`, { headers: { authorization: `Bearer ${own.ownerToken}` } });
