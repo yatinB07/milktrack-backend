@@ -79,6 +79,7 @@ void test('correction transaction rolls back snapshot, event, projection, audit,
     await assert.rejects(requestContextStore.run({ correlationId: randomUUID() }, () => service(value, failingNotifications as never).correct(value.ownerActor, value.vendorId, value.deliveryId, correction)), /notification unavailable/u);
     assert.deepEqual((await owner.query('SELECT status,version FROM scheduled_deliveries WHERE id=$1', [value.deliveryId])).rows, [{ status: 'skipped_by_customer', version: 2 }]);
     for (const table of ['delivery_events', 'delivery_price_snapshots', 'notifications']) assert.equal((await owner.query<{ count: number }>(`SELECT count(*)::int AS count FROM ${table} WHERE vendor_id=$1`, [value.vendorId])).rows[0]?.count, table === 'delivery_events' ? 1 : 0);
+    assert.equal((await owner.query<{ count: number }>("SELECT count(*)::int AS count FROM audit_events WHERE vendor_id=$1 AND action='delivery.corrected'", [value.vendorId])).rows[0]?.count, 0);
 
     await requestContextStore.run({ correlationId: randomUUID() }, () => service(value).correct(value.ownerActor, value.vendorId, value.deliveryId, correction));
     assert.deepEqual((await owner.query('SELECT status,version FROM scheduled_deliveries WHERE id=$1', [value.deliveryId])).rows, [{ status: 'delivered', version: 3 }]);
