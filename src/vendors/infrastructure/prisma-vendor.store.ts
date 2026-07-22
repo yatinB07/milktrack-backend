@@ -6,6 +6,7 @@ import type { TransactionContext } from '../../common/application/transaction-co
 import { PrismaService } from '../../database/infrastructure/prisma.service.js';
 import { unwrapPrismaTransaction } from '../../database/infrastructure/prisma-transaction-context.js';
 import type { CreateVendorCommand } from '../application/vendor.service.js';
+import type { DeliveryPolicy, UpdateDeliveryPolicyCommand } from '../domain/delivery-policy.js';
 import type { VendorStatus } from '../domain/vendor-lifecycle.js';
 
 export type VendorRecord = Readonly<{
@@ -56,6 +57,19 @@ export class PrismaVendorStore {
     });
     if (!vendor) throw new ApplicationError('VENDOR_NOT_FOUND', 'Vendor was not found', 404);
     return vendor;
+  }
+
+  async getDeliveryPolicy(context: TransactionContext, vendorId: string): Promise<DeliveryPolicy> {
+    const vendor = await unwrapPrismaTransaction(context).vendor.findFirst({ where: { id: vendorId, deletedAt: null }, select: { id: true, skipCutoffMinutes: true, lateLeavePolicy: true, captureAgentLocationEvidence: true, version: true } });
+    if (!vendor) throw new ApplicationError('VENDOR_NOT_FOUND', 'Vendor was not found', 404);
+    return { vendorId: vendor.id, skipCutoffMinutes: vendor.skipCutoffMinutes, lateLeavePolicy: vendor.lateLeavePolicy as DeliveryPolicy['lateLeavePolicy'], captureAgentLocationEvidence: vendor.captureAgentLocationEvidence, version: vendor.version };
+  }
+
+  async updateDeliveryPolicy(context: TransactionContext, vendorId: string, command: UpdateDeliveryPolicyCommand): Promise<DeliveryPolicy> {
+    const tx = unwrapPrismaTransaction(context);
+    const updated = await tx.vendor.updateMany({ where: { id: vendorId, version: command.expectedVersion, deletedAt: null }, data: { skipCutoffMinutes: command.skipCutoffMinutes, lateLeavePolicy: command.lateLeavePolicy, captureAgentLocationEvidence: command.captureAgentLocationEvidence, version: { increment: 1 } } });
+    if (updated.count !== 1) throw new ApplicationError('DELIVERY_POLICY_STATE_CONFLICT', 'Delivery policy was changed by another request', 409);
+    return this.getDeliveryPolicy(context, vendorId);
   }
 
   async create(

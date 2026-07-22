@@ -11,12 +11,13 @@ import {
 } from './application/vendor.service.js';
 import { VendorController } from './http/vendor.controller.js';
 import { VendorProfileController } from './http/vendor-profile.controller.js';
+import { DeliveryPolicyController } from './http/delivery-policy.controller.js';
 import { PrismaVendorStore } from './infrastructure/prisma-vendor.store.js';
 import { SchedulingVendorModule } from './scheduling-vendor.module.js';
 
 @Module({
   imports: [AuditModule, AuthorizationModule, DatabaseModule, IdentityModule, SchedulingVendorModule],
-  controllers: [VendorController, VendorProfileController],
+  controllers: [VendorController, VendorProfileController, DeliveryPolicyController],
   providers: [
     PrismaVendorStore,
     TransitionVendor,

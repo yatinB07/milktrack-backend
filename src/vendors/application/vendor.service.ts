@@ -13,6 +13,7 @@ import { CursorCodec } from '../../common/cursor/cursor.js';
 import { ApplicationError } from '../../common/errors/application.error.js';
 import { TenantTransactionRunner, type TransactionContext } from '../../common/application/transaction-context.js';
 import type { VendorStatus } from '../domain/vendor-lifecycle.js';
+import type { DeliveryPolicy, UpdateDeliveryPolicyCommand } from '../domain/delivery-policy.js';
 import { PrismaVendorStore } from '../infrastructure/prisma-vendor.store.js';
 import { TransitionVendor } from './transition-vendor.js';
 
@@ -56,6 +57,8 @@ export type VendorResult = Readonly<{
 }>;
 
 export abstract class VendorService {
+  abstract getDeliveryPolicy(actor: Actor, vendorId: string): Promise<DeliveryPolicy>;
+  abstract updateDeliveryPolicy(actor: Actor, vendorId: string, command: UpdateDeliveryPolicyCommand): Promise<DeliveryPolicy>;
   abstract getSubscriptionTimezone(tx: TransactionContext, vendorId: string): Promise<Readonly<{ timezone: string }>>;
   abstract getPricingSettings(tx: TransactionContext, vendorId: string): Promise<Readonly<{ timezone: string; currency: string }>>;
   abstract create(actor: Actor, command: CreateVendorCommand): Promise<VendorResult>;
@@ -98,6 +101,22 @@ export class PrismaVendorService extends VendorService {
 
   getSubscriptionTimezone(tx: TransactionContext, vendorId: string) {
     return this.vendors.getSubscriptionTimezone(tx, vendorId);
+  }
+
+  getDeliveryPolicy(actor: Actor, vendorId: string): Promise<DeliveryPolicy> {
+    return this.tenantAuthorization.execute({ actor, vendorId, permission: 'vendor:profile:read', operation: 'vendor.profile.read' }, (tx) => this.vendors.getDeliveryPolicy(tx, vendorId));
+  }
+
+  updateDeliveryPolicy(actor: Actor, vendorId: string, command: UpdateDeliveryPolicyCommand): Promise<DeliveryPolicy> {
+    return this.tenantAuthorization.execute({ actor, vendorId, permission: 'vendor:profile:read', operation: 'vendor.profile.read' }, async (tx) => {
+      const previous = await this.vendors.getDeliveryPolicy(tx, vendorId);
+      const updated = await this.vendors.updateDeliveryPolicy(tx, vendorId, command);
+      await this.audits.append(tx, {
+        id: randomUUID(), vendorId, actorUserId: actor.userId, action: 'vendor.delivery_policy.updated', entityType: 'vendor', entityId: vendorId,
+        oldValue: this.deliveryPolicyAuditValue(previous), newValue: this.deliveryPolicyAuditValue(updated), reason: command.reason, correlationId: requestContextStore.require().correlationId,
+      });
+      return updated;
+    });
   }
 
   async create(actor: Actor, command: CreateVendorCommand): Promise<VendorResult> {
@@ -175,5 +194,9 @@ export class PrismaVendorService extends VendorService {
         400,
       );
     }
+  }
+
+  private deliveryPolicyAuditValue(policy: DeliveryPolicy) {
+    return { skipCutoffMinutes: policy.skipCutoffMinutes, lateLeavePolicy: policy.lateLeavePolicy, captureAgentLocationEvidence: policy.captureAgentLocationEvidence, version: policy.version };
   }
 }
