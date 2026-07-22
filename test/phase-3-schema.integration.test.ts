@@ -31,7 +31,7 @@ async function asTenant(vendorId: string, work: (client: pg.PoolClient) => Promi
 async function rejects(
   client: pg.PoolClient,
   text: string,
-  values: readonly unknown[],
+  values: unknown[],
   expected: RegExp,
 ) {
   await client.query('SAVEPOINT expected_failure');
