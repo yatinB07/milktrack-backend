@@ -173,6 +173,17 @@ const activeVendorOperations: Readonly<Record<string, VendorPermission>> = {
   'schedule.self-list': 'delivery:read',
   'schedule.run-list': 'schedule:read',
   'schedule.manual-generate': 'schedule:manage',
+  'vendor.delivery-policy.update': 'schedule:manage',
+  'leave.decision-list': 'schedule:read',
+  'leave.vendor-get': 'schedule:read',
+  'leave.decision': 'schedule:manage',
+  'leave.preview': 'customer:self',
+  'leave.create': 'customer:self',
+  'leave.list': 'customer:self',
+  'leave.get': 'customer:self',
+  'leave.amend': 'customer:self',
+  'leave.cancel': 'customer:self',
+  'notification.self-list': 'customer:self',
 };
 
 export const hasPlatformPermission = (

@@ -5,6 +5,7 @@ import test from 'node:test';
 import { Module, ValidationPipe } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 
+import { createOpenApiDocument } from '../src/bootstrap/configure-app.js';
 import { RequestContextStore, requestContextStore, type Actor } from '../src/common/context/request-context.js';
 import { AuthenticationService } from '../src/identity/application/authentication.service.js';
 import { LeaveService } from '../src/leave/application/leave.service.js';
@@ -41,4 +42,8 @@ void test('customer leave preview uses the frozen route and rejects unknown requ
   assert.equal(response.status, 200); assert.deepEqual(await response.json(), { timezone: 'Asia/Kolkata', skipCutoffMinutes: 60, lateLeavePolicy: 'approval', onTimeCount: 1, lateCount: 0, items: [] });
   const invalid = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer test' }, body: JSON.stringify({ ...valid, unexpected: true }) });
   assert.equal(invalid.status, 400);
+});
+
+void test('leave DTO metadata can be composed into the application OpenAPI document', () => {
+  assert.doesNotThrow(() => createOpenApiDocument(app!));
 });

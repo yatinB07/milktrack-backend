@@ -8,7 +8,10 @@ import { Prisma } from '../../generated/prisma/client.js';
 import { ScheduledDeliveryStore, type AgentScheduledDelivery } from '../application/scheduled-delivery.store.js';
 import { planScheduleReconciliation, type ScheduledDeliveryState, type ScheduleTarget } from '../domain/schedule-reconciliation.js';
 
-type DeliveryRow = Omit<ScheduledDeliveryState, 'finalized'> & { finalized: boolean };
+type DeliveryRow = Omit<ScheduledDeliveryState, 'finalized' | 'status'> & {
+  status: 'scheduled' | 'cancelled' | 'delivered' | 'skipped_by_customer' | 'skipped_by_agent' | 'missed';
+  finalized: boolean;
+};
 type AgentScheduledDeliveryRow = Omit<AgentScheduledDelivery, 'addressLine2' | 'locality'> & Readonly<{
   addressLine2: string | null;
   locality: string | null;
@@ -18,7 +21,13 @@ const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-
 
 @Injectable()
 export class PrismaScheduledDeliveryStore extends ScheduledDeliveryStore {
-  async reconcile(context: TransactionContext, vendorId: string, serviceDate: string, targets: ScheduleTarget[]) {
+  async reconcile(
+    context: TransactionContext,
+    vendorId: string,
+    serviceDate: string,
+    targets: ScheduleTarget[],
+    effectiveLeave: ReadonlySet<string>,
+  ) {
     const tx = unwrapPrismaTransaction(context);
     const current = await tx.$queryRaw<DeliveryRow[]>(Prisma.sql`
       SELECT id,subscription_id AS "subscriptionId",subscription_revision_id AS "revisionId",
@@ -29,7 +38,11 @@ export class PrismaScheduledDeliveryStore extends ScheduledDeliveryStore {
       WHERE vendor_id=${vendorId}::uuid AND service_date=${serviceDate}::date
       ORDER BY subscription_id,delivery_slot_id,id FOR UPDATE`);
     const plan = planScheduleReconciliation(
-      current.map((delivery) => ({ ...delivery, plannedQuantity: canonicalDecimal(delivery.plannedQuantity) })),
+      current.map((delivery) => ({
+        ...delivery,
+        plannedQuantity: canonicalDecimal(delivery.plannedQuantity),
+        status: delivery.status === 'scheduled' ? 'scheduled' : 'cancelled',
+      })),
       targets,
     );
     const created = plan.created.map((target) => ({ id: randomUUID(), ...target }));
@@ -57,6 +70,33 @@ export class PrismaScheduledDeliveryStore extends ScheduledDeliveryStore {
         cancellation_reason='Subscription no longer applies',version=version+1,updated_at=CURRENT_TIMESTAMP
       WHERE vendor_id=${vendorId}::uuid AND finalized_at IS NULL AND status='scheduled'
         AND id=ANY(${plan.cancelled.map(({ id }) => id)}::uuid[])`);
+    if (effectiveLeave.size > 0) {
+      const occurrences = [...effectiveLeave].map((value) => {
+        const [subscriptionId, deliverySlotId] = value.split(':');
+        return { subscriptionId, deliverySlotId };
+      });
+      await tx.$executeRaw(Prisma.sql`
+        WITH candidates AS (
+          SELECT * FROM jsonb_to_recordset(${JSON.stringify(occurrences)}::jsonb)
+            AS c("subscriptionId" uuid,"deliverySlotId" uuid)
+        ), eligible AS (
+          SELECT d.id,d.version FROM scheduled_deliveries d JOIN candidates c
+            ON c."subscriptionId"=d.subscription_id AND c."deliverySlotId"=d.delivery_slot_id
+          WHERE d.vendor_id=${vendorId}::uuid AND d.service_date=${serviceDate}::date
+            AND d.status='scheduled' AND d.finalized_at IS NULL
+          ORDER BY d.id FOR UPDATE OF d
+        ), projected AS (
+          UPDATE scheduled_deliveries d SET status='skipped_by_customer',finalized_at=CURRENT_TIMESTAMP,
+            version=d.version+1,updated_at=CURRENT_TIMESTAMP
+          FROM eligible e WHERE d.id=e.id AND d.vendor_id=${vendorId}::uuid AND d.version=e.version
+          RETURNING d.id
+        )
+        INSERT INTO delivery_events(
+          id,vendor_id,scheduled_delivery_id,event_type,source,actor_user_id,occurred_at,received_at,reason_code
+        ) SELECT gen_random_uuid(),${vendorId}::uuid,id,'skipped_by_customer','system',NULL,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP,
+          'customer_on_leave'
+          FROM projected`);
+    }
     return {
       created: inserted,
       existing: plan.existing.length + created.length - inserted,

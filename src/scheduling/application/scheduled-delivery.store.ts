@@ -53,6 +53,7 @@ export abstract class ScheduledDeliveryStore {
     vendorId: string,
     serviceDate: string,
     targets: ScheduleTarget[],
+    effectiveLeave: ReadonlySet<string>,
   ): Promise<ScheduleGenerationCounts>;
 
   abstract listSelf(

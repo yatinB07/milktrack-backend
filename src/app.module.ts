@@ -17,6 +17,8 @@ import { PricingModule } from './pricing/pricing.module.js';
 import { SubscriptionsModule } from './subscriptions/subscriptions.module.js';
 import { RoutingModule } from './routing/routing.module.js';
 import { SchedulingModule } from './scheduling/scheduling.module.js';
+import { LeaveModule } from './leave/leave.module.js';
+import { NotificationsModule } from './notifications/notifications.module.js';
 
 @Module({
   imports: [
@@ -32,6 +34,8 @@ import { SchedulingModule } from './scheduling/scheduling.module.js';
     PricingModule,
     SubscriptionsModule,
     RoutingModule,
+    LeaveModule,
+    NotificationsModule,
     SchedulingModule,
   ],
   providers: [{ provide: RequestContextStore, useValue: requestContextStore }],

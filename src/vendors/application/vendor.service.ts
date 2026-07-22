@@ -113,7 +113,7 @@ export class PrismaVendorService extends VendorService {
   }
 
   updateDeliveryPolicy(actor: Actor, vendorId: string, command: UpdateDeliveryPolicyCommand): Promise<DeliveryPolicy> {
-    return this.tenantAuthorization.execute({ actor, vendorId, permission: 'vendor:profile:read', operation: 'vendor.profile.read' }, async (tx) => {
+    return this.tenantAuthorization.execute({ actor, vendorId, permission: 'schedule:manage', operation: 'vendor.delivery-policy.update' }, async (tx) => {
       const { previous, updated } = await this.vendors.updateDeliveryPolicy(tx, vendorId, command);
       await this.audits.append(tx, {
         id: randomUUID(), vendorId, actorUserId: actor.userId, action: 'vendor.delivery_policy.updated', entityType: 'vendor', entityId: vendorId,

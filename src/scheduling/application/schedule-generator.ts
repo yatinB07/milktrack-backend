@@ -1,6 +1,7 @@
 import { Inject, Injectable } from '@nestjs/common';
 
 import type { TransactionContext } from '../../common/application/transaction-context.js';
+import { SchedulingLeaveService } from '../../leave/application/scheduling-leave.service.js';
 import { SchedulingPriceService } from '../../pricing/application/scheduling-price.service.js';
 import { RoutingScheduleService } from '../../routing/application/routing-schedule.service.js';
 import { ScheduleDateLock } from '../../schedule-coordination/application/schedule-date-lock.js';
@@ -27,6 +28,7 @@ export class DefaultScheduleGenerator extends ScheduleGenerator {
     @Inject(SubscriptionScheduleService) private readonly subscriptions: SubscriptionScheduleService,
     @Inject(RoutingScheduleService) private readonly routing: RoutingScheduleService,
     @Inject(SchedulingPriceService) private readonly pricing: SchedulingPriceService,
+    @Inject(SchedulingLeaveService) private readonly leave: SchedulingLeaveService,
     @Inject(ScheduledDeliveryStore) private readonly deliveries: ScheduledDeliveryStore,
   ) { super(); }
 
@@ -47,7 +49,8 @@ export class DefaultScheduleGenerator extends ScheduleGenerator {
       routeAssignmentId: assignmentByStop.get(`${candidate.deliverySlotId}:${candidate.householdId}`) ?? null,
     }));
     const availability = await this.pricing.resolveMany(transaction, vendorId, serviceDate, targets);
-    const counts = await this.deliveries.reconcile(transaction, vendorId, serviceDate, targets);
+    const effectiveLeave = await this.leave.effectiveOccurrences(transaction, vendorId, serviceDate, targets);
+    const counts = await this.deliveries.reconcile(transaction, vendorId, serviceDate, targets, effectiveLeave);
     return { ...counts, missingPrice: availability.filter(({ status }) => status === 'missing').length };
   }
 }

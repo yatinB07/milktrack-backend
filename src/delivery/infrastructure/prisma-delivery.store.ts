@@ -216,10 +216,12 @@ export class PrismaDeliveryStore extends DeliveryStore {
     const rows = await tx.$queryRaw<DeliveryRow[]>(Prisma.sql`
       SELECT ${deliveryColumns} FROM scheduled_deliveries d
       JOIN LATERAL (
-        SELECT event_type,source FROM delivery_events e
+        SELECT event_type,source,reason_code FROM delivery_events e
         WHERE e.vendor_id=d.vendor_id AND e.scheduled_delivery_id=d.id
         ORDER BY e.created_at DESC,e.id DESC LIMIT 1
-      ) latest ON latest.event_type='skipped_by_customer' AND latest.source='customer'
+      ) latest ON latest.event_type='skipped_by_customer' AND (
+        latest.source='customer' OR (latest.source='system' AND latest.reason_code='customer_on_leave')
+      )
       WHERE d.vendor_id=${key.vendorId}::uuid AND d.subscription_id=${key.subscriptionId}::uuid
         AND d.service_date=${key.serviceDate}::date AND d.delivery_slot_id=${key.deliverySlotId}::uuid
         AND d.status='skipped_by_customer'

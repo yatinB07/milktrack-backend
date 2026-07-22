@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import type { TransactionContext } from '../src/common/application/transaction-context.js';
+import { SchedulingLeaveService } from '../src/leave/application/scheduling-leave.service.js';
 import { SchedulingPriceService } from '../src/pricing/application/scheduling-price.service.js';
 import { RoutingScheduleService } from '../src/routing/application/routing-schedule.service.js';
 import { ScheduleDateLock } from '../src/schedule-coordination/application/schedule-date-lock.js';
@@ -31,6 +32,7 @@ void test('generator locks first, batches projections, maps exact slot/household
     calls.push(`prices:${candidates.length}`);
     return Promise.resolve(candidates.map((candidate, index) => ({ ...candidate, status: index === 0 ? 'resolved' as const : 'missing' as const })));
   } };
+  const leave: SchedulingLeaveService = { effectiveOccurrences: () => { calls.push('leave'); return Promise.resolve(new Set()); } };
   const deliveries: ScheduledDeliveryStore = {
     reconcile: (_tx, _vendor, _date, targets) => {
       calls.push('reconcile'); written = targets;
@@ -39,10 +41,10 @@ void test('generator locks first, batches projections, maps exact slot/household
     listSelf: () => Promise.resolve({ items: [] }),
   };
 
-  const result = await new DefaultScheduleGenerator(dates, subscriptions, routing, prices, deliveries)
+  const result = await new DefaultScheduleGenerator(dates, subscriptions, routing, prices, leave, deliveries)
     .generate(transaction, 'vendor', '2026-07-20');
 
-  assert.deepEqual(calls, ['lock:vendor:2026-07-20', 'subscriptions', 'routing', 'prices:2', 'reconcile']);
+  assert.deepEqual(calls, ['lock:vendor:2026-07-20', 'subscriptions', 'routing', 'prices:2', 'leave', 'reconcile']);
   assert.equal(written[0]?.routeAssignmentId, 'assignment');
   assert.equal(written[1]?.routeAssignmentId, null);
   assert.deepEqual(result, { created: 2, existing: 0, updated: 0, cancelled: 0, missingPrice: 1 });

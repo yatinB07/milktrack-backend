@@ -2,6 +2,9 @@ import { Module } from '@nestjs/common';
 
 import { AuditModule } from '../audit/audit.module.js';
 import { DatabaseModule } from '../database/database.module.js';
+import { LeaveStore } from '../leave/application/leave.store.js';
+import { DefaultSchedulingLeaveService, SchedulingLeaveService } from '../leave/application/scheduling-leave.service.js';
+import { PrismaLeaveStore } from '../leave/infrastructure/prisma-leave.store.js';
 import { PricingStore } from '../pricing/application/pricing.store.js';
 import { DefaultSchedulingPriceService, SchedulingPriceService } from '../pricing/application/scheduling-price.service.js';
 import { PrismaPricingStore } from '../pricing/infrastructure/prisma-pricing.store.js';
@@ -23,6 +26,10 @@ import { PrismaScheduledDeliveryStore } from './infrastructure/prisma-scheduled-
 @Module({
   imports: [AuditModule, DatabaseModule, ScheduleCoordinationModule],
   providers: [
+    PrismaLeaveStore,
+    { provide: LeaveStore, useExisting: PrismaLeaveStore },
+    DefaultSchedulingLeaveService,
+    { provide: SchedulingLeaveService, useExisting: DefaultSchedulingLeaveService },
     PrismaPricingStore,
     { provide: PricingStore, useExisting: PrismaPricingStore },
     DefaultSchedulingPriceService,

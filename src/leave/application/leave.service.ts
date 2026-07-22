@@ -10,6 +10,10 @@ import type { Actor } from '../../common/context/request-context.js';
 import { requestContextStore } from '../../common/context/request-context.js';
 import { ApplicationError } from '../../common/errors/application.error.js';
 import { HouseholdService } from '../../customers/application/household.service.js';
+import { DeliveryLeaveProjection } from '../../delivery/application/delivery-leave.projection.js';
+import { MembershipService } from '../../memberships/application/membership.service.js';
+import { NotificationWriter, type NotificationType } from '../../notifications/application/notification-writer.js';
+import { RoutingScheduleService } from '../../routing/application/routing-schedule.service.js';
 import { VendorService } from '../../vendors/application/vendor.service.js';
 import { deriveLeaveStatus, validateLeaveRange, type LeaveRequestStatus } from '../domain/leave-rules.js';
 import { LeaveStore, type LeaveDecisionPage as StoreDecisionPage, type LeaveDecisionResult as StoreDecisionResult, type LeaveRequestPage as StoreRequestPage, type LeaveRequestRecord, type LeavePreviewPage } from './leave.store.js';
@@ -49,6 +53,10 @@ export class DefaultLeaveService extends LeaveService {
     @Inject(LeaveStore) private readonly leaves: LeaveStore,
     @Inject(VendorService) private readonly vendors: VendorService,
     @Inject(AuditWriter) private readonly audits: AuditWriter,
+    @Inject(DeliveryLeaveProjection) private readonly deliveries: DeliveryLeaveProjection,
+    @Inject(NotificationWriter) private readonly notifications: NotificationWriter,
+    @Inject(RoutingScheduleService) private readonly routing: RoutingScheduleService,
+    @Inject(MembershipService) private readonly memberships: MembershipService,
   ) { super(); }
 
   preview(actor: Actor, vendorId: string, householdId: string, command: LeaveSelectionCommand & PageQuery) {
@@ -69,7 +77,9 @@ export class DefaultLeaveService extends LeaveService {
         vendorId, householdId, requestId: randomUUID(), revisionId: randomUUID(), action: 'create', source: 'customer', createdBy: actor.userId,
         ...command, status: status.status, decisions: status.decisions,
       });
+      const agentUserIds = await this.synchronize(tx, vendorId, householdId, [command], context, actor.userId);
       await this.audit(tx, actor, vendorId, result, 'leave.created');
+      await this.notifyOutcome(tx, result, actor.userId, agentUserIds);
       return request(result);
     });
   }
@@ -92,7 +102,13 @@ export class DefaultLeaveService extends LeaveService {
         vendorId, householdId, requestId: leaveRequestId, revisionId: randomUUID(), action: 'amend', previousRevisionId: current.currentRevisionId,
         source: 'customer', createdBy: actor.userId, ...command, status: status.status, decisions: status.decisions,
       });
-      await this.audit(tx, actor, vendorId, result, 'leave.amended'); return request(result);
+      const previous = { startDate: current.revisions.find(({ id }) => id === current.currentRevisionId)?.startDate ?? command.startDate,
+        endDate: current.revisions.find(({ id }) => id === current.currentRevisionId)?.endDate ?? command.endDate,
+        subscriptionIds: current.revisions.find(({ id }) => id === current.currentRevisionId)?.subscriptionIds ?? command.subscriptionIds };
+      const agentUserIds = await this.synchronize(tx, vendorId, householdId, [previous, command], context, actor.userId);
+      await this.audit(tx, actor, vendorId, result, 'leave.amended');
+      await this.notifyOutcome(tx, result, actor.userId, agentUserIds);
+      return request(result);
     });
   }
 
@@ -107,6 +123,8 @@ export class DefaultLeaveService extends LeaveService {
         source: 'customer', createdBy: actor.userId, startDate: revision.startDate, endDate: revision.endDate, subscriptionIds: revision.subscriptionIds,
         expectedVersion: command.expectedVersion, ...(command.note ? { note: command.note } : {}), status: 'cancelled', decisions: [],
       });
+      const context = await this.context(tx, vendorId);
+      await this.synchronize(tx, vendorId, householdId, [revision], context, actor.userId);
       await this.audit(tx, actor, vendorId, result, 'leave.cancelled'); return request(result);
     });
   }
@@ -122,7 +140,17 @@ export class DefaultLeaveService extends LeaveService {
   decideOccurrence(actor: Actor, vendorId: string, decisionId: string, command: DecideLeaveOccurrenceCommand) {
     return this.authorization.execute({ actor, vendorId, permission: 'schedule:manage', operation: 'leave.decision' }, async (tx) => {
       const result = await this.leaves.decide(tx, { vendorId, id: decisionId, ...command, decidedBy: actor.userId, now: this.now(), reason: command.reason.trim() });
+      const key = { vendorId, subscriptionId: result.subscriptionId, serviceDate: result.serviceDate, deliverySlotId: result.deliverySlotId };
+      const effective = await this.leaves.isEffectivelyOnLeave(tx, key);
+      if (effective) await this.deliveries.applyCustomerLeave(tx, key, actor.userId);
+      else await this.deliveries.reverseCustomerLeave(tx, key, actor.userId);
       await this.audit(tx, actor, vendorId, result.request, `leave.decision.${command.decision}`);
+      const revision = result.request.revisions.find(({ id }) => id === result.request.currentRevisionId) ?? result.request.revisions[0];
+      if (!revision) throw new ApplicationError('LEAVE_REQUEST_STATE_CONFLICT', 'Leave request has no current revision', 409);
+      const agents = command.decision === 'approved' && effective
+        ? await this.agentUserIds(tx, vendorId, result.request.householdId, [{ serviceDate: result.serviceDate, deliverySlotId: result.deliverySlotId }])
+        : [];
+      await this.notify(tx, vendorId, result.request.id, revision.createdBy, command.decision === 'approved' && effective ? 'leave_accepted' : 'leave_rejected', agents);
       return decision(result);
     });
   }
@@ -157,6 +185,86 @@ export class DefaultLeaveService extends LeaveService {
       if (cursor) preview = await this.leaves.preview(tx, { vendorId, householdId, ...command, ...context, now: this.now(), cursor, limit: 100 });
     } while (cursor);
     return { status: deriveLeaveStatus({ effective: onTime, pending: context.lateLeavePolicy === 'approval' ? late : 0 }), decisions };
+  }
+
+  private async synchronize(
+    tx: TransactionContext,
+    vendorId: string,
+    householdId: string,
+    selections: readonly Readonly<{ startDate: string; endDate: string; subscriptionIds: readonly string[] }>[],
+    context: Awaited<ReturnType<DefaultLeaveService['context']>>,
+    actorUserId: string,
+  ): Promise<readonly string[]> {
+    const accepted: Array<{ serviceDate: string; deliverySlotId: string }> = [];
+    for (const selection of selections) {
+      let cursor: string | undefined;
+      do {
+        const page = await this.leaves.preview(tx, {
+          vendorId, householdId, ...selection, ...context, now: this.now(), limit: 100, ...(cursor ? { cursor } : {}),
+        });
+        for (const occurrence of page.items) {
+          const key = { vendorId, subscriptionId: occurrence.subscriptionId, serviceDate: occurrence.serviceDate, deliverySlotId: occurrence.deliverySlotId };
+          if (await this.leaves.isEffectivelyOnLeave(tx, key)) {
+            await this.deliveries.applyCustomerLeave(tx, key, actorUserId);
+            accepted.push(occurrence);
+          } else {
+            await this.deliveries.reverseCustomerLeave(tx, key, actorUserId);
+          }
+        }
+        cursor = page.nextCursor;
+      } while (cursor);
+    }
+    return this.agentUserIds(tx, vendorId, householdId, accepted);
+  }
+
+  private async agentUserIds(
+    tx: TransactionContext,
+    vendorId: string,
+    householdId: string,
+    occurrences: readonly Readonly<{ serviceDate: string; deliverySlotId: string }>[],
+  ): Promise<readonly string[]> {
+    const assignmentIds = new Set<string>();
+    const routesByDate = new Map<string, Awaited<ReturnType<RoutingScheduleService['project']>>>();
+    for (const occurrence of occurrences) {
+      let routes = routesByDate.get(occurrence.serviceDate);
+      if (!routes) {
+        routes = await this.routing.project(tx, vendorId, occurrence.serviceDate);
+        routesByDate.set(occurrence.serviceDate, routes);
+      }
+      for (const route of routes) {
+        if (route.deliverySlotId === occurrence.deliverySlotId
+          && route.stops.some((stop) => stop.householdId === householdId)
+          && route.assignment) assignmentIds.add(route.assignment.agentMembershipId);
+      }
+    }
+    if (assignmentIds.size === 0) return [];
+    return (await this.memberships.customerMembershipHistory(tx, vendorId, [...assignmentIds])).map(({ userId }) => userId);
+  }
+
+  private notifyOutcome(
+    tx: TransactionContext,
+    result: LeaveRequestRecord,
+    customerUserId: string,
+    agentUserIds: readonly string[],
+  ) {
+    if (result.status !== 'accepted' && result.status !== 'partially_pending' && result.status !== 'rejected') return Promise.resolve();
+    return this.notify(tx, result.vendorId, result.id, customerUserId,
+      result.status === 'rejected' ? 'leave_rejected' : 'leave_accepted',
+      result.status === 'rejected' ? [] : agentUserIds);
+  }
+
+  private async notify(
+    tx: TransactionContext,
+    vendorId: string,
+    leaveRequestId: string,
+    customerUserId: string,
+    type: NotificationType,
+    agentUserIds: readonly string[],
+  ) {
+    const recipients = new Set([customerUserId, ...agentUserIds]);
+    for (const recipientUserId of recipients) {
+      await this.notifications.append(tx, { id: randomUUID(), vendorId, recipientUserId, type, payload: { leaveRequestId } });
+    }
   }
 
   private audit(tx: TransactionContext, actor: Actor, vendorId: string, value: LeaveRequestRecord, action: string) {

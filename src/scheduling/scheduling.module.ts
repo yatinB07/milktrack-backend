@@ -4,6 +4,7 @@ import { AuditModule } from '../audit/audit.module.js';
 import { AuthorizationModule } from '../authorization/authorization.module.js';
 import { DatabaseModule } from '../database/database.module.js';
 import { IdentityModule } from '../identity/identity.module.js';
+import { LeaveModule } from '../leave/leave.module.js';
 import { MembershipsModule } from '../memberships/memberships.module.js';
 import { PricingModule } from '../pricing/pricing.module.js';
 import { RoutingModule } from '../routing/routing.module.js';
@@ -22,6 +23,7 @@ import { ScheduleGenerationModule } from './schedule-generation.module.js';
     AuthorizationModule,
     DatabaseModule,
     IdentityModule,
+    LeaveModule,
     MembershipsModule,
     PricingModule,
     RoutingModule,
