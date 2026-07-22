@@ -39,3 +39,35 @@ void test('vendor delivery query constrains household, route, agent, and stable 
 
   assert.equal(queryCount, 1);
 });
+
+void test('delivery list projects only the latest delivered event quantity', async () => {
+  const base = {
+    vendorId: '00000000-0000-4000-8000-000000000001',
+    subscriptionId: '00000000-0000-4000-8000-000000000002',
+    householdId: '00000000-0000-4000-8000-000000000003',
+    productId: '00000000-0000-4000-8000-000000000004',
+    unitId: '00000000-0000-4000-8000-000000000005',
+    deliverySlotId: '00000000-0000-4000-8000-000000000006',
+    routeAssignmentId: null,
+    serviceDate: '2030-01-01',
+    plannedQuantity: '1.000',
+    version: 2,
+    finalizedAt: new Date('2030-01-01T06:00:00.000Z'),
+    createdAt: new Date('2029-12-01T00:00:00.000Z'),
+  };
+  const transaction = {
+    $queryRaw: (query: Readonly<{ strings: readonly string[] }>) => {
+      const sql = query.strings.join('?').replaceAll(/\s+/gu, ' ');
+      assert.match(sql, /LEFT JOIN LATERAL \( SELECT e\.actual_quantity::text AS "actualQuantity" FROM delivery_events e WHERE e\.vendor_id=d\.vendor_id AND e\.scheduled_delivery_id=d\.id ORDER BY e\.created_at DESC,e\.id DESC LIMIT 1 \) latest ON true/u);
+      return Promise.resolve([
+        { ...base, id: '00000000-0000-4000-8000-000000000007', currentStatus: 'delivered', actualQuantity: '1.500' },
+        { ...base, id: '00000000-0000-4000-8000-000000000008', currentStatus: 'missed', actualQuantity: '9.000' },
+      ]);
+    },
+  } as unknown as Prisma.TransactionClient;
+
+  const page = await new PrismaDeliveryStore().listVendor(wrapPrismaTransaction(transaction), { vendorId: base.vendorId });
+
+  assert.equal(page.items[0]?.actualQuantity, '1.5');
+  assert.equal(page.items[1]?.actualQuantity, undefined);
+});

@@ -100,6 +100,7 @@ void test('delivery store appends before final projection, fences stale versions
     assert.equal(result.version, 2);
     const detail = await transactions.run(value.vendorId, (tx) => store.getVendorDetail(tx, value.vendorId, value.deliveryId));
     assert.equal(detail.currentStatus, 'delivered');
+    assert.equal(detail.actualQuantity, '1.5');
     assert.equal(detail.events.length, 1);
     assert.equal(detail.events[0]?.actualQuantity, '1.5');
     assert.equal(detail.snapshot?.amountMinor, '1000');

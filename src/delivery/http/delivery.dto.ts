@@ -74,6 +74,7 @@ export class DeliveryListResponseDto { @ApiProperty({ type: () => DeliverySummar
 export const toDeliverySummaryResponse = (value: DeliveryRecord): DeliverySummaryResponseDto => ({
   id: value.id, householdId: value.householdId, subscriptionId: value.subscriptionId, serviceDate: value.serviceDate,
   plannedQuantity: value.plannedQuantity, currentStatus: value.currentStatus, version: value.version,
+  ...(value.actualQuantity ? { actualQuantity: value.actualQuantity } : {}),
   ...(value.finalizedAt ? { finalizedAt: value.finalizedAt.toISOString() } : {}),
 });
 

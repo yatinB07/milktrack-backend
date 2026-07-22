@@ -17,15 +17,19 @@ const record = {
 };
 
 void test('delivery controllers use explicit safe response mappings and retain GPS only in vendor detail', async () => {
-  const service = { listVendor: () => Promise.resolve({ items: [record] }), getVendorDetail: () => Promise.resolve(record), listCustomer: () => Promise.resolve({ items: [record] }), getCustomerDetail: () => Promise.resolve(record) };
+  const nonDelivered = { ...record, id: '00000000-0000-4000-8000-000000000015', currentStatus: 'missed' as const, actualQuantity: undefined };
+  const service = { listVendor: () => Promise.resolve({ items: [record, nonDelivered] }), getVendorDetail: () => Promise.resolve(record), listCustomer: () => Promise.resolve({ items: [record, nonDelivered] }), getCustomerDetail: () => Promise.resolve(record) };
   const vendor = new VendorDeliveryController(service as never);
   const customer = new CustomerDeliveryController(service as never);
   await requestContextStore.run({ correlationId: '00000000-0000-4000-8000-000000000014', actor }, async () => {
     const vendorList = await vendor.list(record.vendorId, new VendorDeliveryPageQueryDto());
-    assert.deepEqual(Object.keys(vendorList.items[0] ?? {}).sort(), ['currentStatus', 'finalizedAt', 'householdId', 'id', 'plannedQuantity', 'serviceDate', 'subscriptionId', 'version']);
+    assert.equal(vendorList.items[0]?.actualQuantity, '1');
+    assert.equal('actualQuantity' in (vendorList.items[1] ?? {}), false);
     const vendorDetail = await vendor.get(record.vendorId, record.id);
+    assert.equal(vendorDetail.actualQuantity, '1');
     assert.equal(vendorDetail.events[0]?.latitude, record.events[0].latitude);
     const customerDetail = await customer.get(record.vendorId, record.householdId, record.id);
+    assert.equal(customerDetail.actualQuantity, '1');
     assert.equal('latitude' in (customerDetail.events[0] ?? {}), false);
     assert.equal('longitude' in (customerDetail.events[0] ?? {}), false);
     assert.equal(customerDetail.events[0]?.source, 'delivery_agent');

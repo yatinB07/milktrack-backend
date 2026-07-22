@@ -112,6 +112,7 @@ export type DeliveryRecord = DeliveryOccurrenceKey & Readonly<{
   unitId: string;
   routeAssignmentId?: string;
   plannedQuantity: string;
+  actualQuantity?: string;
   currentStatus: DeliveryCurrentStatus;
   version: number;
   finalizedAt?: Date;

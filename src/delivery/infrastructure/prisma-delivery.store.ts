@@ -43,6 +43,7 @@ type DeliveryRow = Readonly<{
   routeAssignmentId: string | null;
   serviceDate: string;
   plannedQuantity: string;
+  actualQuantity?: string | null;
   currentStatus: DeliveryCurrentStatus;
   version: number;
   finalizedAt: Date | null;
@@ -80,6 +81,20 @@ const deliveryColumns = Prisma.sql`
   route_assignment_id AS "routeAssignmentId",service_date::text AS "serviceDate",
   planned_quantity::text AS "plannedQuantity",status AS "currentStatus",version,
   finalized_at AS "finalizedAt",created_at AS "createdAt"`;
+
+const deliveryProjectionColumns = Prisma.sql`
+  d.id,d.vendor_id AS "vendorId",d.subscription_id AS "subscriptionId",d.household_id AS "householdId",
+  d.product_id AS "productId",d.unit_id AS "unitId",d.delivery_slot_id AS "deliverySlotId",
+  d.route_assignment_id AS "routeAssignmentId",d.service_date::text AS "serviceDate",
+  d.planned_quantity::text AS "plannedQuantity",latest."actualQuantity",d.status AS "currentStatus",d.version,
+  d.finalized_at AS "finalizedAt",d.created_at AS "createdAt"`;
+
+const latestDeliveryQuantityJoin = Prisma.sql`
+  LEFT JOIN LATERAL (
+    SELECT e.actual_quantity::text AS "actualQuantity" FROM delivery_events e
+    WHERE e.vendor_id=d.vendor_id AND e.scheduled_delivery_id=d.id
+    ORDER BY e.created_at DESC,e.id DESC LIMIT 1
+  ) latest ON true`;
 
 @Injectable()
 export class PrismaDeliveryStore extends DeliveryStore {
@@ -264,7 +279,8 @@ export class PrismaDeliveryStore extends DeliveryStore {
     if ('currentStatus' in query && query.currentStatus) filters.push(Prisma.sql`d.status=${query.currentStatus}`);
     if (cursor) filters.push(Prisma.sql`(d.service_date<${cursor.createdAt}::date OR (d.service_date=${cursor.createdAt}::date AND d.id<${cursor.id}::uuid))`);
     const rows = await tx.$queryRaw<DeliveryRow[]>(Prisma.sql`
-      SELECT ${deliveryColumns} FROM scheduled_deliveries d
+      SELECT ${deliveryProjectionColumns} FROM scheduled_deliveries d
+      ${latestDeliveryQuantityJoin}
       LEFT JOIN route_assignments a ON a.vendor_id=d.vendor_id AND a.id=d.route_assignment_id
       WHERE ${Prisma.join(filters, ' AND ')}
       ORDER BY d.service_date DESC,d.id DESC LIMIT ${limit + 1}`);
@@ -280,8 +296,9 @@ export class PrismaDeliveryStore extends DeliveryStore {
 
   private async detail(tx: ReturnType<typeof unwrapPrismaTransaction>, vendorId: string, id: string): Promise<DeliveryDetail> {
     const rows = await tx.$queryRaw<DeliveryRow[]>(Prisma.sql`
-      SELECT ${deliveryColumns} FROM scheduled_deliveries
-      WHERE vendor_id=${vendorId}::uuid AND id=${id}::uuid`);
+      SELECT ${deliveryProjectionColumns} FROM scheduled_deliveries d
+      ${latestDeliveryQuantityJoin}
+      WHERE d.vendor_id=${vendorId}::uuid AND d.id=${id}::uuid`);
     if (!rows[0]) throw failure('DELIVERY_NOT_FOUND', 'Delivery was not found', 404);
     const [events, snapshots] = await Promise.all([
       tx.$queryRaw<EventRow[]>(Prisma.sql`
@@ -340,6 +357,9 @@ export class PrismaDeliveryStore extends DeliveryStore {
       id: row.id, vendorId: row.vendorId, subscriptionId: row.subscriptionId, householdId: row.householdId,
       productId: row.productId, unitId: row.unitId, deliverySlotId: row.deliverySlotId, serviceDate: row.serviceDate,
       plannedQuantity: canonicalDecimal(row.plannedQuantity), currentStatus: row.currentStatus, version: row.version,
+      ...(row.currentStatus === 'delivered' && row.actualQuantity
+        ? { actualQuantity: canonicalDecimal(row.actualQuantity) }
+        : {}),
       ...(row.routeAssignmentId ? { routeAssignmentId: row.routeAssignmentId } : {}),
       ...(row.finalizedAt ? { finalizedAt: row.finalizedAt } : {}),
     };
