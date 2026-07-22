@@ -95,8 +95,6 @@ export class PrismaLeaveStore extends LeaveStore {
 
   async createRevision(context: TransactionContext, input: PersistLeaveRevision): Promise<LeaveRequestRecord> {
     const tx = unwrapPrismaTransaction(context);
-    await this.requireApplicableSelection(context, input, true);
-    if (input.action !== 'cancel') await this.requireNoOverlap(tx, input);
     if (input.previousRevisionId) {
       const current = await tx.$queryRaw<Array<{ id: string; status: string; version: number; currentRevisionId: string | null }>>(Prisma.sql`
         SELECT id,status,version,current_revision_id AS "currentRevisionId" FROM leave_requests
@@ -107,7 +105,10 @@ export class PrismaLeaveStore extends LeaveStore {
         throw error('LEAVE_REQUEST_VERSION_CONFLICT', 'Leave request was changed by another request', 409);
       if (row.status === 'cancelled')
         throw error('LEAVE_REQUEST_STATE_CONFLICT', 'Cancelled leave requests cannot be changed', 409);
-    } else {
+    }
+    await this.requireApplicableSelection(context, input, true);
+    if (input.action !== 'cancel') await this.requireNoOverlap(tx, input);
+    if (!input.previousRevisionId) {
       await tx.leaveRequest.create({ data: { id: input.requestId, vendorId: input.vendorId, householdId: input.householdId, status: input.status } });
     }
     await tx.leaveRequestRevision.create({ data: {

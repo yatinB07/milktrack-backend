@@ -125,6 +125,15 @@ void test('leave store scopes active household subscriptions, persists append-on
       assert.equal(await store.isEffectivelyOnLeave(tx, {
         vendorId: current.vendorId, subscriptionId: current.subscriptionId, deliverySlotId: current.slotId, serviceDate: '2030-01-01',
       }), true);
+      const competing = await store.createRevision(tx, {
+        ...revision(current, { requestId: randomUUID(), revisionId: randomUUID() }),
+        startDate: '2030-02-01', endDate: '2030-02-28',
+      });
+      assert.equal(competing.status, 'accepted');
+      await rejectsWithCodeAndStatus(() => store.createRevision(tx, {
+        ...revision(current, { requestId, revisionId: randomUUID(), action: 'amend', previousRevisionId: firstRevisionId }),
+        startDate: '2030-02-01', endDate: '2030-02-28',
+      }), 'LEAVE_REQUEST_VERSION_CONFLICT', 409);
     });
   } finally { await cleanup(current); }
 });
@@ -149,6 +158,15 @@ void test('approved late amendment becomes effective and cancelled requests reje
       const cancelled = await store.createRevision(tx, { ...revision(current, {
         requestId, revisionId: randomUUID(), action: 'cancel', previousRevisionId: amendmentRevisionId, status: 'cancelled',
       }), expectedVersion: 3 });
+      const cancellationRevisionId = cancelled.currentRevisionId;
+      assert.ok(cancellationRevisionId);
+      assert.equal(await store.isEffectivelyOnLeave(tx, {
+        vendorId: current.vendorId, subscriptionId: current.subscriptionId, deliverySlotId: current.slotId, serviceDate: '2030-01-01',
+      }), false);
+    });
+    await owner.query("UPDATE subscription_revisions SET status='paused' WHERE id=$1", [current.subscriptionRevisionId]);
+    await transactions.run(current.vendorId, async (tx) => {
+      const cancelled = await store.getRequest(tx, current.vendorId, current.householdId, requestId);
       const cancellationRevisionId = cancelled.currentRevisionId;
       assert.ok(cancellationRevisionId);
       const next = { ...revision(current, { requestId, revisionId: randomUUID(), action: 'cancel', previousRevisionId: cancellationRevisionId }), expectedVersion: cancelled.version };
