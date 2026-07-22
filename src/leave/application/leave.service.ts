@@ -98,8 +98,8 @@ export class DefaultLeaveService extends LeaveService {
     return this.customer(actor, vendorId, householdId, 'leave.amend', async (tx) => {
       const context = await this.context(tx, vendorId); this.validate(command, context.timezone);
       const current = await this.leaves.getRequest(tx, vendorId, householdId, leaveRequestId);
-      const previous = selection(current, command);
-      const subscriptionIds = [...new Set([...previous.subscriptionIds, ...command.subscriptionIds])].sort();
+      const previous = selections(current, command);
+      const subscriptionIds = [...new Set([...previous.flatMap(({ subscriptionIds }) => subscriptionIds), ...command.subscriptionIds])].sort();
       await this.leaves.lockSubscriptions(tx, vendorId, subscriptionIds);
       const status = await this.statusFor(tx, vendorId, householdId, previous, command, context);
       const result = await this.leaves.createRevision(tx, {
@@ -109,7 +109,7 @@ export class DefaultLeaveService extends LeaveService {
         subscriptions: subscriptionIds.map((subscriptionId) => ({ subscriptionId, selected: command.subscriptionIds.includes(subscriptionId) })),
         expectedVersion: command.expectedVersion, status: status.status, decisions: status.decisions,
       });
-      const agentUserIds = await this.synchronize(tx, vendorId, householdId, [previous, command], context, actor.userId);
+      const agentUserIds = await this.synchronize(tx, vendorId, householdId, [...previous, command], context, actor.userId);
       await this.audit(tx, actor, vendorId, result, 'leave.amended');
       await this.notifyOutcome(tx, result, actor.userId, agentUserIds);
       return request(result);
@@ -122,16 +122,17 @@ export class DefaultLeaveService extends LeaveService {
       const revision = current.revisions.find(({ id }) => id === current.currentRevisionId) ?? current.revisions[0];
       if (!revision) throw new ApplicationError('LEAVE_REQUEST_STATE_CONFLICT', 'Leave request has no current revision', 409);
       const context = await this.context(tx, vendorId);
-      const previous = { startDate: revision.startDate, endDate: revision.endDate, subscriptionIds: revision.subscriptionIds };
-      await this.leaves.lockSubscriptions(tx, vendorId, revision.subscriptionIds);
+      const previous = selections(current, { startDate: revision.startDate, endDate: revision.endDate, subscriptionIds: revision.subscriptionIds });
+      const subscriptionIds = [...new Set(previous.flatMap((selection) => selection.subscriptionIds))].sort();
+      await this.leaves.lockSubscriptions(tx, vendorId, subscriptionIds);
       const status = await this.statusFor(tx, vendorId, householdId, previous, undefined, context);
       const result = await this.leaves.createRevision(tx, {
         vendorId, householdId, requestId: leaveRequestId, revisionId: randomUUID(), action: 'cancel', previousRevisionId: revision.id,
         source: 'customer', createdBy: actor.userId, startDate: revision.startDate, endDate: revision.endDate,
-        subscriptions: revision.subscriptionIds.map((subscriptionId) => ({ subscriptionId, selected: false })),
+        subscriptions: subscriptionIds.map((subscriptionId) => ({ subscriptionId, selected: false })),
         expectedVersion: command.expectedVersion, ...(command.note ? { note: command.note } : {}), status: status.status, decisions: status.decisions,
       });
-      await this.synchronize(tx, vendorId, householdId, [revision], context, actor.userId);
+      await this.synchronize(tx, vendorId, householdId, previous, context, actor.userId);
       await this.audit(tx, actor, vendorId, result, 'leave.cancelled'); return request(result);
     });
   }
@@ -149,8 +150,8 @@ export class DefaultLeaveService extends LeaveService {
       const result = await this.leaves.decide(tx, { vendorId, id: decisionId, ...command, decidedBy: actor.userId, now: this.now(), reason: command.reason.trim() });
       const key = { vendorId, subscriptionId: result.subscriptionId, serviceDate: result.serviceDate, deliverySlotId: result.deliverySlotId };
       const effective = await this.leaves.isEffectivelyOnLeave(tx, key);
-      if (effective) await this.deliveries.applyCustomerLeave(tx, key, actor.userId);
-      else await this.deliveries.reverseCustomerLeave(tx, key, actor.userId);
+      if (effective) await this.deliveries.applyCustomerLeave(tx, key, actor.userId, 'vendor_admin');
+      else await this.deliveries.reverseCustomerLeave(tx, key, actor.userId, 'vendor_admin');
       await this.audit(tx, actor, vendorId, result.request, `leave.decision.${command.decision}`);
       const revision = result.request.revisions.find(({ id }) => id === result.request.currentRevisionId) ?? result.request.revisions[0];
       if (!revision) throw new ApplicationError('LEAVE_REQUEST_STATE_CONFLICT', 'Leave request has no current revision', 409);
@@ -185,13 +186,13 @@ export class DefaultLeaveService extends LeaveService {
     tx: TransactionContext,
     vendorId: string,
     householdId: string,
-    previous: LeaveSelectionCommand | undefined,
+    previous: readonly LeaveSelectionCommand[] | undefined,
     requested: LeaveSelectionCommand | undefined,
     context: Awaited<ReturnType<DefaultLeaveService['context']>>,
   ): Promise<Readonly<{ status: LeaveRequestStatus; decisions: PersistLeaveRevision['decisions'] }>> {
     const now = this.now();
     const requestedTotal = requested ? await this.occurrenceCount(tx, vendorId, householdId, requested, context, now) : 0;
-    const previousOccurrences = previous ? await this.lateHorizon(tx, vendorId, householdId, previous, context, now) : [];
+    const previousOccurrences = previous ? (await Promise.all(previous.map((selection) => this.lateHorizon(tx, vendorId, householdId, selection, context, now)))).flat() : [];
     const requestedOccurrences = requested ? await this.lateHorizon(tx, vendorId, householdId, requested, context, now) : [];
     const transitions = deriveLeaveOccurrenceTransitions(previousOccurrences, requestedOccurrences);
     const late = transitions.filter(({ timing }) => timing === 'late');
@@ -203,7 +204,7 @@ export class DefaultLeaveService extends LeaveService {
     }));
     const pending = decisions.filter(({ status }) => status === 'pending').length;
     if (!requested) {
-      const previousTotal = previous ? await this.occurrenceCount(tx, vendorId, householdId, previous, context, now) : 0;
+      const previousTotal = previous ? (await Promise.all(previous.map((selection) => this.occurrenceCount(tx, vendorId, householdId, selection, context, now)))).reduce((sum, count) => sum + count, 0) : 0;
       const applied = previousTotal - late.length;
       const rejected = decisions.some(({ status }) => status === 'rejected');
       const status = pending > 0 ? (applied > 0 ? 'partially_pending' : 'pending_approval') : rejected ? 'accepted' : 'cancelled';
@@ -328,9 +329,18 @@ export class DefaultLeaveService extends LeaveService {
 }
 
 function request(value: LeaveRequestRecord): LeaveRequestResult { const { status, ...result } = value; return { ...result, currentStatus: status }; }
-function selection(value: LeaveRequestRecord, fallback: LeaveSelectionCommand): LeaveSelectionCommand {
+function selections(value: LeaveRequestRecord, fallback: LeaveSelectionCommand): readonly LeaveSelectionCommand[] {
   const revision = value.revisions.find(({ id }) => id === value.currentRevisionId) ?? value.revisions[0];
-  return revision ? { startDate: revision.startDate, endDate: revision.endDate, subscriptionIds: revision.subscriptionIds } : fallback;
+  if (!revision) return [fallback];
+  const selected = [{ startDate: revision.startDate, endDate: revision.endDate, subscriptionIds: revision.subscriptionIds }];
+  const unselected = new Set(revision.subscriptions.filter(({ selected }) => !selected).map(({ subscriptionId }) => subscriptionId));
+  for (const decision of revision.decisions ?? []) {
+    const effectiveStatus = decision.status === 'approved' ? decision.requestedEffectiveStatus : decision.previousEffectiveStatus;
+    if (unselected.has(decision.subscriptionId) && effectiveStatus === 'skipped_by_customer') {
+      selected.push({ startDate: decision.serviceDate, endDate: decision.serviceDate, subscriptionIds: [decision.subscriptionId] });
+    }
+  }
+  return selected.filter(({ subscriptionIds }) => subscriptionIds.length > 0);
 }
 function page(value: StoreRequestPage): LeaveRequestPage { return { items: value.items.map(request), ...(value.nextCursor ? { nextCursor: value.nextCursor } : {}) }; }
 function decision(value: StoreDecisionResult): LeaveDecisionResult { const { status, request: leave, ...result } = value; return { ...result, currentStatus: status, request: request(leave) }; }

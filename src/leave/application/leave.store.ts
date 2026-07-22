@@ -8,10 +8,15 @@ export type LeaveRevisionSubscription = Readonly<{
   subscriptionId: string;
   selected: boolean;
 }>;
+export type LeaveRevisionDecisionRecord = Readonly<{
+  id: string; subscriptionId: string; serviceDate: string; deliverySlotId: string; status: LeaveDecisionStatus;
+  previousEffectiveStatus: 'scheduled' | 'skipped_by_customer'; requestedEffectiveStatus: 'scheduled' | 'skipped_by_customer';
+  version: number; createdAt: Date;
+}>;
 export type LeaveRevisionRecord = Readonly<{
   id: string; action: LeaveAction; startDate: string; endDate: string; source: LeaveSource; createdBy: string;
   status: LeaveRequestStatus; note?: string; previousRevisionId?: string; createdAt: Date;
-  subscriptions: readonly LeaveRevisionSubscription[]; subscriptionIds: readonly string[];
+  subscriptions: readonly LeaveRevisionSubscription[]; subscriptionIds: readonly string[]; decisions?: readonly LeaveRevisionDecisionRecord[];
 }>;
 export type LeaveRequestRecord = Readonly<{
   id: string; vendorId: string; householdId: string; status: LeaveRequestStatus; currentRevisionId?: string;

@@ -57,7 +57,7 @@ async function cleanup(value: Fixture) {
   await owner.query('DELETE FROM users WHERE id=$1', [value.userId]);
 }
 
-function revision(current: Fixture, values: Readonly<{ requestId: string; revisionId: string; action?: 'create' | 'amend' | 'cancel'; previousRevisionId?: string; status?: 'accepted' | 'pending_approval' | 'cancelled'; subscriptions?: readonly Readonly<{ subscriptionId: string; selected: boolean }>[]; decisions?: readonly Readonly<{ id: string; serviceDate: string; deliverySlotId: string; status: 'pending' | 'rejected'; subscriptionId?: string }>[] }>) {
+function revision(current: Fixture, values: Readonly<{ requestId: string; revisionId: string; action?: 'create' | 'amend' | 'cancel'; previousRevisionId?: string; status?: 'accepted' | 'pending_approval' | 'partially_pending' | 'cancelled'; subscriptions?: readonly Readonly<{ subscriptionId: string; selected: boolean }>[]; decisions?: readonly Readonly<{ id: string; serviceDate: string; deliverySlotId: string; status: 'pending' | 'rejected'; subscriptionId?: string; previousEffectiveStatus?: 'scheduled' | 'skipped_by_customer'; requestedEffectiveStatus?: 'scheduled' | 'skipped_by_customer' }>[] }>) {
   return {
     vendorId: current.vendorId, householdId: current.householdId, requestId: values.requestId, revisionId: values.revisionId,
     action: values.action ?? 'create', previousRevisionId: values.previousRevisionId, source: 'customer' as const,
@@ -245,6 +245,45 @@ void test('late decisions are explicit, versioned, cursor-stable, and tenant-neu
       await rejectsWithCode(() => store.getRequest(tx, other.vendorId, other.householdId, requestId), 'LEAVE_REQUEST_NOT_FOUND');
     });
   } finally { await cleanup(current); await cleanup(other); }
+});
+
+void test('mixed amendment decisions recompute status from the current selected baseline', async () => {
+  const current = await fixture('mixed-decision-status'); const requestId = randomUUID(); const createdRevisionId = randomUUID();
+  const replacementSubscriptionId = randomUUID(); const replacementRevisionId = randomUUID();
+  const removalDecisionId = randomUUID(); const additionDecisionId = randomUUID();
+  try {
+    await owner.query('INSERT INTO subscriptions(id,vendor_id,household_id,updated_at) VALUES($1,$2,$3,now())', [replacementSubscriptionId, current.vendorId, current.householdId]);
+    const client = await owner.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query(`INSERT INTO subscription_revisions(id,vendor_id,subscription_id,product_id,unit_id,delivery_slot_id,quantity,status,effective_from,created_by,updated_at)
+        VALUES($1,$2,$3,$4,$5,$6,1,'active','2029-01-01',$7,now())`, [replacementRevisionId, current.vendorId, replacementSubscriptionId, current.productId, current.unitId, current.slotId, current.userId]);
+      await client.query('INSERT INTO subscription_revision_weekdays(vendor_id,subscription_revision_id,weekday) VALUES($1,$2,2)', [current.vendorId, replacementRevisionId]);
+      await client.query('COMMIT');
+    } catch (cause) { await client.query('ROLLBACK'); throw cause; } finally { client.release(); }
+    await transactions.run(current.vendorId, async (tx) => {
+      await store.createRevision(tx, revision(current, { requestId, revisionId: createdRevisionId }));
+      const amendedRevisionId = randomUUID();
+      await store.createRevision(tx, revision(current, {
+        requestId, revisionId: amendedRevisionId, action: 'amend', previousRevisionId: createdRevisionId,
+        status: 'partially_pending', subscriptions: [
+          { subscriptionId: current.subscriptionId, selected: false },
+          { subscriptionId: replacementSubscriptionId, selected: true },
+        ], decisions: [
+          { id: removalDecisionId, subscriptionId: current.subscriptionId, serviceDate: '2030-01-01', deliverySlotId: current.slotId,
+            status: 'pending', previousEffectiveStatus: 'skipped_by_customer', requestedEffectiveStatus: 'scheduled' },
+          { id: additionDecisionId, subscriptionId: replacementSubscriptionId, serviceDate: '2030-01-01', deliverySlotId: current.slotId,
+            status: 'pending', previousEffectiveStatus: 'scheduled', requestedEffectiveStatus: 'skipped_by_customer' },
+        ],
+      }));
+      const afterRemoval = await store.decide(tx, { vendorId: current.vendorId, id: removalDecisionId, expectedVersion: 1,
+        decision: 'approved', decidedBy: current.userId, reason: 'Approve removal', now: new Date() });
+      assert.equal(afterRemoval.request.status, 'pending_approval');
+      const afterAddition = await store.decide(tx, { vendorId: current.vendorId, id: additionDecisionId, expectedVersion: 1,
+        decision: 'rejected', decidedBy: current.userId, reason: 'Reject replacement', now: new Date() });
+      assert.equal(afterAddition.request.status, 'rejected');
+    });
+  } finally { await cleanup(current); }
 });
 
 void test('unselected revision associations retain the strong tenant subscription foreign key', async () => {

@@ -269,6 +269,9 @@ void test('late amendment approval reverses a leave skip and rejected cancellati
     await requestContextStore.run({ correlationId: randomUUID() }, () => late.decideOccurrence({ ...actor(value), memberships: [] }, value.vendorId, amendmentDecision.id, {
       expectedVersion: 1, decision: 'approved', reason: 'Approve removal',
     }));
+    const vendorEvent = (await owner.query<{ source: string; actorUserId: string }>(`SELECT source,actor_user_id AS "actorUserId" FROM delivery_events
+      WHERE vendor_id=$1 AND scheduled_delivery_id=$2 ORDER BY created_at DESC,id DESC LIMIT 1`, [value.vendorId, value.firstDeliveryId])).rows[0];
+    assert.deepEqual(vendorEvent, { source: 'vendor_admin', actorUserId: value.customerUserId });
     assert.deepEqual((await owner.query<{ status: string }>('SELECT status FROM scheduled_deliveries WHERE vendor_id=$1 ORDER BY service_date', [value.vendorId])).rows,
       [{ status: 'scheduled' }, { status: 'skipped_by_customer' }]);
 

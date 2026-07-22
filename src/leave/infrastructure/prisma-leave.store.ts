@@ -32,7 +32,10 @@ import {
 
 const requestInclude = {
   revisions: {
-    include: { subscriptions: { select: { subscriptionId: true, selected: true }, orderBy: { subscriptionId: 'asc' as const } } },
+    include: { subscriptions: { select: {
+      subscriptionId: true, selected: true,
+      occurrenceDecisions: { orderBy: [{ serviceDate: 'asc' as const }, { id: 'asc' as const }] },
+    }, orderBy: { subscriptionId: 'asc' as const } } },
     orderBy: [{ createdAt: 'desc' as const }, { id: 'desc' as const }],
   },
 } satisfies Prisma.LeaveRequestInclude;
@@ -177,11 +180,11 @@ export class PrismaLeaveStore extends LeaveStore {
 
   async decide(context: TransactionContext, input: DecideLeaveOccurrence): Promise<LeaveDecisionResult> {
     const tx = unwrapPrismaTransaction(context);
-    const rows = await tx.$queryRaw<Array<{ id: string; leaveRequestRevisionId: string; subscriptionId: string; serviceDate: Date; deliverySlotId: string; version: number; requestId: string; householdId: string; requestStatus: string; action: string; requestedEffectiveStatus: string }>>(Prisma.sql`
-      SELECT d.id,d.leave_request_revision_id AS "leaveRequestRevisionId",d.subscription_id AS "subscriptionId",d.service_date AS "serviceDate",d.delivery_slot_id AS "deliverySlotId",d.version,r.leave_request_id AS "requestId",q.household_id AS "householdId",q.status AS "requestStatus",r.action,d.requested_effective_status AS "requestedEffectiveStatus"
+    const rows = await tx.$queryRaw<Array<{ id: string; leaveRequestRevisionId: string; subscriptionId: string; serviceDate: Date; deliverySlotId: string; version: number; requestId: string; householdId: string; action: string; requestedEffectiveStatus: string }>>(Prisma.sql`
+      SELECT d.id,d.leave_request_revision_id AS "leaveRequestRevisionId",d.subscription_id AS "subscriptionId",d.service_date AS "serviceDate",d.delivery_slot_id AS "deliverySlotId",d.version,r.leave_request_id AS "requestId",q.household_id AS "householdId",r.action,d.requested_effective_status AS "requestedEffectiveStatus"
       FROM leave_occurrence_decisions d JOIN leave_request_revisions r ON r.vendor_id=d.vendor_id AND r.id=d.leave_request_revision_id
       JOIN leave_requests q ON q.vendor_id=r.vendor_id AND q.id=r.leave_request_id AND q.current_revision_id=r.id
-      WHERE d.vendor_id=${input.vendorId}::uuid AND d.id=${input.id}::uuid FOR UPDATE OF d`);
+      WHERE d.vendor_id=${input.vendorId}::uuid AND d.id=${input.id}::uuid FOR UPDATE OF q,d`);
     const locked = rows[0];
     if (!locked) throw error('LEAVE_DECISION_NOT_FOUND', 'Leave decision was not found', 404);
     if (locked.version !== input.expectedVersion) throw error('LEAVE_DECISION_VERSION_CONFLICT', 'Leave decision was changed by another request', 409);
@@ -205,17 +208,22 @@ export class PrismaLeaveStore extends LeaveStore {
       status: input.decision, decidedBy: input.decidedBy, decidedAt: input.now, decisionReason: input.reason, version: { increment: 1 },
     } });
     if (changed.count !== 1) throw error('LEAVE_DECISION_STATE_CONFLICT', 'Leave decision is no longer pending', 409);
-    const decisions = await tx.leaveOccurrenceDecision.findMany({ where: { vendorId: input.vendorId, leaveRequestRevisionId: locked.leaveRequestRevisionId }, select: { status: true, requestedEffectiveStatus: true } });
+    const [decisions, subscriptions] = await Promise.all([
+      tx.leaveOccurrenceDecision.findMany({ where: { vendorId: input.vendorId, leaveRequestRevisionId: locked.leaveRequestRevisionId },
+        select: { subscriptionId: true, status: true, previousEffectiveStatus: true, requestedEffectiveStatus: true } }),
+      tx.leaveRevisionSubscription.findMany({ where: { vendorId: input.vendorId, leaveRequestRevisionId: locked.leaveRequestRevisionId },
+        select: { subscriptionId: true, selected: true } }),
+    ]);
     const pending = decisions.filter(({ status }) => status === 'pending').length;
-    const status = locked.action === 'cancel'
-      ? pending > 0
-        ? (locked.requestStatus === 'partially_pending' || decisions.some(({ status, requestedEffectiveStatus }) => status === 'approved' && requestedEffectiveStatus === 'scheduled') ? 'partially_pending' : 'pending_approval')
-        : decisions.some(({ status, requestedEffectiveStatus }) => status === 'rejected' && requestedEffectiveStatus === 'scheduled') ? 'accepted' : 'cancelled'
-      : deriveLeaveStatus({
-        effective: Number(locked.requestStatus === 'accepted' || locked.requestStatus === 'partially_pending'
-          || decisions.some(({ status, requestedEffectiveStatus }) => status === 'approved' && requestedEffectiveStatus === 'skipped_by_customer')),
-        pending,
-      });
+    const selected = new Set(subscriptions.filter(({ selected }) => selected).map(({ subscriptionId }) => subscriptionId));
+    const effective = Math.max(0, decisions.reduce((count, decision) => {
+      const baseline = selected.has(decision.subscriptionId) ? 'skipped_by_customer' : 'scheduled';
+      const resolved = decision.status === 'approved' ? decision.requestedEffectiveStatus : decision.previousEffectiveStatus;
+      return count + Number(resolved === 'skipped_by_customer') - Number(baseline === 'skipped_by_customer');
+    }, selected.size));
+    const status = pending > 0
+      ? deriveLeaveStatus({ effective, pending })
+      : effective > 0 ? 'accepted' : locked.action === 'cancel' ? 'cancelled' : 'rejected';
     await tx.leaveRequest.update({ where: { id: locked.requestId }, data: { status, version: { increment: 1 } } });
     const decision = await tx.leaveOccurrenceDecision.findFirst({ where: { id: input.id, vendorId: input.vendorId } });
     if (!decision) throw error('LEAVE_DECISION_NOT_FOUND', 'Leave decision was not found', 404);
@@ -326,8 +334,13 @@ export class PrismaLeaveStore extends LeaveStore {
         startDate: dateString(revision.startDate), endDate: dateString(revision.endDate), source: revision.source as LeaveRequestRecord['revisions'][number]['source'],
         createdBy: revision.createdBy, status: revision.status as LeaveRequestRecord['status'], ...(revision.note ? { note: revision.note } : {}),
         ...(revision.previousRevisionId ? { previousRevisionId: revision.previousRevisionId } : {}), createdAt: revision.createdAt,
-        subscriptions: revision.subscriptions,
+        subscriptions: revision.subscriptions.map(({ subscriptionId, selected }) => ({ subscriptionId, selected })),
         subscriptionIds: revision.subscriptions.filter(({ selected }) => selected).map(({ subscriptionId }) => subscriptionId),
+        decisions: revision.subscriptions.flatMap(({ occurrenceDecisions }) => occurrenceDecisions.map((decision) => ({
+          id: decision.id, subscriptionId: decision.subscriptionId, serviceDate: dateString(decision.serviceDate), deliverySlotId: decision.deliverySlotId,
+          status: decision.status as LeaveDecisionRecord['status'], previousEffectiveStatus: decision.previousEffectiveStatus as 'scheduled' | 'skipped_by_customer',
+          requestedEffectiveStatus: decision.requestedEffectiveStatus as 'scheduled' | 'skipped_by_customer', version: decision.version, createdAt: decision.createdAt,
+        }))),
       })), };
   }
 

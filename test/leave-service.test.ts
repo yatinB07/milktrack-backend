@@ -140,6 +140,61 @@ void test('late transition derivation bounds a hundred-year request to the seven
   assert.deepEqual(previewEnds, ['2129-12-31', '2030-01-07']);
 });
 
+void test('subsequent amend and cancel retain effectively skipped unselected associations', async () => {
+  const replacementId = requestedSubscriptionId;
+  const nextId = '00000000-0000-4000-8000-000000000017';
+  const current = {
+    ...request(), status: 'partially_pending' as const,
+    revisions: [{
+      ...request().revisions[0], action: 'amend' as const, subscriptions: [
+        { subscriptionId, selected: false }, { subscriptionId: replacementId, selected: true },
+      ], subscriptionIds: [replacementId], decisions: [{
+        id: '00000000-0000-4000-8000-000000000018', vendorId, leaveRequestRevisionId: request().revisions[0].id,
+        subscriptionId, serviceDate: '2030-01-02', deliverySlotId: slotId, status: 'rejected' as const,
+        previousEffectiveStatus: 'skipped_by_customer' as const, requestedEffectiveStatus: 'scheduled' as const,
+        version: 1, createdAt: new Date('2030-01-01T00:00:00.000Z'),
+      }],
+    }],
+  };
+  const persisted: Array<Record<string, unknown>> = [];
+  const locked: string[][] = [];
+  const store = {
+    getRequest: () => Promise.resolve(current),
+    lockSubscriptions: (_tx: TransactionContext, _vendorId: string, ids: readonly string[]) => { locked.push([...ids]); return Promise.resolve(); },
+    preview: (_tx: TransactionContext, input: { subscriptionIds: readonly string[] }) => Promise.resolve({
+      items: input.subscriptionIds.map((id) => ({ subscriptionId: id, deliverySlotId: slotId, serviceDate: '2030-01-02',
+        cutoffAt: new Date(), timing: 'late' as const, proposedBehavior: 'pending_approval' as const })),
+      onTimeCount: 0, lateCount: input.subscriptionIds.length,
+    }),
+    createRevision: (_tx: TransactionContext, input: Record<string, unknown>) => { persisted.push(input); return Promise.resolve({ ...current, status: input.status }); },
+    isEffectivelyOnLeave: () => Promise.resolve(false),
+  };
+  const service = new DefaultLeaveService(
+    { execute: (_input: unknown, operation: (currentTx: TransactionContext) => Promise<unknown>) => operation(tx) } as never,
+    { requireCustomerSubscriptionHousehold: () => Promise.resolve({ householdId }) } as never, store as never,
+    { getDeliveryPolicyForTransaction: () => Promise.resolve({ vendorId, skipCutoffMinutes: 60, lateLeavePolicy: 'approval', captureAgentLocationEvidence: false, version: 1 }), getSubscriptionTimezone: () => Promise.resolve({ timezone: 'UTC' }) } as never,
+    { append: () => Promise.resolve() }, { applyCustomerLeave: () => Promise.resolve(), reverseCustomerLeave: () => Promise.resolve() } as never,
+    { append: () => Promise.resolve() }, { project: () => Promise.resolve([]), projectRoute: () => Promise.resolve(undefined) },
+    { customerMembershipHistory: () => Promise.resolve([]) } as never,
+  );
+  (service as unknown as { now: () => Date }).now = () => new Date('2030-01-01T23:00:00.000Z');
+
+  await requestContextStore.run({ correlationId: '00000000-0000-4000-8000-000000000097' }, async () => {
+    await service.amend(actor, vendorId, householdId, current.id, {
+      startDate: '2030-01-02', endDate: '2030-01-02', subscriptionIds: [nextId], expectedVersion: current.version,
+    });
+    await service.cancel(actor, vendorId, householdId, current.id, { expectedVersion: current.version });
+  });
+
+  assert.deepEqual(locked, [[subscriptionId, replacementId, nextId].sort(), [subscriptionId, replacementId].sort()]);
+  assert.deepEqual(persisted[0]?.subscriptions, [
+    { subscriptionId, selected: false }, { subscriptionId: replacementId, selected: false }, { subscriptionId: nextId, selected: true },
+  ]);
+  assert.deepEqual(persisted[1]?.subscriptions, [
+    { subscriptionId, selected: false }, { subscriptionId: replacementId, selected: false },
+  ]);
+});
+
 function request() {
   return {
     id: '00000000-0000-4000-8000-000000000020', vendorId, householdId, status: 'accepted' as const, version: 1,
