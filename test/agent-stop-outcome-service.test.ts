@@ -29,6 +29,8 @@ function fixture(overrides: Readonly<{
   onLeave?: (id: string) => boolean;
   missingPriceId?: string;
   captureLocation?: boolean;
+  agentError?: ApplicationError;
+  lockError?: ApplicationError;
 }> = {}) {
   const calls: Array<{ kind: string; value?: unknown }> = [];
   const authorization = {
@@ -39,6 +41,7 @@ function fixture(overrides: Readonly<{
   const store = {
     lockStopPendingSet: (_tx: TransactionContext, input: { submitted: readonly { scheduledDeliveryId: string }[] }) => {
       calls.push({ kind: 'lock', value: input.submitted.map(({ scheduledDeliveryId }) => scheduledDeliveryId) });
+      if (overrides.lockError) return Promise.reject(overrides.lockError);
       return Promise.resolve(pending);
     },
     createPriceSnapshot: (_tx: TransactionContext, value: unknown) => { calls.push({ kind: 'snapshot', value }); return Promise.resolve(); },
@@ -50,7 +53,10 @@ function fixture(overrides: Readonly<{
   };
   const service = new DefaultAgentStopOutcomeService(
     authorization as never,
-    { resolveSelfRouteAgent: () => { calls.push({ kind: 'agent' }); return Promise.resolve({ membershipId: 'agent-membership' }); } } as never,
+    { resolveSelfRouteAgent: () => {
+      calls.push({ kind: 'agent' });
+      return overrides.agentError ? Promise.reject(overrides.agentError) : Promise.resolve({ membershipId: 'agent-membership' });
+    } } as never,
     store as never,
     { isEffectivelyOnLeave: (_tx: TransactionContext, key: { subscriptionId: string }) => { calls.push({ kind: 'leave', value: key.subscriptionId }); return Promise.resolve(overrides.onLeave?.(key.subscriptionId) ?? false); } },
     { resolve: (_tx: TransactionContext, _vendorId: string, value: { productId: string }) => { calls.push({ kind: 'price', value: value.productId }); return Promise.resolve(value.productId === overrides.missingPriceId ? undefined : { amountMinor: '100', currency: 'INR', pricingLevel: 'global', sourcePriceId: value.productId, sourcePriceType: 'global_price', resolvedAt: new Date('2030-01-01T00:30:00Z') }); } } as never,
@@ -129,4 +135,33 @@ void test('duplicate delivery IDs are rejected before store access', async () =>
     serviceDate: '2030-01-01', outcome: 'delivered', occurredAt: '2030-01-01T01:00:00Z', items: [items[0], items[0]],
   }), (error: unknown) => error instanceof ApplicationError && error.code === 'INCOMPLETE_STOP_SET');
   assert.equal(calls.some(({ kind }) => kind === 'lock'), false);
+});
+
+void test('inactive and wrong agents fail before stop access', async () => {
+  for (const name of ['inactive agent', 'wrong vendor agent']) {
+    const denial = new ApplicationError('FORBIDDEN', name, 403);
+    const { service, calls } = fixture({ agentError: denial });
+    await assert.rejects(service.record(actor, vendorId, routeStopId, {
+      serviceDate: '2030-01-01', outcome: 'delivered', occurredAt: '2030-01-01T01:00:00Z', items,
+    }), (error: unknown) => error === denial);
+    assert.equal(calls.some(({ kind }) => kind === 'lock'), false);
+    assert.equal(calls.some(({ kind }) => ['snapshot', 'event', 'notification'].includes(kind)), false);
+  }
+});
+
+void test('assignment, date, stop, vendor, and version conflicts fail before writes', async () => {
+  for (const [name, code] of [
+    ['wrong assignment', 'INCOMPLETE_STOP_SET'],
+    ['wrong service date', 'INCOMPLETE_STOP_SET'],
+    ['wrong route stop', 'INCOMPLETE_STOP_SET'],
+    ['wrong vendor', 'INCOMPLETE_STOP_SET'],
+    ['stale second version', 'STALE_VERSION'],
+  ] as const) {
+    const conflict = new ApplicationError(code, name, 409);
+    const { service, calls } = fixture({ lockError: conflict });
+    await assert.rejects(service.record(actor, vendorId, routeStopId, {
+      serviceDate: '2030-01-01', outcome: 'delivered', occurredAt: '2030-01-01T01:00:00Z', items,
+    }), (error: unknown) => error === conflict);
+    assert.equal(calls.some(({ kind }) => ['snapshot', 'event', 'notification'].includes(kind)), false);
+  }
 });

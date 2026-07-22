@@ -106,3 +106,21 @@ void test('forced late failures roll back every stop event, projection, snapshot
     await assertUnchanged(value);
   } finally { await cleanup(value); }
 });
+
+void test('an invalid or stale second item leaves the real stop aggregate unchanged', async () => {
+  const value = await fixture();
+  const actor = { userId: value.agentUserId, sessionId: randomUUID(), displayName: 'Agent', authenticationMethod: 'phone_otp', platformRoles: [], memberships: [] } as const;
+  const validItems = value.deliveryIds.map((scheduledDeliveryId) => ({ scheduledDeliveryId, expectedVersion: 1, actualQuantity: '1' }));
+  const store = new PrismaDeliveryStore();
+  try {
+    for (const [code, items] of [
+      ['INVALID_DELIVERY_QUANTITY', [validItems[0], { ...validItems[1], actualQuantity: '0' }]],
+      ['STALE_VERSION', [validItems[0], { ...validItems[1], expectedVersion: 2 }]],
+    ] as const) {
+      await assert.rejects(service(value, store, new PrismaNotificationStore()).record(actor, value.vendorId, value.stopId, {
+        serviceDate: '2030-01-01', outcome: 'delivered', occurredAt: '2030-01-01T01:00:00Z', items,
+      }), (error: unknown) => error instanceof Error && 'code' in error && error.code === code);
+      await assertUnchanged(value);
+    }
+  } finally { await cleanup(value); }
+});
