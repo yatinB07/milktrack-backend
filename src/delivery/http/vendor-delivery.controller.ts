@@ -1,0 +1,27 @@
+import { Controller, Get, Inject, Param, ParseUUIDPipe, Query, UseGuards } from '@nestjs/common';
+import { ApiBearerAuth, ApiResponse, ApiTags } from '@nestjs/swagger';
+
+import { requestContextStore } from '../../common/context/request-context.js';
+import { ApiErrorResponseDto } from '../../common/errors/application-error.filter.js';
+import { ActorGuard } from '../../identity/http/actor.guard.js';
+import { DeliveryQueryService } from '../application/delivery-query.service.js';
+import { DeliveryListResponseDto, VendorDeliveryDetailResponseDto, VendorDeliveryPageQueryDto, toDeliverySummaryResponse, toVendorDeliveryDetailResponse } from './delivery.dto.js';
+
+@ApiTags('Vendor deliveries') @ApiBearerAuth('opaqueBearer') @UseGuards(ActorGuard)
+@Controller('vendors/:vendorId/deliveries')
+export class VendorDeliveryController {
+  constructor(@Inject(DeliveryQueryService) private readonly deliveries: DeliveryQueryService) {}
+
+  @Get() @ApiResponse({ status: 200, type: DeliveryListResponseDto }) async list(@Param('vendorId', new ParseUUIDPipe({ version: '4' })) vendorId: string, @Query() query: VendorDeliveryPageQueryDto) {
+    const page = await this.deliveries.listVendor(requestContextStore.requireActor(), vendorId, query);
+    return { items: page.items.map(toDeliverySummaryResponse), ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}) };
+  }
+
+  @Get(':deliveryId') @ApiResponse({ status: 200, type: VendorDeliveryDetailResponseDto }) get(@Param('vendorId', new ParseUUIDPipe({ version: '4' })) vendorId: string, @Param('deliveryId', new ParseUUIDPipe({ version: '4' })) deliveryId: string) {
+    return this.deliveries.getVendorDetail(requestContextStore.requireActor(), vendorId, deliveryId).then(toVendorDeliveryDetailResponse);
+  }
+}
+
+for (const status of [400, 401, 403, 404, 409, 503]) ApiResponse({ status, type: ApiErrorResponseDto })(VendorDeliveryController);
+Reflect.defineMetadata('design:paramtypes', [String, VendorDeliveryPageQueryDto], VendorDeliveryController.prototype, 'list');
+Reflect.defineMetadata('design:paramtypes', [String, String], VendorDeliveryController.prototype, 'get');
