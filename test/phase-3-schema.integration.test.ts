@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import pg from 'pg';
 
@@ -106,6 +107,84 @@ async function cleanup(values: readonly Fixture[]) {
     await owner.query('DELETE FROM vendors WHERE id=$1', [value.vendorId]);
   }
 }
+
+void test('cutoff snapshot migration preserves precision and rejects ambiguous existing history', async () => {
+  const sql = await readFile(
+    new URL('../prisma/migrations/202607230002_leave_decision_cutoff_snapshot/migration.sql', import.meta.url),
+    'utf8',
+  );
+  const emptySchema = `cutoff_empty_${randomUUID().replaceAll('-', '')}`;
+  const populatedSchema = `cutoff_populated_${randomUUID().replaceAll('-', '')}`;
+  const ownerClient = await owner.connect();
+  const runtimeClient = await runtime.connect();
+
+  try {
+    await ownerClient.query(`CREATE SCHEMA "${emptySchema}"`);
+    await ownerClient.query(`CREATE TABLE "${emptySchema}".leave_occurrence_decisions (id UUID PRIMARY KEY)`);
+    await ownerClient.query(`SET search_path TO "${emptySchema}", public`);
+    await ownerClient.query(sql);
+    const column = await ownerClient.query<{
+      column_default: string | null;
+      data_type: string;
+      datetime_precision: number;
+      is_nullable: string;
+    }>(
+      `SELECT column_default, data_type, datetime_precision, is_nullable
+       FROM information_schema.columns
+       WHERE table_schema = $1 AND table_name = 'leave_occurrence_decisions' AND column_name = 'cutoff_at'`,
+      [emptySchema],
+    );
+    assert.deepEqual(column.rows, [{
+      column_default: null,
+      data_type: 'timestamp with time zone',
+      datetime_precision: 6,
+      is_nullable: 'NO',
+    }]);
+
+    await ownerClient.query(`GRANT USAGE ON SCHEMA "${emptySchema}" TO milktrack_app`);
+    await ownerClient.query(`GRANT SELECT, INSERT ON "${emptySchema}".leave_occurrence_decisions TO milktrack_app`);
+    await runtimeClient.query(`SET search_path TO "${emptySchema}", public`);
+    await assert.rejects(
+      runtimeClient.query('INSERT INTO leave_occurrence_decisions (id) VALUES ($1)', [randomUUID()]),
+      /null value in column "cutoff_at"/u,
+    );
+    const decisionId = randomUUID();
+    await runtimeClient.query(
+      'INSERT INTO leave_occurrence_decisions (id, cutoff_at) VALUES ($1, $2)',
+      [decisionId, '2030-01-01 06:32:03.123456+05:30'],
+    );
+    const persisted = await runtimeClient.query<{ cutoff_at: string }>(
+      `SELECT to_char(cutoff_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS.US') AS cutoff_at
+       FROM leave_occurrence_decisions WHERE id = $1`,
+      [decisionId],
+    );
+    assert.deepEqual(persisted.rows, [{ cutoff_at: '2030-01-01 01:02:03.123456' }]);
+
+    await ownerClient.query(`CREATE SCHEMA "${populatedSchema}"`);
+    await ownerClient.query(`CREATE TABLE "${populatedSchema}".leave_occurrence_decisions (id UUID PRIMARY KEY)`);
+    await ownerClient.query(
+      `INSERT INTO "${populatedSchema}".leave_occurrence_decisions (id) VALUES ($1)`,
+      [randomUUID()],
+    );
+    await ownerClient.query(`SET search_path TO "${populatedSchema}", public`);
+    await assert.rejects(ownerClient.query(sql), {
+      message: /cannot add required leave decision cutoff snapshot: existing decisions require an explicit historical repair/u,
+    });
+    const rejectedColumn = await ownerClient.query(
+      `SELECT 1 FROM information_schema.columns
+       WHERE table_schema = $1 AND table_name = 'leave_occurrence_decisions' AND column_name = 'cutoff_at'`,
+      [populatedSchema],
+    );
+    assert.equal(rejectedColumn.rowCount, 0);
+  } finally {
+    await runtimeClient.query('RESET search_path');
+    runtimeClient.release();
+    await ownerClient.query('RESET search_path');
+    await ownerClient.query(`DROP SCHEMA IF EXISTS "${emptySchema}" CASCADE`);
+    await ownerClient.query(`DROP SCHEMA IF EXISTS "${populatedSchema}" CASCADE`);
+    ownerClient.release();
+  }
+});
 
 void test('Phase 3 tables enforce tenant isolation, immutable history, and delivery evidence constraints', async () => {
   const [a, b] = await Promise.all([fixture('a'), fixture('b')]);

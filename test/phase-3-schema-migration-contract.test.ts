@@ -57,3 +57,23 @@ void test('Phase 3 corrections migrate strict leave, delivery, and notification 
   assert.match(sql, /RAISE EXCEPTION[^;]+notification/isu);
   assert.doesNotMatch(sql, /UPDATE delivery_events[\s\S]+SET (?:latitude|longitude)/u);
 });
+
+void test('Phase 3 snapshots leave decision cutoffs without fabricating history', async () => {
+  const sql = await readFile(
+    new URL('../prisma/migrations/202607230002_leave_decision_cutoff_snapshot/migration.sql', import.meta.url),
+    'utf8',
+  );
+
+  assert.match(sql, /IF EXISTS \(SELECT 1 FROM leave_occurrence_decisions LIMIT 1\)/u);
+  assert.match(
+    sql,
+    /RAISE EXCEPTION 'cannot add required leave decision cutoff snapshot: existing decisions require an explicit historical repair'/u,
+  );
+  assert.match(
+    sql,
+    /ALTER TABLE leave_occurrence_decisions\s+ADD COLUMN cutoff_at TIMESTAMPTZ\(6\) NOT NULL;/u,
+  );
+  assert.doesNotMatch(sql, /cutoff_at[^;]*DEFAULT/iu);
+  assert.doesNotMatch(sql, /UPDATE\s+leave_occurrence_decisions/iu);
+  assert.doesNotMatch(sql, /skip_cutoff_minutes|late_leave_policy|timezone/iu);
+});

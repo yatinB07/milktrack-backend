@@ -754,6 +754,7 @@ model LeaveOccurrenceDecision {
   subscriptionId          String   @map("subscription_id") @db.Uuid
   serviceDate             DateTime @map("service_date") @db.Date
   deliverySlotId          String   @map("delivery_slot_id") @db.Uuid
+  cutoffAt                DateTime @map("cutoff_at") @db.Timestamptz(6)
   previousEffectiveStatus String   @map("previous_effective_status")
   requestedEffectiveStatus String  @map("requested_effective_status")
   status                  String
