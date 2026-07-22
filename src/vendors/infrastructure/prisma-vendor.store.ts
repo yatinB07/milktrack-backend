@@ -5,6 +5,7 @@ import type { CursorValue } from '../../common/cursor/cursor.js';
 import type { TransactionContext } from '../../common/application/transaction-context.js';
 import { PrismaService } from '../../database/infrastructure/prisma.service.js';
 import { unwrapPrismaTransaction } from '../../database/infrastructure/prisma-transaction-context.js';
+import { Prisma } from '../../generated/prisma/client.js';
 import type { CreateVendorCommand } from '../application/vendor.service.js';
 import type { DeliveryPolicy, UpdateDeliveryPolicyCommand } from '../domain/delivery-policy.js';
 import type { VendorStatus } from '../domain/vendor-lifecycle.js';
@@ -65,11 +66,19 @@ export class PrismaVendorStore {
     return { vendorId: vendor.id, skipCutoffMinutes: vendor.skipCutoffMinutes, lateLeavePolicy: vendor.lateLeavePolicy as DeliveryPolicy['lateLeavePolicy'], captureAgentLocationEvidence: vendor.captureAgentLocationEvidence, version: vendor.version };
   }
 
-  async updateDeliveryPolicy(context: TransactionContext, vendorId: string, command: UpdateDeliveryPolicyCommand): Promise<DeliveryPolicy> {
+  async updateDeliveryPolicy(context: TransactionContext, vendorId: string, command: UpdateDeliveryPolicyCommand): Promise<Readonly<{ previous: DeliveryPolicy; updated: DeliveryPolicy }>> {
     const tx = unwrapPrismaTransaction(context);
+    const [previous] = await tx.$queryRaw<DeliveryPolicy[]>(Prisma.sql`
+      SELECT id AS "vendorId", skip_cutoff_minutes AS "skipCutoffMinutes",
+        late_leave_policy AS "lateLeavePolicy",
+        capture_agent_location_evidence AS "captureAgentLocationEvidence", version
+      FROM vendors
+      WHERE id=${vendorId}::uuid AND version=${command.expectedVersion} AND deleted_at IS NULL
+      FOR UPDATE`);
+    if (!previous) throw new ApplicationError('DELIVERY_POLICY_STATE_CONFLICT', 'Delivery policy was changed by another request', 409);
     const updated = await tx.vendor.updateMany({ where: { id: vendorId, version: command.expectedVersion, deletedAt: null }, data: { skipCutoffMinutes: command.skipCutoffMinutes, lateLeavePolicy: command.lateLeavePolicy, captureAgentLocationEvidence: command.captureAgentLocationEvidence, version: { increment: 1 } } });
     if (updated.count !== 1) throw new ApplicationError('DELIVERY_POLICY_STATE_CONFLICT', 'Delivery policy was changed by another request', 409);
-    return this.getDeliveryPolicy(context, vendorId);
+    return { previous, updated: await this.getDeliveryPolicy(context, vendorId) };
   }
 
   async create(

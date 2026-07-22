@@ -1,4 +1,4 @@
-import { Type } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import { IsBoolean, IsIn, IsInt, IsString, Length, Max, Min } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
 
@@ -10,6 +10,7 @@ export class UpdateDeliveryPolicyRequestDto {
   @ApiProperty({ enum: LATE_LEAVE_POLICIES }) @IsIn(LATE_LEAVE_POLICIES) lateLeavePolicy!: LateLeavePolicy;
   @IsBoolean() captureAgentLocationEvidence!: boolean;
   @Type(() => Number) @IsInt() @Min(1) expectedVersion!: number;
+  @Transform(({ value }: { value: unknown }) => typeof value === 'string' ? value.trim() : value)
   @IsString() @Length(3, 500) reason!: string;
 }
 
@@ -21,4 +22,10 @@ export class DeliveryPolicyResponseDto {
   version!: number;
 }
 
-export const toDeliveryPolicyResponse = (value: DeliveryPolicy): DeliveryPolicyResponseDto => ({ ...value });
+export const toDeliveryPolicyResponse = (value: DeliveryPolicy): DeliveryPolicyResponseDto => ({
+  vendorId: value.vendorId,
+  skipCutoffMinutes: value.skipCutoffMinutes,
+  lateLeavePolicy: value.lateLeavePolicy,
+  captureAgentLocationEvidence: value.captureAgentLocationEvidence,
+  version: value.version,
+});
