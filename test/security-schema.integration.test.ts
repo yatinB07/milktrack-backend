@@ -34,6 +34,7 @@ void test('migrations safely upgrade legacy data without resetting it', async ()
     '202607200009_scheduled_deliveries',
     '202607200010_schedule_generation_runs',
     '202607210001_authentication_authority_lookup',
+    '202607220001_phase_3_online_delivery',
   ] as const;
   const migrations = await Promise.all(
     migrationDirectories.map((directory) =>
@@ -336,9 +337,16 @@ void test('Phase 1 tables, soft-delete columns, forced RLS and runtime role exis
       'support_access_grants',
       'audit_events',
       'owner_enrollments',
+      'leave_requests',
+      'leave_request_revisions',
+      'leave_revision_subscriptions',
+      'leave_occurrence_decisions',
+      'delivery_events',
+      'delivery_price_snapshots',
+      'notifications',
     ]],
   );
-  assert.equal(rls.rows.length, 4);
+  assert.equal(rls.rows.length, 11);
   assert.ok(
     rls.rows.every((row) => row.relrowsecurity && row.relforcerowsecurity),
   );

@@ -169,14 +169,15 @@ void test('scheduled delivery schema has exact composite references, forced RLS,
   assert.equal((await owner.query<{ allowed: boolean }>("SELECT has_column_privilege('milktrack_app','scheduled_deliveries','service_date','UPDATE') allowed")).rows[0]?.allowed, false);
 });
 
-void test('exact projection, assignment date/slot, finalized subscription/date, and checks reject corruption', async () => {
+void test('exact projection, assignment date/slot, finalized occurrence, and checks reject corruption', async () => {
   const value = await fixture('constraints');
   try {
     await assert.rejects(insert(value, { householdId: value.otherHouseholdId }), /scheduled_deliveries_subscription_household_fkey/);
     await assert.rejects(insert(value, { productId: randomUUID() }), /scheduled_deliveries_revision_projection_fkey/);
     await assert.rejects(insert(value, { serviceDate: '2030-01-02' }), /scheduled_deliveries_route_assignment_fkey/);
     await insert(value, { finalized: true });
-    await assert.rejects(insert(value, { id: randomUUID(), revisionId: value.otherRevisionId, slotId: value.otherSlotId, assignmentId: null, finalized: true }), /scheduled_deliveries_finalized_subscription_date_key/);
+    await insert(value, { id: randomUUID(), revisionId: value.otherRevisionId, slotId: value.otherSlotId, assignmentId: null, finalized: true });
+    await assert.rejects(insert(value, { id: randomUUID(), finalized: true }), /scheduled_deliveries_business_key/);
     await assert.rejects(owner.query('UPDATE scheduled_deliveries SET planned_quantity=0 WHERE vendor_id=$1', [value.vendorId]), /planned_quantity_check/);
   } finally { await cleanup([value]); }
 });

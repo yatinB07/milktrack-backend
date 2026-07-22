@@ -104,6 +104,11 @@ model User {
   routeAssignmentsCreated RouteAssignment[] @relation("RouteAssignmentCreator")
   routeAssignmentsUpdated RouteAssignment[] @relation("RouteAssignmentUpdater")
   scheduleGenerationRunsRequested ScheduleGenerationRun[] @relation("ScheduleGenerationRunRequester")
+  leaveRequestRevisionsCreated LeaveRequestRevision[] @relation("LeaveRequestRevisionCreator")
+  leaveRequestRevisionsDecided LeaveRequestRevision[] @relation("LeaveRequestRevisionDecider")
+  leaveOccurrenceDecisionsDecided LeaveOccurrenceDecision[] @relation("LeaveOccurrenceDecisionDecider")
+  deliveryEventsActed DeliveryEvent[] @relation("DeliveryEventActor")
+  notificationsReceived Notification[] @relation("NotificationRecipient")
 
   @@map("users")
 }
@@ -235,6 +240,8 @@ model Vendor {
   timezone          String
   currency          String               @db.Char(3)
   skipCutoffMinutes Int                  @map("skip_cutoff_minutes")
+  lateLeavePolicy   String               @default("approval") @map("late_leave_policy")
+  captureAgentLocationEvidence Boolean  @default(false) @map("capture_agent_location_evidence")
   billingDay        Int                  @map("billing_day")
   version           Int                  @default(1)
   deletedAt         DateTime?            @map("deleted_at") @db.Timestamptz(6)
@@ -258,6 +265,13 @@ model Vendor {
   routeAssignments RouteAssignment[]
   scheduledDeliveries ScheduledDelivery[]
   scheduleGenerationRuns ScheduleGenerationRun[]
+  leaveRequests LeaveRequest[]
+  leaveRequestRevisions LeaveRequestRevision[]
+  leaveRevisionSubscriptions LeaveRevisionSubscription[]
+  leaveOccurrenceDecisions LeaveOccurrenceDecision[]
+  deliveryEvents DeliveryEvent[]
+  deliveryPriceSnapshots DeliveryPriceSnapshot[]
+  notifications Notification[]
 
   @@map("vendors")
 }
@@ -314,6 +328,7 @@ model Household {
   subscriptions Subscription[]
   routeStops RouteStop[]
   scheduledDeliveries ScheduledDelivery[]
+  leaveRequests LeaveRequest[]
 
   @@unique([vendorId, id])
   @@index([vendorId, createdAt(sort: Desc), id(sort: Desc)])
@@ -395,6 +410,7 @@ model DeliverySlot {
   subscriptionRevisions SubscriptionRevision[]
   routes Route[]
   scheduledDeliveries ScheduledDelivery[]
+  leaveOccurrenceDecisions LeaveOccurrenceDecision[]
 
   @@unique([vendorId, id])
   @@unique([vendorId, code])
@@ -464,6 +480,7 @@ model Subscription {
   deleter        User?     @relation("SubscriptionDeleter", fields: [deletedBy], references: [id], onDelete: NoAction, onUpdate: NoAction)
   revisions      SubscriptionRevision[]
   scheduledDeliveries ScheduledDelivery[]
+  leaveRevisionSubscriptions LeaveRevisionSubscription[]
 
   @@unique([vendorId, id])
   @@unique([vendorId, id, householdId])
@@ -654,6 +671,8 @@ model ScheduledDelivery {
   product                Product   @relation(fields: [vendorId, productId, unitId], references: [vendorId, id, defaultUnitId], onDelete: NoAction, onUpdate: NoAction, map: "scheduled_deliveries_product_unit_fkey")
   deliverySlot           DeliverySlot @relation(fields: [vendorId, deliverySlotId], references: [vendorId, id], onDelete: NoAction, onUpdate: NoAction, map: "scheduled_deliveries_delivery_slot_fkey")
   routeAssignment        RouteAssignment? @relation(fields: [vendorId, routeAssignmentId, serviceDate, deliverySlotId], references: [vendorId, id, serviceDate, deliverySlotId], onDelete: NoAction, onUpdate: NoAction, map: "scheduled_deliveries_route_assignment_fkey")
+  deliveryEvents         DeliveryEvent[]
+  deliveryPriceSnapshot  DeliveryPriceSnapshot?
 
   @@unique([vendorId, id])
   @@unique([vendorId, subscriptionId, serviceDate, deliverySlotId], map: "scheduled_deliveries_business_key")
@@ -661,6 +680,158 @@ model ScheduledDelivery {
   @@index([vendorId, routeAssignmentId, serviceDate, status, id], map: "scheduled_deliveries_assignment_date_status_id_idx")
   @@index([vendorId, householdId, serviceDate, status, id], map: "scheduled_deliveries_household_date_status_id_idx")
   @@map("scheduled_deliveries")
+}
+
+model LeaveRequest {
+  id                String    @id @db.Uuid
+  vendorId          String    @map("vendor_id") @db.Uuid
+  householdId       String    @map("household_id") @db.Uuid
+  status            String
+  currentRevisionId String?   @map("current_revision_id") @db.Uuid
+  version           Int       @default(1)
+  createdAt         DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt         DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  vendor            Vendor    @relation(fields: [vendorId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  household         Household @relation(fields: [vendorId, householdId], references: [vendorId, id], onDelete: NoAction, onUpdate: NoAction, map: "leave_requests_household_fkey")
+  revisions         LeaveRequestRevision[] @relation("LeaveRequestRevisions")
+  currentRevision   LeaveRequestRevision? @relation("LeaveRequestCurrentRevision", fields: [vendorId, id, currentRevisionId], references: [vendorId, leaveRequestId, id], onDelete: NoAction, onUpdate: NoAction, map: "leave_requests_current_revision_fkey")
+
+  @@unique([vendorId, id])
+  @@unique([vendorId, id, currentRevisionId])
+  @@index([vendorId, householdId, createdAt(sort: Desc), id(sort: Desc)], map: "leave_requests_vendor_household_created_at_id_idx")
+  @@map("leave_requests")
+}
+
+model LeaveRequestRevision {
+  id                 String    @id @db.Uuid
+  vendorId           String    @map("vendor_id") @db.Uuid
+  leaveRequestId     String    @map("leave_request_id") @db.Uuid
+  action             String
+  startDate          DateTime  @map("start_date") @db.Date
+  endDate            DateTime  @map("end_date") @db.Date
+  source             String
+  createdBy          String    @map("created_by") @db.Uuid
+  status             String
+  note               String?
+  decidedBy          String?   @map("decided_by") @db.Uuid
+  decidedAt          DateTime? @map("decided_at") @db.Timestamptz(6)
+  decisionReason     String?   @map("decision_reason")
+  previousRevisionId String?   @map("previous_revision_id") @db.Uuid
+  createdAt          DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  vendor             Vendor    @relation(fields: [vendorId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  request            LeaveRequest @relation("LeaveRequestRevisions", fields: [vendorId, leaveRequestId], references: [vendorId, id], onDelete: NoAction, onUpdate: NoAction, map: "leave_request_revisions_request_fkey")
+  currentForRequest  LeaveRequest? @relation("LeaveRequestCurrentRevision")
+  creator            User      @relation("LeaveRequestRevisionCreator", fields: [createdBy], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "leave_request_revisions_created_by_fkey")
+  decider            User?     @relation("LeaveRequestRevisionDecider", fields: [decidedBy], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "leave_request_revisions_decided_by_fkey")
+  previousRevision   LeaveRequestRevision? @relation("LeaveRequestRevisionHistory", fields: [vendorId, leaveRequestId, previousRevisionId], references: [vendorId, leaveRequestId, id], onDelete: NoAction, onUpdate: NoAction, map: "leave_request_revisions_previous_fkey")
+  followingRevisions LeaveRequestRevision[] @relation("LeaveRequestRevisionHistory")
+  subscriptions      LeaveRevisionSubscription[]
+
+  @@unique([vendorId, id])
+  @@unique([vendorId, leaveRequestId, id])
+  @@index([vendorId, leaveRequestId, createdAt(sort: Desc), id(sort: Desc)], map: "leave_request_revisions_vendor_request_created_at_id_idx")
+  @@map("leave_request_revisions")
+}
+
+model LeaveRevisionSubscription {
+  vendorId               String @map("vendor_id") @db.Uuid
+  leaveRequestRevisionId String @map("leave_request_revision_id") @db.Uuid
+  subscriptionId         String @map("subscription_id") @db.Uuid
+  vendor                 Vendor @relation(fields: [vendorId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  revision               LeaveRequestRevision @relation(fields: [vendorId, leaveRequestRevisionId], references: [vendorId, id], onDelete: NoAction, onUpdate: NoAction, map: "leave_revision_subscriptions_revision_fkey")
+  subscription           Subscription @relation(fields: [vendorId, subscriptionId], references: [vendorId, id], onDelete: NoAction, onUpdate: NoAction, map: "leave_revision_subscriptions_subscription_fkey")
+  occurrenceDecisions    LeaveOccurrenceDecision[]
+
+  @@id([vendorId, leaveRequestRevisionId, subscriptionId])
+  @@map("leave_revision_subscriptions")
+}
+
+model LeaveOccurrenceDecision {
+  id                      String   @id @db.Uuid
+  vendorId                String   @map("vendor_id") @db.Uuid
+  leaveRequestRevisionId  String   @map("leave_request_revision_id") @db.Uuid
+  subscriptionId          String   @map("subscription_id") @db.Uuid
+  serviceDate             DateTime @map("service_date") @db.Date
+  deliverySlotId          String   @map("delivery_slot_id") @db.Uuid
+  previousEffectiveStatus String   @map("previous_effective_status")
+  requestedEffectiveStatus String  @map("requested_effective_status")
+  status                  String
+  decidedBy               String?  @map("decided_by") @db.Uuid
+  decidedAt               DateTime? @map("decided_at") @db.Timestamptz(6)
+  decisionReason          String?  @map("decision_reason")
+  version                 Int      @default(1)
+  createdAt               DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt               DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  vendor                  Vendor   @relation(fields: [vendorId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  revisionSubscription    LeaveRevisionSubscription @relation(fields: [vendorId, leaveRequestRevisionId, subscriptionId], references: [vendorId, leaveRequestRevisionId, subscriptionId], onDelete: NoAction, onUpdate: NoAction, map: "leave_occurrence_decisions_revision_subscription_fkey")
+  deliverySlot            DeliverySlot @relation(fields: [vendorId, deliverySlotId], references: [vendorId, id], onDelete: NoAction, onUpdate: NoAction, map: "leave_occurrence_decisions_slot_fkey")
+  decider                 User?    @relation("LeaveOccurrenceDecisionDecider", fields: [decidedBy], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "leave_occurrence_decisions_decided_by_fkey")
+
+  @@unique([vendorId, id])
+  @@unique([vendorId, leaveRequestRevisionId, subscriptionId, serviceDate, deliverySlotId], map: "leave_occurrence_decisions_occurrence_key")
+  @@index([vendorId, status, serviceDate, id], map: "leave_occurrence_decisions_vendor_status_service_date_id_idx")
+  @@map("leave_occurrence_decisions")
+}
+
+model DeliveryEvent {
+  id                  String    @id @db.Uuid
+  vendorId            String    @map("vendor_id") @db.Uuid
+  scheduledDeliveryId String    @map("scheduled_delivery_id") @db.Uuid
+  eventType           String    @map("event_type")
+  source              String
+  actorUserId         String?   @map("actor_user_id") @db.Uuid
+  occurredAt          DateTime  @map("occurred_at") @db.Timestamptz(6)
+  receivedAt          DateTime  @map("received_at") @db.Timestamptz(6)
+  actualQuantity      Decimal?  @map("actual_quantity") @db.Decimal(18, 3)
+  reasonCode          String?   @map("reason_code")
+  note                String?
+  latitude            Decimal?  @db.Decimal(8, 6)
+  longitude           Decimal?  @db.Decimal(9, 6)
+  replacedEventId     String?   @map("replaced_event_id") @db.Uuid
+  payloadVersion      Int       @default(1) @map("payload_version")
+  createdAt           DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  vendor              Vendor    @relation(fields: [vendorId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  scheduledDelivery   ScheduledDelivery @relation(fields: [vendorId, scheduledDeliveryId], references: [vendorId, id], onDelete: NoAction, onUpdate: NoAction, map: "delivery_events_scheduled_delivery_fkey")
+  actor               User?     @relation("DeliveryEventActor", fields: [actorUserId], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "delivery_events_actor_user_fkey")
+  replacedEvent       DeliveryEvent? @relation("DeliveryEventCorrection", fields: [vendorId, replacedEventId], references: [vendorId, id], onDelete: NoAction, onUpdate: NoAction, map: "delivery_events_replaced_event_fkey")
+  replacementEvents   DeliveryEvent[] @relation("DeliveryEventCorrection")
+
+  @@unique([vendorId, id])
+  @@index([vendorId, scheduledDeliveryId, createdAt(sort: Desc), id(sort: Desc)], map: "delivery_events_vendor_delivery_created_at_id_idx")
+  @@index([vendorId, createdAt(sort: Desc), id(sort: Desc)], map: "delivery_events_vendor_created_at_id_idx")
+  @@map("delivery_events")
+}
+
+model DeliveryPriceSnapshot {
+  vendorId            String   @map("vendor_id") @db.Uuid
+  scheduledDeliveryId String   @id @map("scheduled_delivery_id") @db.Uuid
+  amountMinor         BigInt   @map("amount_minor") @db.BigInt
+  currency            String   @db.Char(3)
+  pricingLevel        String   @map("pricing_level")
+  sourcePriceId       String   @map("source_price_id") @db.Uuid
+  sourcePriceType     String   @map("source_price_type")
+  resolvedAt          DateTime @map("resolved_at") @db.Timestamptz(6)
+  vendor              Vendor   @relation(fields: [vendorId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  scheduledDelivery   ScheduledDelivery @relation(fields: [vendorId, scheduledDeliveryId], references: [vendorId, id], onDelete: NoAction, onUpdate: NoAction, map: "delivery_price_snapshots_scheduled_delivery_fkey")
+
+  @@unique([vendorId, scheduledDeliveryId])
+  @@map("delivery_price_snapshots")
+}
+
+model Notification {
+  id              String    @id @db.Uuid
+  vendorId        String    @map("vendor_id") @db.Uuid
+  recipientUserId String    @map("recipient_user_id") @db.Uuid
+  type            String
+  payload         Json      @db.JsonB
+  readAt          DateTime? @map("read_at") @db.Timestamptz(6)
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  vendor          Vendor    @relation(fields: [vendorId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  recipient       User      @relation("NotificationRecipient", fields: [recipientUserId], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "notifications_recipient_user_fkey")
+
+  @@unique([vendorId, id])
+  @@index([vendorId, recipientUserId, createdAt(sort: Desc), id(sort: Desc)], map: "notifications_vendor_recipient_created_at_id_idx")
+  @@map("notifications")
 }
 
 model ScheduleGenerationRun {
