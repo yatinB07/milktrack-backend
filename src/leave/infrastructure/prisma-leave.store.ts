@@ -136,7 +136,7 @@ export class PrismaLeaveStore extends LeaveStore {
       subscriptionId: decision.subscriptionId ?? selectedSubscriptionIds[0] ?? subscriptionIds[0], serviceDate: date(decision.serviceDate), deliverySlotId: decision.deliverySlotId,
       previousEffectiveStatus: decision.previousEffectiveStatus ?? 'scheduled',
       requestedEffectiveStatus: decision.requestedEffectiveStatus ?? requestedEffectiveStatus(input.action),
-      status: decision.status,
+      cutoffAt: decision.cutoffAt, status: decision.status,
       ...(decision.status === 'rejected' ? { decidedBy: input.createdBy, decidedAt: new Date(), decisionReason: 'Late leave rejected by vendor policy' } : {}),
     })) });
     await tx.leaveRequest.update({ where: { id: input.requestId }, data: { currentRevisionId: input.revisionId, status: input.status, ...(input.previousRevisionId ? { version: { increment: 1 } } : {}) } });
@@ -170,26 +170,27 @@ export class PrismaLeaveStore extends LeaveStore {
     const tx = unwrapPrismaTransaction(context);
     const rows = await tx.$queryRaw<Array<{
       id: string; vendorId: string; leaveRequestRevisionId: string; subscriptionId: string; serviceDate: Date;
-      deliverySlotId: string; status: string; version: number; createdAt: Date;
+      deliverySlotId: string; cutoffAt: Date; source: string; status: string; version: number; createdAt: Date;
     }>>(Prisma.sql`
       SELECT d.id,d.vendor_id AS "vendorId",d.leave_request_revision_id AS "leaveRequestRevisionId",
         d.subscription_id AS "subscriptionId",d.service_date AS "serviceDate",d.delivery_slot_id AS "deliverySlotId",
-        d.status,d.version,d.created_at AS "createdAt"
+        d.cutoff_at AS "cutoffAt",r.source,d.status,d.version,d.created_at AS "createdAt"
       FROM leave_occurrence_decisions d
       JOIN leave_request_revisions r ON r.vendor_id=d.vendor_id AND r.id=d.leave_request_revision_id
       JOIN leave_requests q ON q.vendor_id=r.vendor_id AND q.id=r.leave_request_id AND q.current_revision_id=r.id
       WHERE d.vendor_id=${input.vendorId}::uuid AND d.status='pending'
         ${cursor ? Prisma.sql`AND (d.service_date>${cursor.createdAt}::date OR (d.service_date=${cursor.createdAt}::date AND d.id>${cursor.id}::uuid))` : Prisma.empty}
       ORDER BY d.service_date,d.id LIMIT ${limit + 1}`);
-    const items = rows.slice(0, limit).map((row) => ({ ...row, serviceDate: dateString(row.serviceDate), status: row.status as LeaveDecisionRecord['status'] }));
+    const items = rows.slice(0, limit).map((row) => ({ ...row, serviceDate: dateString(row.serviceDate),
+      source: row.source as LeaveDecisionRecord['source'], status: row.status as LeaveDecisionRecord['status'] }));
     const last = items.at(-1);
     return { items, ...(rows.length > limit && last ? { nextCursor: this.cursors.encode({ createdAt: date(last.serviceDate), id: last.id }) } : {}) };
   }
 
   async decide(context: TransactionContext, input: DecideLeaveOccurrence): Promise<LeaveDecisionResult> {
     const tx = unwrapPrismaTransaction(context);
-    const rows = await tx.$queryRaw<Array<{ id: string; leaveRequestRevisionId: string; subscriptionId: string; serviceDate: Date; deliverySlotId: string; version: number; requestId: string; householdId: string; action: string; requestedEffectiveStatus: string }>>(Prisma.sql`
-      SELECT d.id,d.leave_request_revision_id AS "leaveRequestRevisionId",d.subscription_id AS "subscriptionId",d.service_date AS "serviceDate",d.delivery_slot_id AS "deliverySlotId",d.version,r.leave_request_id AS "requestId",q.household_id AS "householdId",r.action,d.requested_effective_status AS "requestedEffectiveStatus"
+    const rows = await tx.$queryRaw<Array<{ id: string; leaveRequestRevisionId: string; subscriptionId: string; serviceDate: Date; deliverySlotId: string; cutoffAt: Date; source: string; version: number; requestId: string; householdId: string; action: string; requestedEffectiveStatus: string }>>(Prisma.sql`
+      SELECT d.id,d.leave_request_revision_id AS "leaveRequestRevisionId",d.subscription_id AS "subscriptionId",d.service_date AS "serviceDate",d.delivery_slot_id AS "deliverySlotId",d.cutoff_at AS "cutoffAt",r.source,d.version,r.leave_request_id AS "requestId",q.household_id AS "householdId",r.action,d.requested_effective_status AS "requestedEffectiveStatus"
       FROM leave_occurrence_decisions d JOIN leave_request_revisions r ON r.vendor_id=d.vendor_id AND r.id=d.leave_request_revision_id
       JOIN leave_requests q ON q.vendor_id=r.vendor_id AND q.id=r.leave_request_id AND q.current_revision_id=r.id
       WHERE d.vendor_id=${input.vendorId}::uuid AND d.id=${input.id}::uuid FOR UPDATE OF q,d`);
@@ -233,7 +234,7 @@ export class PrismaLeaveStore extends LeaveStore {
     await tx.leaveRequest.update({ where: { id: locked.requestId }, data: { status, version: { increment: 1 } } });
     const decision = await tx.leaveOccurrenceDecision.findFirst({ where: { id: input.id, vendorId: input.vendorId } });
     if (!decision) throw error('LEAVE_DECISION_NOT_FOUND', 'Leave decision was not found', 404);
-    return { ...this.decision(decision), request: await this.getRequest(context, input.vendorId, locked.householdId, locked.requestId) };
+    return { ...this.decision(decision, locked.source as LeaveDecisionRecord['source']), request: await this.getRequest(context, input.vendorId, locked.householdId, locked.requestId) };
   }
 
   async isEffectivelyOnLeave(context: TransactionContext, input: LeaveOccurrenceKey): Promise<boolean> {
@@ -385,15 +386,17 @@ export class PrismaLeaveStore extends LeaveStore {
           id: decision.id, subscriptionId: decision.subscriptionId, serviceDate: dateString(decision.serviceDate), deliverySlotId: decision.deliverySlotId,
           status: decision.status as LeaveDecisionRecord['status'], previousEffectiveStatus: decision.previousEffectiveStatus as 'scheduled' | 'skipped_by_customer',
           requestedEffectiveStatus: decision.requestedEffectiveStatus as 'scheduled' | 'skipped_by_customer',
+          cutoffAt: decision.cutoffAt, source: revision.source as LeaveDecisionRecord['source'],
           ...(decision.decidedBy ? { decidedBy: decision.decidedBy } : {}), ...(decision.decidedAt ? { decidedAt: decision.decidedAt } : {}),
           ...(decision.decisionReason ? { decisionReason: decision.decisionReason } : {}), version: decision.version, createdAt: decision.createdAt,
         }))).sort((left, right) => left.serviceDate.localeCompare(right.serviceDate) || left.id.localeCompare(right.id)),
       })), };
   }
 
-  private decision(row: LeaveOccurrenceDecision): LeaveDecisionRecord {
+  private decision(row: LeaveOccurrenceDecision, source: LeaveDecisionRecord['source']): LeaveDecisionRecord {
     return { id: row.id, vendorId: row.vendorId, leaveRequestRevisionId: row.leaveRequestRevisionId, subscriptionId: row.subscriptionId,
-      serviceDate: dateString(row.serviceDate), deliverySlotId: row.deliverySlotId, status: row.status as LeaveDecisionRecord['status'], version: row.version, createdAt: row.createdAt };
+      serviceDate: dateString(row.serviceDate), deliverySlotId: row.deliverySlotId, cutoffAt: row.cutoffAt, source,
+      status: row.status as LeaveDecisionRecord['status'], version: row.version, createdAt: row.createdAt };
   }
 }
 

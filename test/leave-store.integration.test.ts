@@ -58,14 +58,14 @@ async function cleanup(value: Fixture) {
   await owner.query('DELETE FROM users WHERE id=$1', [value.userId]);
 }
 
-function revision(current: Fixture, values: Readonly<{ requestId: string; revisionId: string; action?: 'create' | 'amend' | 'cancel'; previousRevisionId?: string; status?: 'accepted' | 'pending_approval' | 'partially_pending' | 'cancelled'; startDate?: string; endDate?: string; subscriptions?: readonly Readonly<{ subscriptionId: string; selected: boolean }>[]; decisions?: readonly Readonly<{ id: string; serviceDate: string; deliverySlotId: string; status: 'pending' | 'rejected'; subscriptionId?: string; previousEffectiveStatus?: 'scheduled' | 'skipped_by_customer'; requestedEffectiveStatus?: 'scheduled' | 'skipped_by_customer' }>[] }>) {
+function revision(current: Fixture, values: Readonly<{ requestId: string; revisionId: string; action?: 'create' | 'amend' | 'cancel'; previousRevisionId?: string; source?: 'customer' | 'vendor_admin' | 'system'; status?: 'accepted' | 'pending_approval' | 'partially_pending' | 'cancelled'; startDate?: string; endDate?: string; subscriptions?: readonly Readonly<{ subscriptionId: string; selected: boolean }>[]; decisions?: readonly Readonly<{ id: string; serviceDate: string; deliverySlotId: string; cutoffAt?: Date; status: 'pending' | 'rejected'; subscriptionId?: string; previousEffectiveStatus?: 'scheduled' | 'skipped_by_customer'; requestedEffectiveStatus?: 'scheduled' | 'skipped_by_customer' }>[] }>) {
   return {
     vendorId: current.vendorId, householdId: current.householdId, requestId: values.requestId, revisionId: values.revisionId,
-    action: values.action ?? 'create', previousRevisionId: values.previousRevisionId, source: 'customer' as const,
+    action: values.action ?? 'create', previousRevisionId: values.previousRevisionId, source: values.source ?? 'customer' as const,
     createdBy: current.userId, startDate: values.startDate ?? '2030-01-01', endDate: values.endDate ?? '2030-01-31',
     subscriptions: values.subscriptions ?? [{ subscriptionId: current.subscriptionId, selected: true }],
     status: values.status ?? 'accepted', expectedVersion: values.previousRevisionId ? 1 : undefined,
-    decisions: values.decisions ?? [],
+    decisions: (values.decisions ?? []).map((decision) => ({ ...decision, cutoffAt: decision.cutoffAt ?? new Date('2029-12-31T23:00:00.000Z') })),
   };
 }
 
@@ -198,18 +198,29 @@ void test('leave store scopes active household subscriptions, persists append-on
 
 void test('approved late amendment becomes effective and cancelled requests reject further lifecycle changes', async () => {
   const current = await fixture('amend-lifecycle'); const requestId = randomUUID(); const createdRevisionId = randomUUID();
+  const cutoffAt = new Date('2029-12-31T22:34:56.123Z');
   try {
     await transactions.run(current.vendorId, async (tx) => {
       await store.createRevision(tx, revision(current, { requestId, revisionId: createdRevisionId }));
       const amendmentRevisionId = randomUUID(); const decisionId = randomUUID();
-      await store.createRevision(tx, revision(current, {
+      const pending = await store.createRevision(tx, revision(current, {
         requestId, revisionId: amendmentRevisionId, action: 'amend', previousRevisionId: createdRevisionId,
-        status: 'pending_approval', decisions: [{ id: decisionId, serviceDate: '2030-01-01', deliverySlotId: current.slotId, status: 'pending' }],
+        source: 'system', status: 'pending_approval', decisions: [{ id: decisionId, serviceDate: '2030-01-01', deliverySlotId: current.slotId, cutoffAt, status: 'pending' }],
       }));
+      assert.equal(pending.revisions[0]?.decisions?.[0]?.cutoffAt.toISOString(), cutoffAt.toISOString());
+      assert.equal(pending.revisions[0]?.decisions?.[0]?.source, 'system');
+      await owner.query('UPDATE vendors SET skip_cutoff_minutes=1440 WHERE id=$1', [current.vendorId]);
+      const queue = await store.listPendingDecisions(tx, { vendorId: current.vendorId });
+      assert.equal(queue.items[0]?.cutoffAt.toISOString(), cutoffAt.toISOString());
+      assert.equal(queue.items[0]?.source, 'system');
       assert.equal(await store.isEffectivelyOnLeave(tx, {
         vendorId: current.vendorId, subscriptionId: current.subscriptionId, deliverySlotId: current.slotId, serviceDate: '2030-01-01',
       }), false);
-      await store.decide(tx, { vendorId: current.vendorId, id: decisionId, expectedVersion: 1, decision: 'approved', decidedBy: current.userId, reason: 'Approved late amendment', now: new Date() });
+      const decided = await store.decide(tx, { vendorId: current.vendorId, id: decisionId, expectedVersion: 1, decision: 'approved', decidedBy: current.userId, reason: 'Approved late amendment', now: new Date() });
+      assert.equal(decided.cutoffAt.toISOString(), cutoffAt.toISOString());
+      assert.equal(decided.source, 'system');
+      assert.equal(decided.request.revisions[0]?.decisions?.[0]?.cutoffAt.toISOString(), cutoffAt.toISOString());
+      assert.equal(decided.request.revisions[0]?.decisions?.[0]?.source, 'system');
       assert.equal(await store.isEffectivelyOnLeave(tx, {
         vendorId: current.vendorId, subscriptionId: current.subscriptionId, deliverySlotId: current.slotId, serviceDate: '2030-01-01',
       }), true);

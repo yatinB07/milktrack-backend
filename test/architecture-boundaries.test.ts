@@ -98,3 +98,17 @@ void test('delivery boundary guard recognizes every leave-owned table', () => {
     assert.match(`SELECT * FROM ${table}`, deliveryForbiddenTables);
   }
 });
+
+void test('leave consumes only the narrow subscription label application boundary', async () => {
+  const leaveFiles = await typescriptFiles('src/leave');
+  const violations: string[] = [];
+  for (const file of leaveFiles) {
+    const source = await readFile(file, 'utf8');
+    if (/subscriptions\/(?:infrastructure|subscriptions\.module)|catalog\/infrastructure/u.test(source)) violations.push(file.split(path.sep).join('/'));
+    if ((file.endsWith('leave-scheduling.module.ts') || file.includes('/application/scheduling-leave.service.ts')) && /SubscriptionLabelsModule|SubscriptionLabelReader/u.test(source))
+      violations.push(file.split(path.sep).join('/'));
+  }
+  const moduleSource = await readFile('src/leave/leave.module.ts', 'utf8');
+  assert.match(moduleSource, /SubscriptionLabelsModule/u);
+  assert.deepEqual(violations, []);
+});

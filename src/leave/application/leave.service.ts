@@ -14,9 +14,10 @@ import { DeliveryLeaveProjection } from '../../delivery/application/delivery-lea
 import { MembershipService } from '../../memberships/application/membership.service.js';
 import { NotificationWriter, type NotificationType } from '../../notifications/application/notification-writer.js';
 import { RoutingScheduleService } from '../../routing/application/routing-schedule.service.js';
+import { SubscriptionLabelReader, type LeaveSubscriptionLabel, type SubscriptionLabelMatch, type SubscriptionLabelReference } from '../../subscriptions/application/subscription-label.reader.js';
 import { VendorService } from '../../vendors/application/vendor.service.js';
 import { deriveLeaveOccurrenceTransitions, deriveLeaveStatus, validateLeaveRange, type LeaveOccurrenceClassification, type LeaveRequestStatus } from '../domain/leave-rules.js';
-import { LeaveStore, type LeaveDecisionPage as StoreDecisionPage, type LeaveDecisionResult as StoreDecisionResult, type LeaveRequestPage as StoreRequestPage, type LeaveRequestRecord, type LeavePreviewPage, type PersistLeaveRevision } from './leave.store.js';
+import { LeaveStore, type LeaveDecisionPage as StoreDecisionPage, type LeaveDecisionRecord as StoreDecisionRecord, type LeaveDecisionResult as StoreDecisionResult, type LeaveRequestPage as StoreRequestPage, type LeaveRequestRecord, type LeaveRevisionDecisionRecord, type LeaveRevisionRecord, type LeavePreviewPage, type PersistLeaveRevision } from './leave.store.js';
 
 export type PageQuery = Readonly<{ cursor?: string; limit?: number }>;
 export type LeaveSelectionCommand = Readonly<{ startDate: string; endDate: string; subscriptionIds: readonly string[]; note?: string }>;
@@ -27,20 +28,28 @@ export type DecideLeaveOccurrenceCommand = Readonly<{ expectedVersion: number; d
 
 export type CustomerLeaveAction = 'amend' | 'cancel';
 export type VendorLeaveDecisionAction = 'approve' | 'reject';
-export type LeaveRequestResult = Omit<LeaveRequestRecord, 'status'> & Readonly<{
-  currentStatus: LeaveRequestStatus; availableActions: readonly CustomerLeaveAction[];
+type LeaveDecisionLabel = Pick<LeaveSubscriptionLabel, 'productId' | 'productName' | 'deliverySlotName'>;
+type LeaveDecisionTimeline = LeaveRevisionDecisionRecord & LeaveDecisionLabel;
+type LeaveRevisionResult = Omit<LeaveRevisionRecord, 'decisions'> & Readonly<{
+  subscriptionLabels: readonly LeaveSubscriptionLabel[]; decisions?: readonly LeaveDecisionTimeline[];
+}>;
+type EnrichedLeaveRequestRecord = Omit<LeaveRequestRecord, 'revisions'> & Readonly<{ revisions: readonly LeaveRevisionResult[] }>;
+export type LeaveRequestResult = Omit<LeaveRequestRecord, 'status' | 'revisions'> & Readonly<{
+  currentStatus: LeaveRequestStatus; availableActions: readonly CustomerLeaveAction[]; revisions: readonly LeaveRevisionResult[];
 }>;
 export type VendorLeaveRequestResult = Omit<LeaveRequestResult, 'availableActions' | 'revisions'> & Readonly<{
-  revisions: readonly (Omit<LeaveRequestRecord['revisions'][number], 'decisions'> & Readonly<{
-    decisions?: readonly ((NonNullable<LeaveRequestRecord['revisions'][number]['decisions']>[number]) & Readonly<{
-      availableActions: readonly VendorLeaveDecisionAction[];
-    }>)[];
+  revisions: readonly (Omit<LeaveRevisionResult, 'decisions'> & Readonly<{
+    decisions?: readonly (LeaveDecisionTimeline & Readonly<{ availableActions: readonly VendorLeaveDecisionAction[] }>)[];
   }>)[];
 }>;
 export type LeaveRequestPage = Readonly<{ items: readonly LeaveRequestResult[]; nextCursor?: string }>;
-export type LeaveDecisionResult = Omit<StoreDecisionResult, 'status' | 'request'> & Readonly<{ currentStatus: StoreDecisionResult['status']; request: VendorLeaveRequestResult }>;
-export type LeaveDecisionPage = Readonly<{ items: readonly (Omit<StoreDecisionPage['items'][number], 'status'> & Readonly<{ currentStatus: StoreDecisionPage['items'][number]['status'] }>)[]; nextCursor?: string }>;
-export type LeavePreviewResult = LeavePreviewPage & Readonly<{ timezone: string; skipCutoffMinutes: number; lateLeavePolicy: 'reject' | 'approval' }>;
+type LeaveDecisionItem = StoreDecisionRecord & LeaveDecisionLabel;
+export type LeaveDecisionResult = Omit<StoreDecisionResult, 'status' | 'request'> & LeaveDecisionLabel & Readonly<{ currentStatus: StoreDecisionResult['status']; request: VendorLeaveRequestResult }>;
+export type LeaveDecisionPage = Readonly<{ items: readonly (Omit<LeaveDecisionItem, 'status'> & Readonly<{ currentStatus: LeaveDecisionItem['status'] }>)[]; nextCursor?: string }>;
+export type LeavePreviewResult = Omit<LeavePreviewPage, 'items'> & Readonly<{
+  items: readonly (LeavePreviewPage['items'][number] & LeaveDecisionLabel)[];
+  timezone: string; skipCutoffMinutes: number; lateLeavePolicy: 'reject' | 'approval';
+}>;
 
 export abstract class LeaveService {
   abstract preview(actor: Actor, vendorId: string, householdId: string, command: LeaveSelectionCommand & PageQuery): Promise<LeavePreviewResult>;
@@ -68,6 +77,7 @@ export class DefaultLeaveService extends LeaveService {
     @Inject(NotificationWriter) private readonly notifications: NotificationWriter,
     @Inject(RoutingScheduleService) private readonly routing: RoutingScheduleService,
     @Inject(MembershipService) private readonly memberships: MembershipService,
+    @Inject(SubscriptionLabelReader) private readonly labels: SubscriptionLabelReader,
   ) { super(); }
 
   preview(actor: Actor, vendorId: string, householdId: string, command: LeaveSelectionCommand & PageQuery) {
@@ -77,7 +87,7 @@ export class DefaultLeaveService extends LeaveService {
       const input = { vendorId, householdId, ...command, ...context, now: this.now() };
       const preview = await this.leaves.preview(tx, input);
       await this.leaves.assertNoOverlap(tx, input);
-      return { ...preview, ...context };
+      return { ...await this.previewResult(tx, vendorId, householdId, preview), ...context };
     });
   }
 
@@ -96,16 +106,16 @@ export class DefaultLeaveService extends LeaveService {
       const agentUserIds = await this.synchronize(tx, vendorId, householdId, [command], context, actor.userId);
       await this.audit(tx, actor, vendorId, result, 'leave.created');
       await this.notifyOutcome(tx, result, actor.userId, agentUserIds);
-      return customerRequest(result);
+      return this.customerResult(tx, vendorId, householdId, result);
     });
   }
 
   listCustomer(actor: Actor, vendorId: string, householdId: string, query: PageQuery) {
-    return this.customer(actor, vendorId, householdId, 'leave.list', async (tx) => page(await this.leaves.listRequests(tx, { vendorId, householdId, ...query })));
+    return this.customer(actor, vendorId, householdId, 'leave.list', async (tx) => this.customerPage(tx, vendorId, householdId, await this.leaves.listRequests(tx, { vendorId, householdId, ...query })));
   }
 
   getCustomer(actor: Actor, vendorId: string, householdId: string, leaveRequestId: string) {
-    return this.customer(actor, vendorId, householdId, 'leave.get', async (tx) => customerRequest(await this.leaves.getRequest(tx, vendorId, householdId, leaveRequestId)));
+    return this.customer(actor, vendorId, householdId, 'leave.get', async (tx) => this.customerResult(tx, vendorId, householdId, await this.leaves.getRequest(tx, vendorId, householdId, leaveRequestId)));
   }
 
   amend(actor: Actor, vendorId: string, householdId: string, leaveRequestId: string, command: AmendLeaveCommand) {
@@ -126,7 +136,7 @@ export class DefaultLeaveService extends LeaveService {
       const agentUserIds = await this.synchronize(tx, vendorId, householdId, [...previous, command], context, actor.userId);
       await this.audit(tx, actor, vendorId, result, 'leave.amended');
       await this.notifyOutcome(tx, result, actor.userId, agentUserIds);
-      return customerRequest(result);
+      return this.customerResult(tx, vendorId, householdId, result);
     });
   }
 
@@ -147,16 +157,16 @@ export class DefaultLeaveService extends LeaveService {
         expectedVersion: command.expectedVersion, ...(command.note ? { note: command.note } : {}), status: status.status, decisions: status.decisions,
       });
       await this.synchronize(tx, vendorId, householdId, previous, context, actor.userId);
-      await this.audit(tx, actor, vendorId, result, 'leave.cancelled'); return customerRequest(result);
+      await this.audit(tx, actor, vendorId, result, 'leave.cancelled'); return this.customerResult(tx, vendorId, householdId, result);
     });
   }
 
   listDecisions(actor: Actor, vendorId: string, query: LeaveDecisionQuery) {
-    return this.authorization.execute({ actor, vendorId, permission: 'schedule:read', operation: 'leave.decision-list' }, async (tx) => decisionPage(await this.leaves.listPendingDecisions(tx, { vendorId, ...query })));
+    return this.authorization.execute({ actor, vendorId, permission: 'schedule:read', operation: 'leave.decision-list' }, async (tx) => this.decisionPage(tx, vendorId, await this.leaves.listPendingDecisions(tx, { vendorId, ...query })));
   }
 
   getVendorRequest(actor: Actor, vendorId: string, leaveRequestId: string) {
-    return this.authorization.execute({ actor, vendorId, permission: 'schedule:read', operation: 'leave.vendor-get' }, async (tx) => vendorRequest(await this.leaves.getVendorRequest(tx, vendorId, leaveRequestId)));
+    return this.authorization.execute({ actor, vendorId, permission: 'schedule:read', operation: 'leave.vendor-get' }, async (tx) => this.vendorResult(tx, vendorId, await this.leaves.getVendorRequest(tx, vendorId, leaveRequestId)));
   }
 
   decideOccurrence(actor: Actor, vendorId: string, decisionId: string, command: DecideLeaveOccurrenceCommand) {
@@ -174,7 +184,7 @@ export class DefaultLeaveService extends LeaveService {
         : [];
       await this.notify(tx, vendorId, result.request.id, revision.createdBy, result.request.householdId,
         command.decision === 'approved' && effective ? 'leave_accepted' : 'leave_rejected', agents);
-      return decision(result);
+      return this.decisionResult(tx, vendorId, result);
     });
   }
 
@@ -212,7 +222,8 @@ export class DefaultLeaveService extends LeaveService {
     const late = transitions.filter(({ timing }) => timing === 'late');
     const decisions = late.map((transition) => ({
       id: randomUUID(), subscriptionId: transition.subscriptionId, serviceDate: transition.serviceDate,
-      deliverySlotId: transition.deliverySlotId, status: transition.proposedBehavior === 'reject' ? 'rejected' as const : 'pending' as const,
+      deliverySlotId: transition.deliverySlotId, cutoffAt: transition.cutoffAt,
+      status: transition.proposedBehavior === 'reject' ? 'rejected' as const : 'pending' as const,
       previousEffectiveStatus: transition.previousEffectiveStatus,
       requestedEffectiveStatus: transition.requestedEffectiveStatus,
     }));
@@ -337,22 +348,151 @@ export class DefaultLeaveService extends LeaveService {
     }
   }
 
+  private async previewResult(tx: TransactionContext, vendorId: string, householdId: string, value: LeavePreviewPage) {
+    const references = value.items.map((item) => occurrenceReference(`preview:${occurrenceKey(item)}`, item));
+    const matches = await this.readLabels(tx, vendorId, references, householdId);
+    return { ...value, items: value.items.map((item) => ({ ...item, ...decisionLabel(matches, `preview:${occurrenceKey(item)}`, item) })) };
+  }
+
+  private async customerResult(tx: TransactionContext, vendorId: string, householdId: string, value: LeaveRequestRecord) {
+    return customerRequest((await this.enrichRequests(tx, vendorId, [value], householdId))[0]);
+  }
+
+  private async customerPage(tx: TransactionContext, vendorId: string, householdId: string, value: StoreRequestPage): Promise<LeaveRequestPage> {
+    const items = await this.enrichRequests(tx, vendorId, value.items, householdId);
+    return { items: items.map(customerRequest), ...(value.nextCursor ? { nextCursor: value.nextCursor } : {}) };
+  }
+
+  private async vendorResult(tx: TransactionContext, vendorId: string, value: LeaveRequestRecord) {
+    return vendorRequest((await this.enrichRequests(tx, vendorId, [value]))[0]);
+  }
+
+  private async decisionPage(tx: TransactionContext, vendorId: string, value: StoreDecisionPage): Promise<LeaveDecisionPage> {
+    const references = value.items.map((item) => occurrenceReference(`decision:${item.id}`, item));
+    const matches = await this.readLabels(tx, vendorId, references);
+    return { items: value.items.map(({ status, ...item }) => ({ ...item, ...decisionLabel(matches, `decision:${item.id}`, item), currentStatus: status })),
+      ...(value.nextCursor ? { nextCursor: value.nextCursor } : {}) };
+  }
+
+  private async decisionResult(tx: TransactionContext, vendorId: string, value: StoreDecisionResult): Promise<LeaveDecisionResult> {
+    const references = [...requestLabelReferences([value.request]), occurrenceReference(`decision:${value.id}`, value)];
+    const matches = await this.readLabels(tx, vendorId, references);
+    const { status, request: leave, ...result } = value;
+    return { ...result, ...decisionLabel(matches, `decision:${value.id}`, value), currentStatus: status,
+      request: vendorRequest(enrichRequest(leave, matches)) };
+  }
+
+  private async enrichRequests(
+    tx: TransactionContext,
+    vendorId: string,
+    values: readonly LeaveRequestRecord[],
+    householdId?: string,
+  ): Promise<readonly EnrichedLeaveRequestRecord[]> {
+    const matches = await this.readLabels(tx, vendorId, requestLabelReferences(values), householdId);
+    return values.map((value) => enrichRequest(value, matches));
+  }
+
+  private readLabels(
+    tx: TransactionContext,
+    vendorId: string,
+    references: readonly SubscriptionLabelReference[],
+    householdId?: string,
+  ): Promise<readonly SubscriptionLabelMatch[]> {
+    if (references.length === 0) return Promise.resolve([]);
+    return this.labels.read(tx, { vendorId, ...(householdId ? { householdId } : {}), references });
+  }
+
   private audit(tx: TransactionContext, actor: Actor, vendorId: string, value: LeaveRequestRecord, action: string) {
     return this.audits.append(tx, { id: randomUUID(), vendorId, actorUserId: actor.userId, action, entityType: 'leave_request', entityId: value.id, newValue: { currentStatus: value.status, version: value.version }, correlationId: requestContextStore.require().correlationId });
   }
 }
 
-function customerRequest(value: LeaveRequestRecord): LeaveRequestResult {
+function customerRequest(value: EnrichedLeaveRequestRecord): LeaveRequestResult {
   const { status, ...result } = value;
-  return { ...result, currentStatus: status, availableActions: value.currentRevisionId && status !== 'cancelled' ? ['amend', 'cancel'] : [] };
+  const hasCurrent = value.revisions.some(({ id }) => id === value.currentRevisionId);
+  return { ...result, currentStatus: status, availableActions: hasCurrent && status !== 'cancelled' ? ['amend', 'cancel'] : [] };
 }
-function vendorRequest(value: LeaveRequestRecord): VendorLeaveRequestResult {
+function vendorRequest(value: EnrichedLeaveRequestRecord): VendorLeaveRequestResult {
   const { status, revisions, ...result } = value;
   return { ...result, currentStatus: status, revisions: revisions.map(({ decisions, ...revision }) => ({ ...revision,
     ...(decisions ? { decisions: decisions.map((item) => ({ ...item,
       availableActions: revision.id === value.currentRevisionId && item.status === 'pending' ? ['approve', 'reject'] : [],
     })) } : {}),
   })) };
+}
+
+function requestLabelReferences(values: readonly LeaveRequestRecord[]): readonly SubscriptionLabelReference[] {
+  return values.flatMap(({ revisions }) => revisions.flatMap((revision) => [
+    ...revision.subscriptionIds.map((subscriptionId) => ({
+      kind: 'range' as const, referenceId: `revision:${revision.id}`, subscriptionId,
+      startDate: revision.startDate, endDate: revision.endDate,
+    })),
+    ...(revision.decisions ?? []).map((item) => occurrenceReference(`decision:${item.id}`, item)),
+  ]));
+}
+
+function occurrenceReference(
+  referenceId: string,
+  item: Readonly<{ subscriptionId: string; serviceDate: string; deliverySlotId: string }>,
+): SubscriptionLabelReference {
+  return { kind: 'occurrence', referenceId, subscriptionId: item.subscriptionId, serviceDate: item.serviceDate, deliverySlotId: item.deliverySlotId };
+}
+
+function enrichRequest(value: LeaveRequestRecord, matches: readonly SubscriptionLabelMatch[]): EnrichedLeaveRequestRecord {
+  return { ...value, revisions: [...value.revisions].sort(compareRevisions).map(({ decisions, ...revision }) => ({ ...revision,
+    subscriptionLabels: uniqueLabels(
+      matches.filter(({ referenceId }) => referenceId === `revision:${revision.id}`),
+      revision.subscriptionIds,
+    ),
+    ...(decisions ? { decisions: [...decisions].sort(compareDecisions).map((item) => ({
+      ...item, ...decisionLabel(matches, `decision:${item.id}`, item),
+    })) } : {}),
+  })) };
+}
+
+function decisionLabel(
+  matches: readonly SubscriptionLabelMatch[],
+  referenceId: string,
+  item: Readonly<{ subscriptionId: string; deliverySlotId: string }>,
+): LeaveDecisionLabel {
+  const match = matches.find((candidate) => candidate.referenceId === referenceId
+    && candidate.subscriptionId === item.subscriptionId && candidate.deliverySlotId === item.deliverySlotId);
+  if (!match) throw new ApplicationError('LEAVE_SUBSCRIPTION_LABEL_UNAVAILABLE', 'Leave subscription label is unavailable', 503);
+  return { productId: match.productId, productName: match.productName, deliverySlotName: match.deliverySlotName };
+}
+
+function uniqueLabels(
+  matches: readonly SubscriptionLabelMatch[],
+  subscriptionIds: readonly string[],
+): readonly LeaveSubscriptionLabel[] {
+  const allowed = new Set(subscriptionIds);
+  const labels = new Map<string, LeaveSubscriptionLabel>();
+  for (const match of matches) {
+    const label = {
+      subscriptionId: match.subscriptionId,
+      productId: match.productId,
+      productName: match.productName,
+      deliverySlotId: match.deliverySlotId,
+      deliverySlotName: match.deliverySlotName,
+    };
+    if (allowed.has(label.subscriptionId)) labels.set(`${label.subscriptionId}:${label.productId}:${label.deliverySlotId}`, label);
+  }
+  return [...labels.values()].sort(compareLabels);
+}
+
+function compareRevisions(left: LeaveRevisionRecord, right: LeaveRevisionRecord) {
+  return right.createdAt.getTime() - left.createdAt.getTime() || right.id.localeCompare(left.id);
+}
+function compareDecisions(left: LeaveRevisionDecisionRecord, right: LeaveRevisionDecisionRecord) {
+  return left.serviceDate.localeCompare(right.serviceDate) || left.id.localeCompare(right.id);
+}
+function compareLabels(left: LeaveSubscriptionLabel, right: LeaveSubscriptionLabel) {
+  return left.subscriptionId.localeCompare(right.subscriptionId)
+    || left.productId.localeCompare(right.productId)
+    || left.deliverySlotId.localeCompare(right.deliverySlotId);
+}
+function occurrenceKey(item: Readonly<{ subscriptionId: string; serviceDate: string; deliverySlotId: string }>) {
+  return `${item.serviceDate}:${item.subscriptionId}:${item.deliverySlotId}`;
 }
 function selections(value: LeaveRequestRecord, fallback: LeaveSelectionCommand): readonly LeaveSelectionCommand[] {
   const revision = value.revisions.find(({ id }) => id === value.currentRevisionId) ?? value.revisions[0];
@@ -367,6 +507,3 @@ function selections(value: LeaveRequestRecord, fallback: LeaveSelectionCommand):
   }
   return selected.filter(({ subscriptionIds }) => subscriptionIds.length > 0);
 }
-function page(value: StoreRequestPage): LeaveRequestPage { return { items: value.items.map(customerRequest), ...(value.nextCursor ? { nextCursor: value.nextCursor } : {}) }; }
-function decision(value: StoreDecisionResult): LeaveDecisionResult { const { status, request: leave, ...result } = value; return { ...result, currentStatus: status, request: vendorRequest(leave) }; }
-function decisionPage(value: StoreDecisionPage): LeaveDecisionPage { return { items: value.items.map(({ status, ...item }) => ({ ...item, currentStatus: status })), ...(value.nextCursor ? { nextCursor: value.nextCursor } : {}) }; }

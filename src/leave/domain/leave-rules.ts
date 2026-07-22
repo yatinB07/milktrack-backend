@@ -21,6 +21,7 @@ export type LeaveOccurrenceTransition = Readonly<{
   subscriptionId: string;
   deliverySlotId: string;
   serviceDate: string;
+  cutoffAt: Date;
   previousEffectiveStatus: EffectiveDeliveryStatus;
   requestedEffectiveStatus: EffectiveDeliveryStatus;
   timing: LeaveOccurrenceClassification['timing'];
@@ -133,6 +134,7 @@ export function deriveLeaveOccurrenceTransitions(
       subscriptionId: occurrence.subscriptionId,
       deliverySlotId: occurrence.deliverySlotId,
       serviceDate: occurrence.serviceDate,
+      cutoffAt: occurrence.cutoffAt,
       previousEffectiveStatus: oldOccurrence ? 'skipped_by_customer' : 'scheduled',
       requestedEffectiveStatus: newOccurrence ? 'skipped_by_customer' : 'scheduled',
       timing: occurrence.timing,

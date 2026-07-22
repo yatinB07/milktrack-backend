@@ -21,6 +21,7 @@ import { PrismaNotificationStore } from '../src/notifications/infrastructure/pri
 import { DefaultRoutingScheduleService } from '../src/routing/application/routing-schedule.service.js';
 import { PrismaRouteAssignmentStore } from '../src/routing/infrastructure/prisma-route-assignment.store.js';
 import { PrismaScheduledDeliveryStore } from '../src/scheduling/infrastructure/prisma-scheduled-delivery.store.js';
+import { PrismaSubscriptionLabelReader } from '../src/subscriptions/infrastructure/prisma-subscription-label.reader.js';
 
 const owner = new pg.Pool({ connectionString: process.env.TEST_OWNER_DATABASE_URL });
 const prisma = new PrismaService();
@@ -32,6 +33,7 @@ const projection = new DefaultDeliveryLeaveProjection(new PrismaDeliveryStore())
 const routing = new DefaultRoutingScheduleService(new PrismaRouteAssignmentStore());
 const schedulingLeave = new DefaultSchedulingLeaveService(leaves);
 const scheduledDeliveries = new PrismaScheduledDeliveryStore();
+const labels = new PrismaSubscriptionLabelReader();
 
 test.after(() => Promise.all([owner.end(), prisma.$disconnect()]));
 
@@ -121,6 +123,7 @@ function service(writer: NotificationWriter = notificationStore, options: Readon
     writer,
     routing,
     memberService,
+    labels,
   );
   if (options.now) (leave as unknown as { now: () => Date }).now = () => options.now!;
   return leave;
@@ -181,7 +184,7 @@ void test('rejected leave decision notifies only the requesting customer', async
     await transactions.run(value.vendorId, (tx) => leaves.createRevision(tx, {
       vendorId: value.vendorId, householdId: value.householdId, requestId, revisionId, action: 'create', source: 'customer',
       createdBy: value.customerUserId, startDate: '2030-01-15', endDate: '2030-01-15', subscriptions: [{ subscriptionId: value.subscriptionId, selected: true }],
-      status: 'pending_approval', decisions: [{ id: decisionId, subscriptionId: value.subscriptionId, serviceDate: '2030-01-15', deliverySlotId: value.slotId, status: 'pending' }],
+      status: 'pending_approval', decisions: [{ id: decisionId, subscriptionId: value.subscriptionId, serviceDate: '2030-01-15', deliverySlotId: value.slotId, cutoffAt: new Date('2030-01-14T23:00:00.000Z'), status: 'pending' }],
     }));
     await requestContextStore.run({ correlationId: randomUUID() }, () => service().decideOccurrence({ ...actor(value), memberships: [] }, value.vendorId, decisionId, {
       expectedVersion: 1, decision: 'rejected', reason: 'Route already dispatched',

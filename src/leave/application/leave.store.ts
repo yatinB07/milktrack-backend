@@ -11,7 +11,7 @@ export type LeaveRevisionSubscription = Readonly<{
 export type LeaveRevisionDecisionRecord = Readonly<{
   id: string; subscriptionId: string; serviceDate: string; deliverySlotId: string; status: LeaveDecisionStatus;
   previousEffectiveStatus: 'scheduled' | 'skipped_by_customer'; requestedEffectiveStatus: 'scheduled' | 'skipped_by_customer';
-  decidedBy?: string; decidedAt?: Date; decisionReason?: string; version: number; createdAt: Date;
+  cutoffAt: Date; source: LeaveSource; decidedBy?: string; decidedAt?: Date; decisionReason?: string; version: number; createdAt: Date;
 }>;
 export type LeaveRevisionRecord = Readonly<{
   id: string; action: LeaveAction; startDate: string; endDate: string; source: LeaveSource; createdBy: string;
@@ -37,6 +37,7 @@ export type PersistLeaveRevision = Readonly<{
   subscriptions: readonly LeaveRevisionSubscription[]; status: LeaveRequestStatus; expectedVersion?: number; note?: string;
   decisions: readonly Readonly<{
     id: string; subscriptionId?: string; serviceDate: string; deliverySlotId: string; status: 'pending' | 'rejected';
+    cutoffAt: Date;
     previousEffectiveStatus?: 'scheduled' | 'skipped_by_customer'; requestedEffectiveStatus?: 'scheduled' | 'skipped_by_customer';
   }>[];
 }>;
@@ -44,7 +45,7 @@ export type LeaveListInput = Readonly<{ vendorId: string; householdId: string; c
 export type LeaveRequestPage = Readonly<{ items: readonly LeaveRequestRecord[]; nextCursor?: string }>;
 export type LeaveDecisionRecord = Readonly<{
   id: string; vendorId: string; leaveRequestRevisionId: string; subscriptionId: string; serviceDate: string;
-  deliverySlotId: string; status: LeaveDecisionStatus; version: number; createdAt: Date;
+  deliverySlotId: string; cutoffAt: Date; source: LeaveSource; status: LeaveDecisionStatus; version: number; createdAt: Date;
 }>;
 export type LeaveDecisionListInput = Readonly<{ vendorId: string; cursor?: string; limit?: number }>;
 export type LeaveDecisionPage = Readonly<{ items: readonly LeaveDecisionRecord[]; nextCursor?: string }>;

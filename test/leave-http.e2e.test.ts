@@ -15,6 +15,7 @@ import { VendorLeaveController } from '../src/leave/http/vendor-leave.controller
 const actor: Actor = { userId: randomUUID(), sessionId: randomUUID(), displayName: 'Customer', authenticationMethod: 'phone_otp', platformRoles: [], memberships: [] };
 const vendorId = randomUUID(); const householdId = randomUUID(); const subscriptionId = randomUUID();
 const requestId = randomUUID(); const revisionId = randomUUID(); const decisionId = randomUUID(); const slotId = randomUUID();
+const productId = randomUUID();
 const port = 38901;
 let app: Awaited<ReturnType<typeof NestFactory.create>> | undefined;
 const detail = {
@@ -23,8 +24,10 @@ const detail = {
   rawAuditPayload: { token: 'secret' }, phone: '+910000000000', address: 'Private', gps: { latitude: 1 },
   revisions: [{ id: revisionId, action: 'create' as const, startDate: '2030-01-02', endDate: '2030-01-03', source: 'customer' as const,
     createdBy: actor.userId, status: 'accepted' as const, createdAt: new Date('2030-01-01T00:00:00.000Z'), subscriptionIds: [subscriptionId], subscriptions: [],
+    subscriptionLabels: [{ subscriptionId, productId, productName: 'Milk', deliverySlotId: slotId, deliverySlotName: 'Morning' }],
     decisions: [{ id: decisionId, subscriptionId, deliverySlotId: slotId, serviceDate: '2030-01-02', status: 'pending' as const,
       previousEffectiveStatus: 'scheduled' as const, requestedEffectiveStatus: 'skipped_by_customer' as const, version: 1,
+      cutoffAt: new Date('2030-01-01T23:00:00.000Z'), source: 'customer' as const, productId, productName: 'Milk', deliverySlotName: 'Morning',
       createdAt: new Date('2030-01-01T00:30:00.000Z'), availableActions: ['approve', 'reject'] as const, prismaOnly: true }],
   }],
 };
@@ -69,6 +72,8 @@ void test('customer and vendor detail routes expose distinct safe timeline actio
   assert.equal(customer.status, 200);
   const customerBody = await customer.json() as Record<string, unknown>;
   assert.deepEqual(customerBody.availableActions, ['amend', 'cancel']);
+  assert.equal((((customerBody.revisions as Array<{ subscriptionLabels: Array<{ productName: string }> }>)[0]?.subscriptionLabels[0]?.productName)), 'Milk');
+  assert.equal((((customerBody.revisions as Array<{ decisions: Array<{ cutoffAt: string; source: string }> }>)[0]?.decisions[0]?.cutoffAt)), '2030-01-01T23:00:00.000Z');
   const vendor = await fetch(`http://127.0.0.1:${port}/vendors/${vendorId}/leave-requests/${requestId}`,
     { headers: { authorization: 'Bearer test' } });
   assert.equal(vendor.status, 200);

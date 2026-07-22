@@ -126,23 +126,27 @@ void test('leave transitions compare compact old and requested occurrence covera
 
   assert.deepEqual(deriveLeaveOccurrenceTransitions([], [added]), [{
     subscriptionId: 'added', deliverySlotId: 'slot', serviceDate: '2030-01-01',
+    cutoffAt: late.cutoffAt,
     previousEffectiveStatus: 'scheduled', requestedEffectiveStatus: 'skipped_by_customer',
     timing: 'late', proposedBehavior: 'pending_approval',
   }]);
   assert.deepEqual(deriveLeaveOccurrenceTransitions([removed, unchanged], [added, unchanged]), [
     {
       subscriptionId: 'added', deliverySlotId: 'slot', serviceDate: '2030-01-01',
+      cutoffAt: late.cutoffAt,
       previousEffectiveStatus: 'scheduled', requestedEffectiveStatus: 'skipped_by_customer',
       timing: 'late', proposedBehavior: 'pending_approval',
     },
     {
       subscriptionId: 'removed', deliverySlotId: 'slot', serviceDate: '2030-01-01',
+      cutoffAt: late.cutoffAt,
       previousEffectiveStatus: 'skipped_by_customer', requestedEffectiveStatus: 'scheduled',
       timing: 'late', proposedBehavior: 'pending_approval',
     },
   ]);
   assert.deepEqual(deriveLeaveOccurrenceTransitions([removed], []), [{
     subscriptionId: 'removed', deliverySlotId: 'slot', serviceDate: '2030-01-01',
+    cutoffAt: late.cutoffAt,
     previousEffectiveStatus: 'skipped_by_customer', requestedEffectiveStatus: 'scheduled',
     timing: 'late', proposedBehavior: 'pending_approval',
   }]);

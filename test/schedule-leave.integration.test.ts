@@ -118,6 +118,7 @@ async function createBatchLeave(
     subscriptions: [{ subscriptionId: candidate.subscriptionId, selected: input.selected ?? true }], status: input.status,
     decisions: input.decision ? [{
       id: randomUUID(), subscriptionId: candidate.subscriptionId, serviceDate: '2030-01-01', deliverySlotId: candidate.deliverySlotId,
+      cutoffAt: new Date('2029-12-31T23:00:00.000Z'),
       status: input.decision === 'rejected' ? 'rejected' : 'pending',
       previousEffectiveStatus: 'scheduled', requestedEffectiveStatus: 'skipped_by_customer',
     }] : [],
@@ -135,6 +136,7 @@ async function createLeave(value: Fixture, status: 'accepted' | 'pending_approva
     subscriptions: [{ subscriptionId: value.subscriptionId, selected: true }], status,
     decisions: status === 'accepted' ? [] : [{
       id: randomUUID(), subscriptionId: value.subscriptionId, serviceDate: '2030-01-01', deliverySlotId: value.slotId,
+      cutoffAt: new Date('2029-12-31T23:00:00.000Z'),
       status: status === 'pending_approval' ? 'pending' : 'rejected',
     }],
   }));

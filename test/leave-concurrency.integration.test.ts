@@ -86,7 +86,7 @@ void test('decision and amendment cannot both mutate the same current revision',
     await transactions.run(vendorId, (tx) => store.createRevision(tx, {
       vendorId, householdId, requestId, revisionId, action: 'create', source: 'customer', createdBy: userId,
       startDate: '2030-01-01', endDate: '2030-01-31', subscriptions: [{ subscriptionId, selected: true }], status: 'pending_approval',
-      decisions: [{ id: decisionId, subscriptionId, serviceDate: '2030-01-01', deliverySlotId: slotId, status: 'pending', previousEffectiveStatus: 'scheduled', requestedEffectiveStatus: 'skipped_by_customer' }],
+      decisions: [{ id: decisionId, subscriptionId, serviceDate: '2030-01-01', deliverySlotId: slotId, cutoffAt: new Date('2029-12-31T23:00:00.000Z'), status: 'pending', previousEffectiveStatus: 'scheduled', requestedEffectiveStatus: 'skipped_by_customer' }],
     }));
 
     blocker = await owner.connect(); await blocker.query('BEGIN');
@@ -141,7 +141,7 @@ void test('pending queue does not return a superseded decision when amendment wi
     await transactions.run(vendorId, (tx) => store.createRevision(tx, {
       vendorId, householdId, requestId, revisionId, action: 'create', source: 'customer', createdBy: userId,
       startDate: '2030-01-01', endDate: '2030-01-31', subscriptions: [{ subscriptionId, selected: true }], status: 'pending_approval',
-      decisions: [{ id: decisionId, subscriptionId, serviceDate: '2030-01-01', deliverySlotId: slotId, status: 'pending' }],
+      decisions: [{ id: decisionId, subscriptionId, serviceDate: '2030-01-01', deliverySlotId: slotId, cutoffAt: new Date('2029-12-31T23:00:00.000Z'), status: 'pending' }],
     }));
     let amendmentCommittedBeforeReturn = false;
     const page = await transactions.run(vendorId, async (context) => {
