@@ -17,6 +17,16 @@ export type LeaveOccurrenceClassification = Readonly<{
   proposedBehavior: 'accept' | 'pending_approval' | 'reject';
 }>;
 
+export type LeaveOccurrenceTransition = Readonly<{
+  subscriptionId: string;
+  deliverySlotId: string;
+  serviceDate: string;
+  previousEffectiveStatus: EffectiveDeliveryStatus;
+  requestedEffectiveStatus: EffectiveDeliveryStatus;
+  timing: LeaveOccurrenceClassification['timing'];
+  proposedBehavior: LeaveOccurrenceClassification['proposedBehavior'];
+}>;
+
 export type LeaveOccurrencePlan = Readonly<{
   subscriptionId: string;
   deliverySlotId: string;
@@ -108,6 +118,29 @@ export function requestedEffectiveStatus(action: LeaveAction): EffectiveDelivery
   return action === 'cancel' ? 'scheduled' : 'skipped_by_customer';
 }
 
+export function deriveLeaveOccurrenceTransitions(
+  previous: readonly LeaveOccurrenceClassification[],
+  requested: readonly LeaveOccurrenceClassification[],
+): readonly LeaveOccurrenceTransition[] {
+  const oldCoverage = new Map(previous.map((occurrence) => [occurrenceKey(occurrence), occurrence]));
+  const newCoverage = new Map(requested.map((occurrence) => [occurrenceKey(occurrence), occurrence]));
+  return [...new Set([...oldCoverage.keys(), ...newCoverage.keys()])].sort().flatMap((key) => {
+    const oldOccurrence = oldCoverage.get(key);
+    const newOccurrence = newCoverage.get(key);
+    if (Boolean(oldOccurrence) === Boolean(newOccurrence)) return [];
+    const occurrence = newOccurrence ?? oldOccurrence!;
+    return [{
+      subscriptionId: occurrence.subscriptionId,
+      deliverySlotId: occurrence.deliverySlotId,
+      serviceDate: occurrence.serviceDate,
+      previousEffectiveStatus: oldOccurrence ? 'skipped_by_customer' : 'scheduled',
+      requestedEffectiveStatus: newOccurrence ? 'skipped_by_customer' : 'scheduled',
+      timing: occurrence.timing,
+      proposedBehavior: occurrence.proposedBehavior,
+    } satisfies LeaveOccurrenceTransition];
+  });
+}
+
 export function deriveLeaveStatus(input: Readonly<{ effective: number; pending: number; cancelled?: boolean }>): LeaveRequestStatus {
   if (input.cancelled) return 'cancelled';
   if (input.pending > 0) return input.effective > 0 ? 'partially_pending' : 'pending_approval';
@@ -143,5 +176,6 @@ function compareOccurrence(left: LeaveOccurrenceCursor, right: LeaveOccurrenceCu
     || left.subscriptionId.localeCompare(right.subscriptionId)
     || left.deliverySlotId.localeCompare(right.deliverySlotId);
 }
+function occurrenceKey(value: LeaveOccurrenceCursor) { return `${value.serviceDate}:${value.subscriptionId}:${value.deliverySlotId}`; }
 function isPresent<T>(value: T | undefined): value is T { return value !== undefined; }
 function error(code: string, message: string) { return new ApplicationError(code, message, 400); }

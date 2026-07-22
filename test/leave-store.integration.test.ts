@@ -265,6 +265,28 @@ void test('unselected revision associations retain the strong tenant subscriptio
   } finally { await cleanup(current); await cleanup(foreign); }
 });
 
+void test('superseded leave decisions are neither queued nor actionable', async () => {
+  const current = await fixture('superseded-decision');
+  const requestId = randomUUID(); const firstRevisionId = randomUUID(); const decisionId = randomUUID();
+  try {
+    await transactions.run(current.vendorId, async (tx) => {
+      await store.createRevision(tx, revision(current, {
+        requestId, revisionId: firstRevisionId, status: 'pending_approval', decisions: [
+          { id: decisionId, serviceDate: '2030-01-01', deliverySlotId: current.slotId, status: 'pending' },
+        ],
+      }));
+      await store.createRevision(tx, revision(current, {
+        requestId, revisionId: randomUUID(), action: 'amend', previousRevisionId: firstRevisionId, status: 'accepted',
+      }));
+      assert.deepEqual((await store.listPendingDecisions(tx, { vendorId: current.vendorId })).items, []);
+      await rejectsWithCode(() => store.decide(tx, {
+        vendorId: current.vendorId, id: decisionId, expectedVersion: 1, decision: 'approved',
+        decidedBy: current.userId, reason: 'Superseded', now: new Date('2030-01-01T00:00:00.000Z'),
+      }), 'LEAVE_DECISION_NOT_FOUND');
+    });
+  } finally { await cleanup(current); }
+});
+
 void test('leave decision rejects a finalized matching delivery before mutating the decision', async () => {
   const current = await fixture('finalized'); const requestId = randomUUID(); const decisionId = randomUUID();
   try {

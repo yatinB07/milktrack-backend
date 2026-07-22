@@ -15,6 +15,7 @@ const subscriptionId = '00000000-0000-4000-8000-000000000012';
 const slotId = '00000000-0000-4000-8000-000000000013';
 const agentMembershipId = '00000000-0000-4000-8000-000000000014';
 const agentUserId = '00000000-0000-4000-8000-000000000015';
+const requestedSubscriptionId = '00000000-0000-4000-8000-000000000016';
 const tx = {} as TransactionContext;
 
 void test('preview is household-scoped and advisory while create revalidates and persists an accepted request', async () => {
@@ -52,6 +53,91 @@ void test('preview is household-scoped and advisory while create revalidates and
   });
   assert.deepEqual(calls, ['household', 'preview', 'household', 'lock', 'preview', 'create', 'preview', 'effective', 'project', 'routing', 'membership', 'audit', 'notification', 'notification']);
   assert.equal(notifications.every((value) => (value as { householdId?: string }).householdId === householdId), true);
+});
+
+void test('amend and cancel persist late old-to-new transitions and retain removed associations', async () => {
+  const persisted: Array<Record<string, unknown>> = [];
+  const current = request();
+  const preview = (_tx: TransactionContext, input: { subscriptionIds: readonly string[] }) => Promise.resolve({
+    items: input.subscriptionIds.map((id) => ({
+      subscriptionId: id, deliverySlotId: slotId, serviceDate: '2030-01-02', cutoffAt: new Date('2030-01-01T00:00:00.000Z'),
+      timing: 'late' as const, proposedBehavior: 'pending_approval' as const,
+    })),
+    onTimeCount: 0,
+    lateCount: input.subscriptionIds.length,
+  });
+  const store = {
+    getRequest: () => Promise.resolve(current),
+    lockSubscriptions: () => Promise.resolve(),
+    preview,
+    createRevision: (_tx: TransactionContext, input: Record<string, unknown>) => {
+      persisted.push(input);
+      return Promise.resolve({ ...current, status: input.status, version: current.version + 1, currentRevisionId: input.revisionId });
+    },
+    isEffectivelyOnLeave: () => Promise.resolve(false),
+  };
+  const service = new DefaultLeaveService(
+    { execute: (_input: unknown, operation: (current: TransactionContext) => Promise<unknown>) => operation(tx) } as never,
+    { requireCustomerSubscriptionHousehold: () => Promise.resolve({ householdId }) } as never,
+    store as never,
+    { getDeliveryPolicyForTransaction: () => Promise.resolve({ vendorId, skipCutoffMinutes: 60, lateLeavePolicy: 'approval', captureAgentLocationEvidence: false, version: 1 }), getSubscriptionTimezone: () => Promise.resolve({ timezone: 'UTC' }) } as never,
+    { append: () => Promise.resolve() },
+    { applyCustomerLeave: () => Promise.resolve(), reverseCustomerLeave: () => Promise.resolve() } as never,
+    { append: () => Promise.resolve() },
+    { project: () => Promise.resolve([]), projectRoute: () => Promise.resolve(undefined) },
+    { customerMembershipHistory: () => Promise.resolve([]) } as never,
+  );
+  (service as unknown as { now: () => Date }).now = () => new Date('2030-01-01T23:00:00.000Z');
+
+  await requestContextStore.run({ correlationId: '00000000-0000-4000-8000-000000000098' }, async () => {
+    await service.amend(actor, vendorId, householdId, current.id, {
+      startDate: '2030-01-02', endDate: '2030-01-02', subscriptionIds: [requestedSubscriptionId], expectedVersion: current.version,
+    });
+    await service.cancel(actor, vendorId, householdId, current.id, { expectedVersion: current.version });
+  });
+
+  assert.deepEqual(persisted[0]?.subscriptions, [
+    { subscriptionId, selected: false },
+    { subscriptionId: requestedSubscriptionId, selected: true },
+  ]);
+  assert.deepEqual((persisted[0]?.decisions as Array<Record<string, unknown>>).map(({ subscriptionId: id, previousEffectiveStatus, requestedEffectiveStatus, status }) => ({ id, previousEffectiveStatus, requestedEffectiveStatus, status })), [
+    { id: subscriptionId, previousEffectiveStatus: 'skipped_by_customer', requestedEffectiveStatus: 'scheduled', status: 'pending' },
+    { id: requestedSubscriptionId, previousEffectiveStatus: 'scheduled', requestedEffectiveStatus: 'skipped_by_customer', status: 'pending' },
+  ]);
+  assert.equal(persisted[1]?.status, 'pending_approval');
+  assert.deepEqual(persisted[1]?.subscriptions, [{ subscriptionId, selected: false }]);
+  assert.deepEqual((persisted[1]?.decisions as Array<Record<string, unknown>>).map(({ previousEffectiveStatus, requestedEffectiveStatus, status }) => ({ previousEffectiveStatus, requestedEffectiveStatus, status })), [
+    { previousEffectiveStatus: 'skipped_by_customer', requestedEffectiveStatus: 'scheduled', status: 'pending' },
+  ]);
+});
+
+void test('late transition derivation bounds a hundred-year request to the seven-day cutoff horizon', async () => {
+  const previewEnds: string[] = [];
+  const store = {
+    lockSubscriptions: () => Promise.resolve(),
+    preview: (_tx: TransactionContext, input: { endDate: string }) => {
+      previewEnds.push(input.endDate);
+      return Promise.resolve({ items: [], onTimeCount: 5_200, lateCount: 1 });
+    },
+    createRevision: () => Promise.reject(new Error('status derived')),
+  };
+  const service = new DefaultLeaveService(
+    { execute: (_input: unknown, operation: (current: TransactionContext) => Promise<unknown>) => operation(tx) } as never,
+    { requireCustomerSubscriptionHousehold: () => Promise.resolve({ householdId }) } as never,
+    store as never,
+    { getDeliveryPolicyForTransaction: () => Promise.resolve({ vendorId, skipCutoffMinutes: 10_080, lateLeavePolicy: 'approval', captureAgentLocationEvidence: false, version: 1 }), getSubscriptionTimezone: () => Promise.resolve({ timezone: 'UTC' }) } as never,
+    { append: () => Promise.resolve() },
+    {} as never,
+    { append: () => Promise.resolve() },
+    {} as never,
+    {} as never,
+  );
+  (service as unknown as { now: () => Date }).now = () => new Date('2029-12-31T12:00:00.000Z');
+
+  await assert.rejects(service.create(actor, vendorId, householdId, {
+    startDate: '2030-01-01', endDate: '2129-12-31', subscriptionIds: [subscriptionId],
+  }), /status derived/u);
+  assert.deepEqual(previewEnds, ['2129-12-31', '2030-01-07']);
 });
 
 function request() {

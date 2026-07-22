@@ -160,38 +160,62 @@ export class PrismaLeaveStore extends LeaveStore {
 
   async listPendingDecisions(context: TransactionContext, input: LeaveDecisionListInput): Promise<LeaveDecisionPage> {
     const limit = this.cursors.parseLimit(input.limit); const cursor = input.cursor ? this.cursors.decode(input.cursor) : undefined;
-    const rows = await unwrapPrismaTransaction(context).leaveOccurrenceDecision.findMany({
-      where: { vendorId: input.vendorId, status: 'pending', ...(cursor ? { OR: [{ serviceDate: { gt: cursor.createdAt } }, { serviceDate: cursor.createdAt, id: { gt: cursor.id } }] } : {}) },
-      orderBy: [{ serviceDate: 'asc' }, { id: 'asc' }], take: limit + 1,
-    });
+    const tx = unwrapPrismaTransaction(context);
+    const ids = await tx.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+      SELECT d.id FROM leave_occurrence_decisions d
+      JOIN leave_request_revisions r ON r.vendor_id=d.vendor_id AND r.id=d.leave_request_revision_id
+      JOIN leave_requests q ON q.vendor_id=r.vendor_id AND q.id=r.leave_request_id AND q.current_revision_id=r.id
+      WHERE d.vendor_id=${input.vendorId}::uuid AND d.status='pending'
+        ${cursor ? Prisma.sql`AND (d.service_date>${cursor.createdAt}::date OR (d.service_date=${cursor.createdAt}::date AND d.id>${cursor.id}::uuid))` : Prisma.empty}
+      ORDER BY d.service_date,d.id LIMIT ${limit + 1}`);
+    const found = await tx.leaveOccurrenceDecision.findMany({ where: { id: { in: ids.map(({ id }) => id) }, vendorId: input.vendorId } });
+    const byId = new Map(found.map((row) => [row.id, row]));
+    const rows = ids.map(({ id }) => byId.get(id)).filter((row): row is LeaveOccurrenceDecision => Boolean(row));
     const items = rows.slice(0, limit).map((row) => this.decision(row)); const last = items.at(-1);
     return { items, ...(rows.length > limit && last ? { nextCursor: this.cursors.encode({ createdAt: date(last.serviceDate), id: last.id }) } : {}) };
   }
 
   async decide(context: TransactionContext, input: DecideLeaveOccurrence): Promise<LeaveDecisionResult> {
     const tx = unwrapPrismaTransaction(context);
-    const rows = await tx.$queryRaw<Array<{ id: string; leaveRequestRevisionId: string; subscriptionId: string; serviceDate: Date; deliverySlotId: string; version: number; requestId: string; householdId: string; requestStatus: string }>>(Prisma.sql`
-      SELECT d.id,d.leave_request_revision_id AS "leaveRequestRevisionId",d.subscription_id AS "subscriptionId",d.service_date AS "serviceDate",d.delivery_slot_id AS "deliverySlotId",d.version,r.leave_request_id AS "requestId",q.household_id AS "householdId",q.status AS "requestStatus"
+    const rows = await tx.$queryRaw<Array<{ id: string; leaveRequestRevisionId: string; subscriptionId: string; serviceDate: Date; deliverySlotId: string; version: number; requestId: string; householdId: string; requestStatus: string; action: string; requestedEffectiveStatus: string }>>(Prisma.sql`
+      SELECT d.id,d.leave_request_revision_id AS "leaveRequestRevisionId",d.subscription_id AS "subscriptionId",d.service_date AS "serviceDate",d.delivery_slot_id AS "deliverySlotId",d.version,r.leave_request_id AS "requestId",q.household_id AS "householdId",q.status AS "requestStatus",r.action,d.requested_effective_status AS "requestedEffectiveStatus"
       FROM leave_occurrence_decisions d JOIN leave_request_revisions r ON r.vendor_id=d.vendor_id AND r.id=d.leave_request_revision_id
-      JOIN leave_requests q ON q.vendor_id=r.vendor_id AND q.id=r.leave_request_id
+      JOIN leave_requests q ON q.vendor_id=r.vendor_id AND q.id=r.leave_request_id AND q.current_revision_id=r.id
       WHERE d.vendor_id=${input.vendorId}::uuid AND d.id=${input.id}::uuid FOR UPDATE OF d`);
     const locked = rows[0];
     if (!locked) throw error('LEAVE_DECISION_NOT_FOUND', 'Leave decision was not found', 404);
     if (locked.version !== input.expectedVersion) throw error('LEAVE_DECISION_VERSION_CONFLICT', 'Leave decision was changed by another request', 409);
-    const deliveries = await tx.$queryRaw<Array<{ id: string; status: string; finalizedAt: Date | null }>>(Prisma.sql`
-      SELECT id,status,finalized_at AS "finalizedAt" FROM scheduled_deliveries
-      WHERE vendor_id=${input.vendorId}::uuid AND subscription_id=${locked.subscriptionId}::uuid
-        AND service_date=${locked.serviceDate}::date AND delivery_slot_id=${locked.deliverySlotId}::uuid
-      FOR UPDATE`);
-    if (deliveries.some(({ status, finalizedAt }) => finalizedAt || ['delivered', 'skipped_by_customer', 'skipped_by_agent', 'missed'].includes(status)))
+    const deliveries = await tx.$queryRaw<Array<{ id: string; status: string; finalizedAt: Date | null; latestSource: string | null; latestReasonCode: string | null }>>(Prisma.sql`
+      SELECT d.id,d.status,d.finalized_at AS "finalizedAt",latest.source AS "latestSource",latest.reason_code AS "latestReasonCode"
+      FROM scheduled_deliveries d LEFT JOIN LATERAL (
+        SELECT source,reason_code FROM delivery_events e WHERE e.vendor_id=d.vendor_id AND e.scheduled_delivery_id=d.id
+        ORDER BY e.created_at DESC,e.id DESC LIMIT 1
+      ) latest ON true
+      WHERE d.vendor_id=${input.vendorId}::uuid AND d.subscription_id=${locked.subscriptionId}::uuid
+        AND d.service_date=${locked.serviceDate}::date AND d.delivery_slot_id=${locked.deliverySlotId}::uuid
+      FOR UPDATE OF d`);
+    const reversibleLeaveSkip = (row: typeof deliveries[number]) => locked.requestedEffectiveStatus === 'scheduled'
+      && row.status === 'skipped_by_customer'
+      && (row.latestSource === 'customer' || row.latestSource === 'vendor_admin'
+        || (row.latestSource === 'system' && row.latestReasonCode === 'customer_on_leave'));
+    if (deliveries.some((row) => !reversibleLeaveSkip(row)
+      && (row.finalizedAt || ['delivered', 'skipped_by_customer', 'skipped_by_agent', 'missed'].includes(row.status))))
       throw error('LEAVE_OCCURRENCE_FINALIZED', 'Leave occurrence already has a final delivery outcome', 409);
     const changed = await tx.leaveOccurrenceDecision.updateMany({ where: { id: input.id, vendorId: input.vendorId, status: 'pending', version: input.expectedVersion }, data: {
       status: input.decision, decidedBy: input.decidedBy, decidedAt: input.now, decisionReason: input.reason, version: { increment: 1 },
     } });
     if (changed.count !== 1) throw error('LEAVE_DECISION_STATE_CONFLICT', 'Leave decision is no longer pending', 409);
-    const decisions = await tx.leaveOccurrenceDecision.findMany({ where: { vendorId: input.vendorId, leaveRequestRevisionId: locked.leaveRequestRevisionId }, select: { status: true } });
-    const baselineEffective = locked.requestStatus === 'accepted' || locked.requestStatus === 'partially_pending';
-    const status = deriveLeaveStatus({ effective: Number(baselineEffective || decisions.some(({ status }) => status === 'approved')), pending: decisions.filter(({ status }) => status === 'pending').length });
+    const decisions = await tx.leaveOccurrenceDecision.findMany({ where: { vendorId: input.vendorId, leaveRequestRevisionId: locked.leaveRequestRevisionId }, select: { status: true, requestedEffectiveStatus: true } });
+    const pending = decisions.filter(({ status }) => status === 'pending').length;
+    const status = locked.action === 'cancel'
+      ? pending > 0
+        ? (locked.requestStatus === 'partially_pending' || decisions.some(({ status, requestedEffectiveStatus }) => status === 'approved' && requestedEffectiveStatus === 'scheduled') ? 'partially_pending' : 'pending_approval')
+        : decisions.some(({ status, requestedEffectiveStatus }) => status === 'rejected' && requestedEffectiveStatus === 'scheduled') ? 'accepted' : 'cancelled'
+      : deriveLeaveStatus({
+        effective: Number(locked.requestStatus === 'accepted' || locked.requestStatus === 'partially_pending'
+          || decisions.some(({ status, requestedEffectiveStatus }) => status === 'approved' && requestedEffectiveStatus === 'skipped_by_customer')),
+        pending,
+      });
     await tx.leaveRequest.update({ where: { id: locked.requestId }, data: { status, version: { increment: 1 } } });
     const decision = await tx.leaveOccurrenceDecision.findFirst({ where: { id: input.id, vendorId: input.vendorId } });
     if (!decision) throw error('LEAVE_DECISION_NOT_FOUND', 'Leave decision was not found', 404);
@@ -217,12 +241,12 @@ export class PrismaLeaveStore extends LeaveStore {
           AS c("subscriptionId" uuid,"deliverySlotId" uuid,"serviceDate" date)
       ), ranked AS (
         SELECT c."subscriptionId",c."deliverySlotId",c."serviceDate",r.action,q.status,s.selected,
+          c."serviceDate" BETWEEN r.start_date AND r.end_date AS "inRange",
           d.status AS "decisionStatus",d.requested_effective_status AS "requestedStatus",d.previous_effective_status AS "previousStatus",
           row_number() OVER (PARTITION BY c."serviceDate",c."subscriptionId",c."deliverySlotId" ORDER BY r.created_at DESC,r.id DESC) AS precedence
         FROM candidates c
         JOIN leave_revision_subscriptions s ON s.vendor_id=${input.vendorId}::uuid AND s.subscription_id=c."subscriptionId"
         JOIN leave_request_revisions r ON r.vendor_id=s.vendor_id AND r.id=s.leave_request_revision_id
-          AND r.start_date<=c."serviceDate" AND r.end_date>=c."serviceDate"
         JOIN leave_requests q ON q.vendor_id=r.vendor_id AND q.id=r.leave_request_id AND q.current_revision_id=r.id
         LEFT JOIN leave_occurrence_decisions d ON d.vendor_id=r.vendor_id AND d.leave_request_revision_id=r.id
           AND d.subscription_id=c."subscriptionId" AND d.service_date=c."serviceDate" AND d.delivery_slot_id=c."deliverySlotId"
@@ -232,7 +256,7 @@ export class PrismaLeaveStore extends LeaveStore {
       WHERE precedence=1 AND (
         ("decisionStatus"='approved' AND "requestedStatus"='skipped_by_customer')
         OR ("decisionStatus" IN ('pending','rejected') AND "previousStatus"='skipped_by_customer')
-        OR ("decisionStatus" IS NULL AND selected AND action<>'cancel' AND status IN ('accepted','partially_pending'))
+        OR ("decisionStatus" IS NULL AND "inRange" AND selected AND action<>'cancel' AND status IN ('accepted','partially_pending'))
       )`);
     return new Set(rows.map(({ key }) => key));
   }

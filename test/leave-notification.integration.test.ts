@@ -108,20 +108,22 @@ function actor(value: Fixture): Actor {
   };
 }
 
-function service(writer: NotificationWriter = notificationStore) {
+function service(writer: NotificationWriter = notificationStore, options: Readonly<{ now?: Date; skipCutoffMinutes?: number }> = {}) {
   const authorization = { execute: ({ vendorId }: { vendorId: string }, work: (tx: TransactionContext) => Promise<unknown>) => transactions.run(vendorId, work) } as TenantAuthorizationExecutor;
   const memberService = { customerMembershipHistory: (tx: TransactionContext, vendorId: string, ids: readonly string[]) => memberships.customerMembershipHistory(tx, vendorId, ids) } as MembershipService;
-  return new DefaultLeaveService(
+  const leave = new DefaultLeaveService(
     authorization,
     { requireCustomerSubscriptionHousehold: () => Promise.resolve({ householdId: 'authorized' }) } as never,
     leaves,
-    { getDeliveryPolicyForTransaction: () => Promise.resolve({ skipCutoffMinutes: 60, lateLeavePolicy: 'approval', captureAgentLocationEvidence: false, version: 1 }), getSubscriptionTimezone: () => Promise.resolve({ timezone: 'UTC' }) } as never,
+    { getDeliveryPolicyForTransaction: () => Promise.resolve({ skipCutoffMinutes: options.skipCutoffMinutes ?? 60, lateLeavePolicy: 'approval', captureAgentLocationEvidence: false, version: 1 }), getSubscriptionTimezone: () => Promise.resolve({ timezone: 'UTC' }) } as never,
     { append: () => Promise.resolve() },
     projection,
     writer,
     routing,
     memberService,
   );
+  if (options.now) (leave as unknown as { now: () => Date }).now = () => options.now!;
+  return leave;
 }
 
 function scheduleTarget(value: Fixture, serviceDate: string) {
@@ -238,6 +240,49 @@ void test('amendment and cancellation reverse customer skips created by later sc
     await requestContextStore.run({ correlationId: randomUUID() }, () => leave.cancel(actor(value), value.vendorId, value.householdId, created.id, { expectedVersion: amended.version }));
     assert.deepEqual((await owner.query<{ status: string }>('SELECT status FROM scheduled_deliveries WHERE vendor_id=$1 ORDER BY service_date', [value.vendorId])).rows,
       [{ status: 'scheduled' }, { status: 'scheduled' }]);
+  } finally {
+    await cleanup(value);
+  }
+});
+
+void test('late amendment approval reverses a leave skip and rejected cancellation preserves remaining leave', async () => {
+  const value = await fixture('late-reversal');
+  try {
+    const created = await requestContextStore.run({ correlationId: randomUUID() }, () => service().create(actor(value), value.vendorId, value.householdId, {
+      startDate: '2030-01-01', endDate: '2030-01-08', subscriptionIds: [value.subscriptionId],
+    }));
+    const late = service(notificationStore, { now: new Date('2030-01-01T07:00:00.000Z'), skipCutoffMinutes: 10_080 });
+    const amended = await requestContextStore.run({ correlationId: randomUUID() }, () => late.amend(actor(value), value.vendorId, value.householdId, created.id, {
+      startDate: '2030-01-08', endDate: '2030-01-08', subscriptionIds: [value.subscriptionId], expectedVersion: created.version,
+    }));
+    assert.equal(amended.currentStatus, 'partially_pending');
+    assert.equal(await transactions.run(value.vendorId, (tx) => leaves.isEffectivelyOnLeave(tx, {
+      vendorId: value.vendorId, subscriptionId: value.subscriptionId, deliverySlotId: value.slotId, serviceDate: '2030-01-01',
+    })), true);
+    assert.deepEqual((await owner.query<{ serviceDate: string; status: string }>('SELECT service_date::text AS "serviceDate",status FROM scheduled_deliveries WHERE vendor_id=$1 ORDER BY service_date', [value.vendorId])).rows,
+      [{ serviceDate: '2030-01-01', status: 'skipped_by_customer' }, { serviceDate: '2030-01-08', status: 'skipped_by_customer' }]);
+    const amendmentDecision = (await owner.query<{ id: string; previousStatus: string; requestedStatus: string }>(`SELECT id,previous_effective_status AS "previousStatus",requested_effective_status AS "requestedStatus"
+      FROM leave_occurrence_decisions WHERE vendor_id=$1 AND leave_request_revision_id=$2`, [value.vendorId, amended.currentRevisionId])).rows[0];
+    assert(amendmentDecision);
+    assert.deepEqual({ previousStatus: amendmentDecision.previousStatus, requestedStatus: amendmentDecision.requestedStatus },
+      { previousStatus: 'skipped_by_customer', requestedStatus: 'scheduled' });
+    await requestContextStore.run({ correlationId: randomUUID() }, () => late.decideOccurrence({ ...actor(value), memberships: [] }, value.vendorId, amendmentDecision.id, {
+      expectedVersion: 1, decision: 'approved', reason: 'Approve removal',
+    }));
+    assert.deepEqual((await owner.query<{ status: string }>('SELECT status FROM scheduled_deliveries WHERE vendor_id=$1 ORDER BY service_date', [value.vendorId])).rows,
+      [{ status: 'scheduled' }, { status: 'skipped_by_customer' }]);
+
+    const cancelled = await requestContextStore.run({ correlationId: randomUUID() }, () => late.cancel(actor(value), value.vendorId, value.householdId, created.id, { expectedVersion: amended.version + 1 }));
+    assert.equal(cancelled.currentStatus, 'pending_approval');
+    const cancellationDecision = (await owner.query<{ id: string }>('SELECT id FROM leave_occurrence_decisions WHERE vendor_id=$1 AND leave_request_revision_id=$2', [value.vendorId, cancelled.currentRevisionId])).rows[0];
+    assert(cancellationDecision);
+    await requestContextStore.run({ correlationId: randomUUID() }, () => late.decideOccurrence({ ...actor(value), memberships: [] }, value.vendorId, cancellationDecision.id, {
+      expectedVersion: 1, decision: 'rejected', reason: 'Keep remaining leave',
+    }));
+    const final = await transactions.run(value.vendorId, (tx) => leaves.getRequest(tx, value.vendorId, value.householdId, created.id));
+    assert.equal(final.status, 'accepted');
+    assert.deepEqual((await owner.query<{ status: string }>('SELECT status FROM scheduled_deliveries WHERE vendor_id=$1 ORDER BY service_date', [value.vendorId])).rows,
+      [{ status: 'scheduled' }, { status: 'skipped_by_customer' }]);
   } finally {
     await cleanup(value);
   }

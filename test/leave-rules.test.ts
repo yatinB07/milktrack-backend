@@ -5,6 +5,7 @@ import {
   classifyLeaveOccurrence,
   countWeekdayOccurrences,
   deriveLeaveOccurrences,
+  deriveLeaveOccurrenceTransitions,
   deriveLeaveStatus,
   requestedEffectiveStatus,
   validateLeaveRange,
@@ -110,4 +111,39 @@ void test('leave occurrence counts derive aggregate request status', () => {
   assert.equal(deriveLeaveStatus({ effective: 1, pending: 0 }), 'accepted');
   assert.equal(deriveLeaveStatus({ effective: 0, pending: 0 }), 'rejected');
   assert.equal(deriveLeaveStatus({ effective: 0, pending: 0, cancelled: true }), 'cancelled');
+});
+
+void test('leave transitions compare compact old and requested occurrence coverage', () => {
+  const late = {
+    cutoffAt: new Date('2030-01-01T05:00:00.000Z'), timing: 'late' as const, proposedBehavior: 'pending_approval' as const,
+  };
+  const onTime = {
+    cutoffAt: new Date('2030-01-08T05:00:00.000Z'), timing: 'on_time' as const, proposedBehavior: 'accept' as const,
+  };
+  const unchanged = { subscriptionId: 'same', deliverySlotId: 'slot', serviceDate: '2030-01-08', ...onTime };
+  const removed = { subscriptionId: 'removed', deliverySlotId: 'slot', serviceDate: '2030-01-01', ...late };
+  const added = { subscriptionId: 'added', deliverySlotId: 'slot', serviceDate: '2030-01-01', ...late };
+
+  assert.deepEqual(deriveLeaveOccurrenceTransitions([], [added]), [{
+    subscriptionId: 'added', deliverySlotId: 'slot', serviceDate: '2030-01-01',
+    previousEffectiveStatus: 'scheduled', requestedEffectiveStatus: 'skipped_by_customer',
+    timing: 'late', proposedBehavior: 'pending_approval',
+  }]);
+  assert.deepEqual(deriveLeaveOccurrenceTransitions([removed, unchanged], [added, unchanged]), [
+    {
+      subscriptionId: 'added', deliverySlotId: 'slot', serviceDate: '2030-01-01',
+      previousEffectiveStatus: 'scheduled', requestedEffectiveStatus: 'skipped_by_customer',
+      timing: 'late', proposedBehavior: 'pending_approval',
+    },
+    {
+      subscriptionId: 'removed', deliverySlotId: 'slot', serviceDate: '2030-01-01',
+      previousEffectiveStatus: 'skipped_by_customer', requestedEffectiveStatus: 'scheduled',
+      timing: 'late', proposedBehavior: 'pending_approval',
+    },
+  ]);
+  assert.deepEqual(deriveLeaveOccurrenceTransitions([removed], []), [{
+    subscriptionId: 'removed', deliverySlotId: 'slot', serviceDate: '2030-01-01',
+    previousEffectiveStatus: 'skipped_by_customer', requestedEffectiveStatus: 'scheduled',
+    timing: 'late', proposedBehavior: 'pending_approval',
+  }]);
 });
