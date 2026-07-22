@@ -123,17 +123,21 @@ export class PrismaDeliveryStore extends DeliveryStore {
         AND s.superseded_at IS NULL AND s.effective_from<=d.service_date
         AND (s.effective_to IS NULL OR s.effective_to>d.service_date)
       WHERE d.vendor_id=${input.vendorId}::uuid AND d.service_date=${input.serviceDate}::date
-        AND s.id=${input.routeStopId}::uuid AND d.status='scheduled' AND d.finalized_at IS NULL
+        AND s.id=${input.routeStopId}::uuid
       ORDER BY d.id FOR UPDATE`);
-    if (rows.length !== submitted.size || rows.some((row) => !submitted.has(row.id))) {
+    if (rows.some((row) => submitted.has(row.id) && row.finalizedAt !== null)) {
+      throw failure('DELIVERY_ALREADY_FINALIZED', 'Delivery is already finalized', 409);
+    }
+    const pending = rows.filter((row) => row.currentStatus === 'scheduled' && row.finalizedAt === null);
+    if (pending.length !== submitted.size || pending.some((row) => !submitted.has(row.id))) {
       throw failure('INCOMPLETE_STOP_SET', 'Submitted deliveries do not match the pending stop', 409);
     }
-    for (const row of rows) {
+    for (const row of pending) {
       if (submitted.get(row.id)?.expectedVersion !== row.version) {
         throw failure('STALE_VERSION', 'Delivery version is stale', 409);
       }
     }
-    return rows.map((row) => ({ ...this.record(row), routeAssignmentId: row.routeAssignmentId!, currentStatus: 'scheduled' }));
+    return pending.map((row) => ({ ...this.record(row), routeAssignmentId: row.routeAssignmentId!, currentStatus: 'scheduled' }));
   }
 
   async appendFinalOutcome(context: TransactionContext, input: AppendFinalOutcome): Promise<DeliveryRecord> {
