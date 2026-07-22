@@ -212,17 +212,15 @@ export class PrismaLeaveStore extends LeaveStore {
       status: input.decision, decidedBy: input.decidedBy, decidedAt: input.now, decisionReason: input.reason, version: { increment: 1 },
     } });
     if (changed.count !== 1) throw error('LEAVE_DECISION_STATE_CONFLICT', 'Leave decision is no longer pending', 409);
-    const [decisions, subscriptions] = await Promise.all([
+    const [decisions, selectedOccurrences, selectedDecisionIds] = await Promise.all([
       tx.leaveOccurrenceDecision.findMany({ where: { vendorId: input.vendorId, leaveRequestRevisionId: locked.leaveRequestRevisionId },
-        select: { subscriptionId: true, status: true, previousEffectiveStatus: true, requestedEffectiveStatus: true } }),
-      tx.leaveRevisionSubscription.findMany({ where: { vendorId: input.vendorId, leaveRequestRevisionId: locked.leaveRequestRevisionId },
-        select: { subscriptionId: true, selected: true } }),
+        select: { id: true, status: true, previousEffectiveStatus: true, requestedEffectiveStatus: true } }),
+      this.countSelectedOccurrences(tx, input.vendorId, locked.leaveRequestRevisionId),
+      this.selectedDecisionIds(tx, input.vendorId, locked.leaveRequestRevisionId),
     ]);
     const pending = decisions.filter(({ status }) => status === 'pending').length;
-    const selected = new Set(subscriptions.filter(({ selected }) => selected).map(({ subscriptionId }) => subscriptionId));
-    const selectedOccurrences = await this.countSelectedOccurrences(tx, input.vendorId, locked.leaveRequestRevisionId);
     const effective = Math.max(0, decisions.reduce((count, decision) => {
-      const baseline = selected.has(decision.subscriptionId) ? 'skipped_by_customer' : 'scheduled';
+      const baseline = selectedDecisionIds.has(decision.id) ? 'skipped_by_customer' : 'scheduled';
       const resolved = decision.status === 'approved' ? decision.requestedEffectiveStatus : decision.previousEffectiveStatus;
       return count + Number(resolved === 'skipped_by_customer') - Number(baseline === 'skipped_by_customer');
     }, selectedOccurrences));
@@ -353,6 +351,22 @@ export class PrismaLeaveStore extends LeaveStore {
         ? [...new Set(row.weekdays)].reduce((count, weekday) => count + countWeekdayOccurrences(start, dateBefore(endExclusive), weekday), 0)
         : 0);
     }, 0);
+  }
+
+  private async selectedDecisionIds(tx: Prisma.TransactionClient, vendorId: string, revisionId: string) {
+    const rows = await tx.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+      SELECT d.id FROM leave_occurrence_decisions d
+      JOIN leave_request_revisions lr ON lr.vendor_id=d.vendor_id AND lr.id=d.leave_request_revision_id
+      JOIN leave_revision_subscriptions s ON s.vendor_id=d.vendor_id AND s.leave_request_revision_id=d.leave_request_revision_id
+        AND s.subscription_id=d.subscription_id AND s.selected
+      JOIN subscription_revisions r ON r.vendor_id=d.vendor_id AND r.subscription_id=d.subscription_id
+        AND r.delivery_slot_id=d.delivery_slot_id AND r.superseded_at IS NULL AND r.status='active'
+        AND r.effective_from<=d.service_date AND (r.effective_to IS NULL OR r.effective_to>d.service_date)
+      JOIN subscription_revision_weekdays w ON w.vendor_id=r.vendor_id AND w.subscription_revision_id=r.id
+        AND w.weekday=extract(isodow FROM d.service_date)
+      WHERE d.vendor_id=${vendorId}::uuid AND d.leave_request_revision_id=${revisionId}::uuid
+        AND d.service_date BETWEEN lr.start_date AND lr.end_date`);
+    return new Set(rows.map(({ id }) => id));
   }
 
   private request(row: RequestRow): LeaveRequestRecord {

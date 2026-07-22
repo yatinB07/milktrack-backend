@@ -327,6 +327,34 @@ void test('same-subscription decisions recompute status at occurrence granularit
   } finally { await cleanup(current); }
 });
 
+void test('shifted same-subscription range resolves each decision against its exact selected baseline', async () => {
+  const current = await fixture('shifted-occurrence-status');
+  const requestId = randomUUID(); const createdRevisionId = randomUUID();
+  const removalDecisionId = randomUUID(); const additionDecisionId = randomUUID();
+  try {
+    await transactions.run(current.vendorId, async (tx) => {
+      await store.createRevision(tx, revision(current, {
+        requestId, revisionId: createdRevisionId, startDate: '2030-01-01', endDate: '2030-01-01',
+      }));
+      await store.createRevision(tx, revision(current, {
+        requestId, revisionId: randomUUID(), action: 'amend', previousRevisionId: createdRevisionId,
+        startDate: '2030-01-08', endDate: '2030-01-08', status: 'partially_pending', decisions: [
+          { id: removalDecisionId, serviceDate: '2030-01-01', deliverySlotId: current.slotId, status: 'pending',
+            previousEffectiveStatus: 'skipped_by_customer', requestedEffectiveStatus: 'scheduled' },
+          { id: additionDecisionId, serviceDate: '2030-01-08', deliverySlotId: current.slotId, status: 'pending',
+            previousEffectiveStatus: 'scheduled', requestedEffectiveStatus: 'skipped_by_customer' },
+        ],
+      }));
+      const afterRemoval = await store.decide(tx, { vendorId: current.vendorId, id: removalDecisionId, expectedVersion: 1,
+        decision: 'rejected', decidedBy: current.userId, reason: 'Keep old date skipped', now: new Date() });
+      assert.equal(afterRemoval.request.status, 'partially_pending');
+      const afterAddition = await store.decide(tx, { vendorId: current.vendorId, id: additionDecisionId, expectedVersion: 1,
+        decision: 'rejected', decidedBy: current.userId, reason: 'Keep new date scheduled', now: new Date() });
+      assert.equal(afterAddition.request.status, 'accepted');
+    });
+  } finally { await cleanup(current); }
+});
+
 void test('unselected revision associations retain the strong tenant subscription foreign key', async () => {
   const current = await fixture('unselected-fk');
   const foreign = await fixture('unselected-foreign');
